@@ -1,0 +1,49 @@
+# Binaries
+ssh-manager
+sshthing
+SSHThing
+ssh-manager-fixed
+ssh-manager-fixed2
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Database files (for future)
+*.db
+*.db-shm
+*.db-wal
+.ssh-manager/
+
+# Temporary files
+tmp/
+temp/
+.gocache/
+.gopath/
+.claude/
+.gemini-clipboard/
+*.bak
