@@ -214,6 +214,8 @@ func (s *Styles) RenderHostDetails(hostsInterface []interface{}, selectedIdx int
 			port, _ := host["Port"].(int)
 			hasKey, _ := host["HasKey"].(bool)
 			keyType, _ := host["KeyType"].(string)
+			mounted, _ := host["Mounted"].(bool)
+			mountPath, _ := host["MountPath"].(string)
 			lastConnected, _ := host["LastConnected"].(*time.Time)
 
 			// Render details
@@ -236,6 +238,16 @@ func (s *Styles) RenderHostDetails(hostsInterface []interface{}, selectedIdx int
 			// Key type
 			if keyType != "" {
 				details.WriteString(s.renderDetailRow("Key Type:", keyType))
+			}
+
+			// Mount status
+			if mounted {
+				details.WriteString(s.renderDetailRow("Mount:", s.StatusReady.Render("Mounted ✓")))
+				if strings.TrimSpace(mountPath) != "" {
+					details.WriteString(s.renderDetailRow("Local:", mountPath))
+				}
+			} else {
+				details.WriteString(s.renderDetailRow("Mount:", s.DetailValue.Foreground(ColorTextDim).Render("Not mounted")))
 			}
 
 			// Last connected
@@ -286,6 +298,7 @@ func (s *Styles) RenderFooter(width int, err error) string {
 		s.HelpKey.Render("[↑/↓]") + " " + s.HelpValue.Render("Navigate"),
 		s.HelpKey.Render("[Enter]") + " " + s.HelpValue.Render("SSH"),
 		s.HelpKey.Render("[S]") + " " + s.HelpValue.Render("Arm SFTP"),
+		s.HelpKey.Render("[M]") + " " + s.HelpValue.Render("Arm Mount"),
 		s.HelpKey.Render("[a]") + " " + s.HelpValue.Render("Add"),
 		s.HelpKey.Render("[e]") + " " + s.HelpValue.Render("Edit"),
 		s.HelpKey.Render("[d]") + " " + s.HelpValue.Render("Delete"),
@@ -378,6 +391,7 @@ func (s *Styles) RenderHelpView(width, height int) string {
 		{"Home/End or g/G", "Jump to top/bottom"},
 		{"Enter", "Connect to selected host"},
 		{"S then Enter", "Connect via SFTP"},
+		{"M then Enter", "Mount/unmount in Finder (beta)"},
 		{"a or Ctrl+N", "Add new host"},
 		{"e", "Edit selected host"},
 		{"d or Delete", "Delete selected host"},

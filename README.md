@@ -22,12 +22,14 @@ A secure, modern SSH host manager TUI built with Go and Bubble Tea.
   - Password auth (never stored; `ssh` prompts on connect)
 - 🔌 **SSH connect**: connects using system `ssh`
 - 🔎 **Spotlight search**: `/` to search and connect quickly
+- 📁 **Mount in Finder (beta, macOS)**: mounts via FUSE-T + SSHFS and opens in Finder
 
 ### 📅 Planned
 - Vim-mode toggle and more keybindings
 - Import/export hosts
 - SSH config integration
 - Config file support and extra UX polish
+- Mount settings (default remote path, options)
 
 ## Requirements
 
@@ -35,6 +37,7 @@ A secure, modern SSH host manager TUI built with Go and Bubble Tea.
 - OpenSSH tools available: `ssh`, `ssh-keygen`
 - A terminal with 256-color support
 - SQLCipher build support (this project uses `github.com/mutecomm/go-sqlcipher/v4`, which typically requires CGO and SQLCipher on your system)
+- Finder mounts (beta): macOS + `sshfs` (FUSE-T)
 
 ## Install / Run
 
@@ -45,12 +48,23 @@ go build -o sshthing ./cmd/sshthing
 ./sshthing
 ```
 
+## Finder Mounts (Beta, macOS)
+
+Install dependencies:
+
+```bash
+brew install --cask fuse-t
+brew tap macos-fuse-t/homebrew-cask
+brew install --cask fuse-t-sshfs
+```
+
 ## Keybindings
 
 ### Main View
 - `↑/↓` or `j/k`: navigate
 - `Enter`: connect to selected host (SSH)
 - `S` then `Enter`: connect to selected host (SFTP)
+- `M` then `Enter`: mount/unmount selected host in Finder (beta, macOS)
 - `a`: add host
 - `e`: edit host
 - `d`: delete host
@@ -68,12 +82,15 @@ go build -o sshthing ./cmd/sshthing
 ### Spotlight
 - `Enter`: connect (SSH)
 - `S` then `Enter`: connect (SFTP)
+- `M` then `Enter`: mount/unmount (beta, macOS)
 
 ## Data & Safety Notes
 
 - Database location: `~/.ssh-manager/hosts.db`
 - If you forget the master password, the encrypted DB cannot be recovered.
 - Login screen: `Ctrl+R` deletes the DB (destructive) so you can start fresh.
+- Mount points: `~/.config/sshthing/mounts/`
+- If you choose “Leave Mounted & Quit”, a mount key file may remain at `~/.config/sshthing/mount-keys/` until you unmount.
 
 ## Ghostty TERM Note
 

@@ -31,6 +31,13 @@ type HostModel struct {
 	LastConnected *time.Time
 }
 
+type MountState struct {
+	HostID    int
+	LocalPath string
+	RemotePath string
+	MountedAt time.Time
+}
+
 // DBPath returns the path to the database file
 func DBPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -248,6 +255,19 @@ func createSchema(db *sql.DB) error {
 		value TEXT
 	);
 	`)
+	if err != nil {
+		return err
+	}
+
+	// Mount state table (best-effort persistence for Finder mounts)
+	_, err = db.Exec(`
+	CREATE TABLE IF NOT EXISTS mounts (
+		host_id INTEGER PRIMARY KEY,
+		local_path TEXT NOT NULL,
+		remote_path TEXT,
+		mounted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+	`)
 	return err
 }
 
@@ -383,6 +403,53 @@ func getSalt(db *sql.DB) ([]byte, error) {
 // Close closes the database connection
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+func (s *Store) UpsertMountState(hostID int, localPath, remotePath string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO mounts (host_id, local_path, remote_path, mounted_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(host_id) DO UPDATE SET
+			local_path=excluded.local_path,
+			remote_path=excluded.remote_path,
+			mounted_at=excluded.mounted_at
+	`, hostID, localPath, remotePath, time.Now())
+	return err
+}
+
+func (s *Store) DeleteMountState(hostID int) error {
+	_, err := s.db.Exec(`DELETE FROM mounts WHERE host_id = ?`, hostID)
+	return err
+}
+
+func (s *Store) DeleteAllMountStates() error {
+	_, err := s.db.Exec(`DELETE FROM mounts`)
+	return err
+}
+
+func (s *Store) GetMountStates() ([]MountState, error) {
+	rows, err := s.db.Query(`
+		SELECT host_id, local_path, COALESCE(remote_path, ''), mounted_at
+		FROM mounts
+		ORDER BY mounted_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []MountState
+	for rows.Next() {
+		var ms MountState
+		if err := rows.Scan(&ms.HostID, &ms.LocalPath, &ms.RemotePath, &ms.MountedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, ms)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // CreateHost adds a new host

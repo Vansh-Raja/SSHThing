@@ -584,8 +584,89 @@ func (s *Styles) RenderDeleteModal(width, height int, hostname, username string,
 	return centeredModal
 }
 
+// RenderQuitModal renders a quit confirmation modal when mounts are active.
+// focus: 0=Unmount&Quit, 1=Leave Mounted&Quit, 2=Cancel
+func (s *Styles) RenderQuitModal(width, height int, mounts []string, focus int) string {
+	modalWidth := (width * 75) / 100
+	if modalWidth > 72 {
+		modalWidth = 72
+	}
+	if modalWidth < 50 {
+		modalWidth = 50
+	}
+
+	var b strings.Builder
+	b.WriteString(s.ModalTitle.Foreground(ColorWarning).Render("⚠️  Active Mounts"))
+	b.WriteString("\n\n")
+
+	b.WriteString(s.DetailValue.Render("You have active Finder mounts."))
+	b.WriteString("\n")
+	b.WriteString(s.HelpValue.Foreground(ColorTextDim).Render("Unmounting is recommended. Leaving mounts open may keep a mount key file on disk for reconnect."))
+	b.WriteString("\n\n")
+
+	max := 6
+	if len(mounts) > 0 {
+		for i := 0; i < len(mounts) && i < max; i++ {
+			b.WriteString(s.DetailValue.Foreground(ColorText).Bold(false).Render("• " + mounts[i]))
+			b.WriteString("\n")
+		}
+		if len(mounts) > max {
+			b.WriteString(s.HelpValue.Foreground(ColorTextDim).Render(fmt.Sprintf("…and %d more", len(mounts)-max)))
+			b.WriteString("\n")
+		}
+	} else {
+		b.WriteString(s.HelpValue.Foreground(ColorTextDim).Render("No mounts found."))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+
+	unmountStyle := s.FormButton
+	leaveStyle := s.FormButton
+	cancelStyle := s.FormButton
+	switch focus {
+	case 0:
+		unmountStyle = s.FormButtonFocused.Background(ColorDanger)
+	case 1:
+		leaveStyle = s.FormButtonFocused
+	default:
+		cancelStyle = s.FormButtonFocused
+	}
+
+	buttons := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		unmountStyle.Render("Unmount & Quit"),
+		leaveStyle.Render("Leave Mounted & Quit"),
+		cancelStyle.Render("Cancel"),
+	)
+	b.WriteString(buttons)
+	b.WriteString("\n")
+	b.WriteString(s.HelpValue.Foreground(ColorTextDim).Render("[◄/►] Select • [Enter] Confirm • [Esc] Cancel"))
+
+	modalBox := s.Modal.
+	BorderForeground(ColorWarning).
+	Width(modalWidth - 4).
+	Render(b.String())
+
+	topPadding := (height - lipgloss.Height(modalBox)) / 2
+	if topPadding < 0 {
+		topPadding = 0
+	}
+	boxHeight := lipgloss.Height(modalBox)
+	bottomPadding := height - boxHeight - topPadding
+	if bottomPadding < 0 {
+		bottomPadding = 0
+	}
+
+	centeredHorizontal := lipgloss.PlaceHorizontal(width, lipgloss.Center, modalBox)
+	return lipgloss.NewStyle().
+		PaddingTop(topPadding).
+		PaddingBottom(bottomPadding).
+		Render(centeredHorizontal)
+}
+
 // RenderSpotlight renders the Raycast-like search overlay
-func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, results []interface{}, selectedIdx int, armedSFTP bool) string {
+func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, results []interface{}, selectedIdx int, armedSFTP bool, armedMount bool, armedUnmount bool) string {
 	var modal strings.Builder
 
 	// 1. Render Search Input (Top)
@@ -627,12 +708,16 @@ func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, resul
 			label, _ := hostMap["Label"].(string)
 			hostname, _ := hostMap["Hostname"].(string)
 			username, _ := hostMap["Username"].(string)
+			mounted, _ := hostMap["Mounted"].(bool)
 			
 			// Build item string
 			itemText := fmt.Sprintf("%s @ %s", username, hostname)
 			displayLabel := strings.TrimSpace(label)
 			if displayLabel != "" && displayLabel != strings.TrimSpace(hostname) {
 				itemText = fmt.Sprintf("%s — %s", displayLabel, itemText)
+			}
+			if mounted {
+				itemText = "📁 " + itemText
 			}
 			
 			// Truncate if too long
@@ -659,10 +744,14 @@ func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, resul
 	
 	// Footer hint
 	modal.WriteString("\n")
-	if armedSFTP {
-		modal.WriteString(s.HelpValue.Foreground(ColorTextDim).Padding(0, 2).Render("[Esc] Close • [S] Cancel • [Enter] SFTP"))
+	if armedUnmount {
+		modal.WriteString(s.HelpValue.Foreground(ColorTextDim).Padding(0, 2).Render("[Esc] Close • [M] Cancel • [Enter] Unmount"))
+	} else if armedMount {
+		modal.WriteString(s.HelpValue.Foreground(ColorTextDim).Padding(0, 2).Render("[Esc] Close • [M] Cancel • [Enter] Mount"))
+	} else if armedSFTP {
+		modal.WriteString(s.HelpValue.Foreground(ColorTextDim).Padding(0, 2).Render("[Esc] Close • [S] Cancel • [Enter] SFTP • [M] Mount"))
 	} else {
-		modal.WriteString(s.HelpValue.Foreground(ColorTextDim).Padding(0, 2).Render("[Esc] Close • [Enter] SSH • [S] Arm SFTP"))
+		modal.WriteString(s.HelpValue.Foreground(ColorTextDim).Padding(0, 2).Render("[Esc] Close • [Enter] SSH • [S] Arm SFTP • [M] Mount"))
 	}
 
 	modalContent := modal.String()

@@ -27,6 +27,7 @@ const (
 	ViewModeSpotlight
 	ViewModeLogin
 	ViewModeSetup // First-run password setup
+	ViewModeQuitConfirm
 )
 
 // String returns the string representation of ViewMode
@@ -48,6 +49,8 @@ func (v ViewMode) String() string {
 		return "login"
 	case ViewModeSetup:
 		return "setup"
+	case ViewModeQuitConfirm:
+		return "quit_confirm"
 	default:
 		return "unknown"
 	}

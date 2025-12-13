@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Vansh-Raja/SSHThing/internal/db"
+	"github.com/Vansh-Raja/SSHThing/internal/mount"
 	"github.com/Vansh-Raja/SSHThing/internal/ssh"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -21,6 +22,10 @@ type Model struct {
 	width        int
 	height       int
 	armedSFTP    bool
+	armedMount   bool
+	armedUnmount bool
+	quitPrevView ViewMode
+	quitFocus    int // 0=Unmount&Quit, 1=Leave&Quit, 2=Cancel
 
 	// Login/Setup state
 	loginInput   textinput.Model
@@ -40,6 +45,9 @@ type Model struct {
 
 	// Modal state
 	modalForm    *ModalForm
+
+	mountManager *mount.Manager
+	pendingMount *mount.PreparedMount
 }
 
 // ModalForm holds form state for add/edit modals
@@ -105,6 +113,11 @@ func NewModel() Model {
 		isFirstRun:   isFirstRun,
 		isSearching:  false,
 		armedSFTP:    false,
+		armedMount:   false,
+		armedUnmount: false,
+		quitPrevView: ViewModeList,
+		quitFocus:    0,
+		mountManager: mount.NewManager(),
 	}
 }
 
@@ -134,6 +147,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("Disconnected from %s", msg.hostname)
 		}
 		return m, tea.HideCursor
+
+	case mountFinishedMsg:
+		m.viewMode = ViewModeList
+		switch msg.action {
+		case "mount":
+			if m.pendingMount == nil {
+				m.err = fmt.Errorf("mount failed: missing pending state")
+				return m, tea.HideCursor
+			}
+			if msg.err != nil {
+				m.mountManager.AbortMount(m.pendingMount)
+				m.pendingMount = nil
+				m.err = fmt.Errorf("mount failed: %v", msg.err)
+				return m, tea.HideCursor
+			}
+			if err := m.mountManager.FinalizeMount(m.pendingMount); err != nil {
+				m.pendingMount = nil
+				m.err = err
+				return m, tea.HideCursor
+			}
+			local := m.pendingMount.LocalPath
+			m.pendingMount = nil
+			m.err = fmt.Errorf("✓ Mounted at %s", local)
+			if m.store != nil {
+				// Persist that this host is mounted (best-effort). Next launch will reconcile with system mounts.
+				_ = m.store.UpsertMountState(msg.hostID, local, "")
+			}
+			return m, tea.HideCursor
+		case "unmount":
+			if err := m.mountManager.FinalizeUnmount(msg.hostID, msg.err); err != nil {
+				m.err = err
+				return m, tea.HideCursor
+			}
+			if m.store != nil {
+				_ = m.store.DeleteMountState(msg.hostID)
+			}
+			m.err = fmt.Errorf("✓ Unmounted")
+			return m, tea.HideCursor
+		default:
+			m.err = fmt.Errorf("mount error: unknown action")
+			return m, tea.HideCursor
+		}
+
+	case quitFinishedMsg:
+		return m, tea.Quit
 	}
 	
 	// Handle blink for inputs
@@ -163,7 +221,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Global quit keybinding
 	if msg.String() == "ctrl+c" {
-		return m, tea.Quit
+		return m.requestQuit()
 	}
 
 	switch m.viewMode {
@@ -181,9 +239,27 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSpotlightKeys(msg)
 	case ViewModeHelp:
 		return m.handleHelpKeys(msg)
+	case ViewModeQuitConfirm:
+		return m.handleQuitConfirmKeys(msg)
 	}
 
 	return m, nil
+}
+
+func (m Model) requestQuit() (tea.Model, tea.Cmd) {
+	if m.viewMode == ViewModeQuitConfirm {
+		return m, nil
+	}
+	if m.mountManager != nil {
+		if mounts := m.mountManager.ListActive(); len(mounts) > 0 {
+			m.quitPrevView = m.viewMode
+			m.quitFocus = 0
+			m.viewMode = ViewModeQuitConfirm
+			m.err = nil
+			return m, nil
+		}
+	}
+	return m, tea.Quit
 }
 
 func (m Model) handleLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -200,6 +276,7 @@ func (m Model) handleLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m.store = store
 		m.loadHosts()
+		m.restoreMountsFromDB()
 		m.err = nil
 		m.viewMode = ViewModeList
 		return m, nil
@@ -290,6 +367,7 @@ func (m Model) handleSetupKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 			m.store = store
 			m.loadHosts()
+			m.restoreMountsFromDB()
 			m.viewMode = ViewModeList
 			m.err = nil
 			return m, nil
@@ -310,6 +388,54 @@ func (m Model) handleSetupKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmInput, cmd = m.confirmInput.Update(msg)
 	}
 	return m, cmd
+}
+
+func (m Model) handleQuitConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.viewMode = m.quitPrevView
+		m.quitFocus = 0
+		return m, nil
+
+	case "left", "h", "shift+tab":
+		if m.quitFocus > 0 {
+			m.quitFocus--
+		}
+		return m, nil
+
+	case "right", "l", "tab":
+		if m.quitFocus < 2 {
+			m.quitFocus++
+		}
+		return m, nil
+
+	case "enter":
+		switch m.quitFocus {
+		case 0: // unmount & quit
+			m.err = fmt.Errorf("Unmounting mounts…")
+			return m, func() tea.Msg {
+				if m.mountManager != nil {
+					m.mountManager.UnmountAll()
+				}
+				if m.store != nil {
+					_ = m.store.DeleteAllMountStates()
+				}
+				return quitFinishedMsg{}
+			}
+		case 1: // leave mounted & quit
+			if m.store != nil && m.mountManager != nil {
+				for _, mt := range m.mountManager.ListActive() {
+					_ = m.store.UpsertMountState(mt.HostID, mt.LocalPath, mt.RemotePath)
+				}
+			}
+			return m, tea.Quit
+		default: // cancel
+			m.viewMode = m.quitPrevView
+			m.quitFocus = 0
+			return m, nil
+		}
+	}
+	return m, nil
 }
 
 func (m *Model) loadHosts() {
@@ -345,6 +471,49 @@ func (m *Model) loadHosts() {
 	}
 }
 
+func (m *Model) restoreMountsFromDB() {
+	if m.store == nil || m.mountManager == nil {
+		return
+	}
+	states, err := m.store.GetMountStates()
+	if err != nil {
+		// Non-fatal; mounts are a beta/optional feature.
+		return
+	}
+
+	byID := make(map[int]Host, len(m.hosts))
+	for _, h := range m.hosts {
+		byID[h.ID] = h
+	}
+
+	var toRestore []mount.Mount
+	for _, st := range states {
+		ok, err := mount.IsMounted(st.LocalPath)
+		if err != nil {
+			continue
+		}
+		if !ok {
+			_ = m.store.DeleteMountState(st.HostID)
+			continue
+		}
+		host, _ := byID[st.HostID]
+		hostname := strings.TrimSpace(host.Hostname)
+		if hostname == "" {
+			hostname = fmt.Sprintf("host_%d", st.HostID)
+		}
+		toRestore = append(toRestore, mount.Mount{
+			HostID:     st.HostID,
+			Hostname:   hostname,
+			LocalPath:  st.LocalPath,
+			RemotePath: st.RemotePath,
+		})
+	}
+
+	if len(toRestore) > 0 {
+		m.mountManager.RestoreMounted(toRestore)
+	}
+}
+
 // handleSpotlightKeys handles input for the spotlight view
 func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -354,14 +523,46 @@ func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchInput.Blur()
 		m.searchInput.Reset()
 		m.armedSFTP = false
+		m.armedMount = false
+		m.armedUnmount = false
 		return m, nil
 
 	case "S":
 		m.armedSFTP = !m.armedSFTP
+		m.armedMount = false
+		m.armedUnmount = false
 		if m.armedSFTP {
 			m.err = fmt.Errorf("SFTP armed — press Enter")
 		} else {
 			m.err = nil
+		}
+		return m, nil
+
+	case "M":
+		filtered := m.getFilteredHosts()
+		if len(filtered) == 0 || m.selectedIdx >= len(filtered) {
+			return m, nil
+		}
+		host := filtered[m.selectedIdx]
+		isMounted := false
+		if m.mountManager != nil {
+			isMounted, _ = m.mountManager.IsMounted(host.ID)
+		}
+
+		if m.armedMount || m.armedUnmount {
+			m.armedMount = false
+			m.armedUnmount = false
+			m.err = nil
+			return m, nil
+		}
+
+		m.armedSFTP = false
+		if isMounted {
+			m.armedUnmount = true
+			m.err = fmt.Errorf("Unmount armed — press Enter")
+		} else {
+			m.armedMount = true
+			m.err = fmt.Errorf("Mount (beta) armed — press Enter")
 		}
 		return m, nil
 	
@@ -376,6 +577,9 @@ func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.isSearching = false
 			m.searchInput.Blur()
 			m.searchInput.Reset()
+			if m.armedMount || m.armedUnmount {
+				return m.handleMountEnter(host)
+			}
 			if m.armedSFTP {
 				m.armedSFTP = false
 				return m.connectToHostSFTP(host)
@@ -412,16 +616,57 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Normal list navigation
 	switch msg.String() {
 	case "q":
-		return m, tea.Quit
+		return m.requestQuit()
 
 	case "S":
 		m.armedSFTP = !m.armedSFTP
+		m.armedMount = false
+		m.armedUnmount = false
 		if m.armedSFTP {
 			m.err = fmt.Errorf("SFTP armed — press Enter")
 		} else {
 			m.err = nil
 		}
 		return m, nil
+
+	case "M":
+		// Arm mount/unmount (global chord: M then Enter)
+		filtered := m.getFilteredHosts()
+		if len(filtered) == 0 || m.selectedIdx >= len(filtered) {
+			return m, nil
+		}
+		host := filtered[m.selectedIdx]
+		isMounted := false
+		if m.mountManager != nil {
+			isMounted, _ = m.mountManager.IsMounted(host.ID)
+		}
+
+		// Toggle behavior: pressing M again cancels.
+		if m.armedMount || m.armedUnmount {
+			m.armedMount = false
+			m.armedUnmount = false
+			m.err = nil
+			return m, nil
+		}
+
+		m.armedSFTP = false
+		if isMounted {
+			m.armedUnmount = true
+			m.err = fmt.Errorf("Unmount armed — press Enter")
+		} else {
+			m.armedMount = true
+			m.err = fmt.Errorf("Mount (beta) armed — press Enter")
+		}
+		return m, nil
+
+	case "esc":
+		if m.armedSFTP || m.armedMount || m.armedUnmount {
+			m.armedSFTP = false
+			m.armedMount = false
+			m.armedUnmount = false
+			m.err = nil
+			return m, nil
+		}
 
 	case "up", "k":
 		if m.selectedIdx > 0 {
@@ -482,6 +727,9 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		filtered := m.getFilteredHosts()
 		if len(filtered) > 0 && m.selectedIdx < len(filtered) {
 			host := filtered[m.selectedIdx]
+			if m.armedMount || m.armedUnmount {
+				return m.handleMountEnter(host)
+			}
 			if m.armedSFTP {
 				m.armedSFTP = false
 				return m.connectToHostSFTP(host)
@@ -956,6 +1204,14 @@ func (m Model) View() string {
 	filtered := m.getFilteredHosts()
 	hostsInterface := make([]interface{}, len(filtered))
 	for i, host := range filtered {
+		mounted := false
+		mountPath := ""
+		if m.mountManager != nil {
+			if ok, mt := m.mountManager.IsMounted(host.ID); ok && mt != nil {
+				mounted = true
+				mountPath = mt.LocalPath
+			}
+		}
 		hostsInterface[i] = map[string]interface{}{
 			"ID":            host.ID,
 			"Label":         host.Label,
@@ -964,6 +1220,8 @@ func (m Model) View() string {
 			"Port":          host.Port,
 			"HasKey":        host.HasKey,
 			"KeyType":       host.KeyType,
+			"Mounted":       mounted,
+			"MountPath":     mountPath,
 			"CreatedAt":     host.CreatedAt,
 			"LastConnected": host.LastConnected,
 		}
@@ -984,9 +1242,25 @@ func (m Model) View() string {
 		return m.renderDeleteView() + hideCursorAndMoveAway
 	case ViewModeSpotlight:
 		return m.renderSpotlightView() + hideCursorAndMoveAway
+	case ViewModeQuitConfirm:
+		return m.renderQuitConfirmView() + hideCursorAndMoveAway
 	default:
 		return "Unknown view mode" + hideCursorAndMoveAway
 	}
+}
+
+func (m Model) renderQuitConfirmView() string {
+	var lines []string
+	if m.mountManager != nil {
+		for _, mt := range m.mountManager.ListActive() {
+			host := strings.TrimSpace(mt.Hostname)
+			if host == "" {
+				host = fmt.Sprintf("host_%d", mt.HostID)
+			}
+			lines = append(lines, fmt.Sprintf("%s → %s", host, mt.LocalPath))
+		}
+	}
+	return m.styles.RenderQuitModal(m.width, m.height, lines, m.quitFocus)
 }
 
 // renderSpotlightView renders the spotlight overlay
@@ -995,14 +1269,19 @@ func (m Model) renderSpotlightView() string {
 	filtered := m.getFilteredHosts()
 	hostsInterface := make([]interface{}, len(filtered))
 	for i, host := range filtered {
+		mounted := false
+		if m.mountManager != nil {
+			mounted, _ = m.mountManager.IsMounted(host.ID)
+		}
 		hostsInterface[i] = map[string]interface{}{
 			"Label":    host.Label,
 			"Hostname": host.Hostname,
 			"Username": host.Username,
+			"Mounted":  mounted,
 		}
 	}
 	
-	return m.styles.RenderSpotlight(m.width, m.height, m.searchInput, hostsInterface, m.selectedIdx, m.armedSFTP)
+	return m.styles.RenderSpotlight(m.width, m.height, m.searchInput, hostsInterface, m.selectedIdx, m.armedSFTP, m.armedMount, m.armedUnmount)
 }
 
 // renderModalView renders the add/edit modal
@@ -1045,6 +1324,8 @@ func (m Model) renderDeleteView() string {
 // connectToHost initiates an SSH connection to the given host
 func (m Model) connectToHost(host Host) (tea.Model, tea.Cmd) {
 	m.armedSFTP = false
+	m.armedMount = false
+	m.armedUnmount = false
 
 	// Get the decrypted key if available
 	var privateKey string
@@ -1096,6 +1377,8 @@ func (m Model) connectToHost(host Host) (tea.Model, tea.Cmd) {
 
 func (m Model) connectToHostSFTP(host Host) (tea.Model, tea.Cmd) {
 	m.armedSFTP = false
+	m.armedMount = false
+	m.armedUnmount = false
 
 	// Get the decrypted key if available
 	var privateKey string
@@ -1140,12 +1423,92 @@ func (m Model) connectToHostSFTP(host Host) (tea.Model, tea.Cmd) {
 	)
 }
 
+func (m Model) handleMountEnter(host Host) (tea.Model, tea.Cmd) {
+	m.armedSFTP = false
+
+	if m.mountManager == nil {
+		m.armedMount = false
+		m.armedUnmount = false
+		m.err = fmt.Errorf("⚠ mount manager not initialized")
+		return m, nil
+	}
+
+	// Unmount flow
+	if m.armedUnmount {
+		m.armedUnmount = false
+		cmd, localPath, err := m.mountManager.PrepareUnmount(host.ID)
+		if err != nil {
+			m.err = err
+			return m, nil
+		}
+		_ = localPath
+		return m, tea.Sequence(
+			tea.ShowCursor,
+			tea.ExecProcess(cmd, func(err error) tea.Msg {
+				return mountFinishedMsg{action: "unmount", hostID: host.ID, local: localPath, err: err}
+			}),
+		)
+	}
+
+	// Mount flow
+	m.armedMount = false
+
+	// Get the decrypted key if available (optional; sshfs can also use default agent keys).
+	var privateKey string
+	if host.HasKey && host.KeyType != "password" {
+		key, err := m.store.GetHostKey(host.ID)
+		if err != nil {
+			m.err = fmt.Errorf("failed to decrypt key: %v", err)
+			return m, nil
+		}
+		if err := ssh.ValidatePrivateKey(key); err != nil {
+			m.err = fmt.Errorf("stored private key is invalid format: %v", err)
+			return m, nil
+		}
+		privateKey = key
+	}
+
+	remotePath := "" // default home dir; configurable later via settings.
+	display := strings.TrimSpace(host.Label)
+	if display == "" {
+		display = host.Hostname
+	}
+
+	prep, err := m.mountManager.PrepareMount(host.ID, ssh.Connection{
+		Hostname:   host.Hostname,
+		Username:   host.Username,
+		Port:       host.Port,
+		PrivateKey: privateKey,
+	}, remotePath, display)
+	if err != nil {
+		m.err = err
+		return m, nil
+	}
+
+	m.pendingMount = prep
+	return m, tea.Sequence(
+		tea.ShowCursor,
+		tea.ExecProcess(prep.Cmd(), func(err error) tea.Msg {
+			return mountFinishedMsg{action: "mount", hostID: host.ID, local: prep.LocalPath, err: err}
+		}),
+	)
+}
+
 // sshFinishedMsg is sent when an SSH/SFTP session ends
 type sshFinishedMsg struct {
 	err      error
 	hostname string
 	proto    string
 }
+
+type mountFinishedMsg struct {
+	action  string // "mount" | "unmount"
+	hostID  int
+	local   string
+	err     error
+}
+
+type quitFinishedMsg struct{}
 
 // Helper functions
 func min(a, b int) int {

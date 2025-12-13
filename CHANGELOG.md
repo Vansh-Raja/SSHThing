@@ -67,6 +67,19 @@ Entries below are written as an “engineering history” of the major problems 
 
 **Where:** `internal/ssh/connect.go` (`ConnectSFTP`), `internal/app/app.go` (keybinding + routing), `internal/ui/modals.go` (spotlight footer hints), `internal/ui/main.go` (footer/help text).
 
+### Finder Mounts (Beta, macOS)
+
+**Goal:** Mount a remote host in macOS Finder (Explorer-like workflow) using SFTP/SSHFS.
+
+**Implementation:**
+- Added a mount manager that shells out to `sshfs` (FUSE-T) and opens the mountpoint in Finder.
+- Keybinding uses a reliable chord: press `M` to arm mount/unmount, then `Enter` to execute.
+- Added a quit confirmation modal when mounts are active (Unmount & Quit vs Leave Mounted & Quit).
+- Persisted mount state in the DB and reconciles it on next login by checking the OS’s actual mounted filesystems.
+- Improved “leave mounted” safety by writing a per-host mount key file under `~/.config/sshthing/mount-keys/` (0600) and deleting it on unmount.
+
+**Where:** `internal/mount/mount.go`, `internal/db/db.go` (`mounts` table), `internal/app/app.go` (quit modal + restore), `internal/ui/modals.go` (quit modal UI).
+
 ### Ghostty Compatibility (Remote “unknown terminal type”)
 
 **Problem:** When connecting from Ghostty, remote shells could error on `clear`:
