@@ -4,9 +4,9 @@ class Sshthing < Formula
 
   # For an initial tap-based install, ship a HEAD-only formula.
   # Once you cut releases, replace this with `url` + `sha256` blocks.
-  head "https://github.com/Vansh-Raja/SSHThing.git", branch: "main"
+  head "https://github.com/Vansh-Raja/SSHThing.git", branch: "homebrew-tap"
 
-  depends_on "go"
+  depends_on "go" => :build
   depends_on "sqlcipher"
 
   def install
