@@ -48,6 +48,15 @@ go build -o sshthing ./cmd/sshthing
 ./sshthing
 ```
 
+## Homebrew (Tap)
+
+Once a tap is published (see `HOMEBREW.md`):
+
+```bash
+brew tap Vansh-Raja/tap
+brew install sshthing
+```
+
 ## Finder Mounts (Beta, macOS)
 
 Install dependencies:
