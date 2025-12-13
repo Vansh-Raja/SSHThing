@@ -41,6 +41,16 @@ A secure, modern SSH host manager TUI built with Go and Bubble Tea.
 
 ## Install / Run
 
+### Homebrew (macOS)
+
+```bash
+brew tap vansh-raja/tap
+brew install sshthing
+sshthing
+```
+
+### From source
+
 ```bash
 git clone https://github.com/Vansh-Raja/SSHThing.git
 cd SSHThing

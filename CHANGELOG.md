@@ -1,6 +1,6 @@
 # Changelog
 
-This repo is developed on `main` and doesn’t currently publish versioned releases/tags.
+This repo is developed on `main`. Versioned releases are published as tags (starting at `v0.1.0`).
 Entries below are written as an “engineering history” of the major problems we hit and how we fixed them (useful for future write-ups/portfolio posts).
 
 ## 2025-12-13 — Stabilization, Security, and Polish
