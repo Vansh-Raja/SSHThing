@@ -25,8 +25,11 @@ go build -o sshthing ./cmd/sshthing
 
 ## Connect
 
-- Select a host and press `Enter`
-- Or press `/` to open spotlight search and hit `Enter` on a result
+- Select a host and press `Enter` (SSH)
+- For SFTP: press `S`, then `Enter`
+- Or press `/` to open spotlight search and:
+  - `Enter` for SSH
+  - `S`, then `Enter` for SFTP
 
 ## Reset DB (Destructive)
 

@@ -20,6 +20,7 @@ type Model struct {
 	viewMode     ViewMode
 	width        int
 	height       int
+	armedSFTP    bool
 
 	// Login/Setup state
 	loginInput   textinput.Model
@@ -103,6 +104,7 @@ func NewModel() Model {
 		confirmInput: confirmInput,
 		isFirstRun:   isFirstRun,
 		isSearching:  false,
+		armedSFTP:    false,
 	}
 }
 
@@ -123,11 +125,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case sshFinishedMsg:
-		// SSH session ended, reload hosts to update last_connected
+		// Session ended, reload hosts to update last_connected
 		m.loadHosts()
 		m.viewMode = ViewModeList
 		if msg.err != nil {
-			m.err = fmt.Errorf("SSH session ended: %v", msg.err)
+			m.err = fmt.Errorf("%s session ended: %v", msg.proto, msg.err)
 		} else {
 			m.err = fmt.Errorf("Disconnected from %s", msg.hostname)
 		}
@@ -351,6 +353,16 @@ func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.isSearching = false
 		m.searchInput.Blur()
 		m.searchInput.Reset()
+		m.armedSFTP = false
+		return m, nil
+
+	case "S":
+		m.armedSFTP = !m.armedSFTP
+		if m.armedSFTP {
+			m.err = fmt.Errorf("SFTP armed — press Enter")
+		} else {
+			m.err = nil
+		}
 		return m, nil
 	
 	case "enter":
@@ -364,6 +376,10 @@ func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.isSearching = false
 			m.searchInput.Blur()
 			m.searchInput.Reset()
+			if m.armedSFTP {
+				m.armedSFTP = false
+				return m.connectToHostSFTP(host)
+			}
 			return m.connectToHost(host)
 		}
 		return m, nil
@@ -397,6 +413,15 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q":
 		return m, tea.Quit
+
+	case "S":
+		m.armedSFTP = !m.armedSFTP
+		if m.armedSFTP {
+			m.err = fmt.Errorf("SFTP armed — press Enter")
+		} else {
+			m.err = nil
+		}
+		return m, nil
 
 	case "up", "k":
 		if m.selectedIdx > 0 {
@@ -457,6 +482,10 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		filtered := m.getFilteredHosts()
 		if len(filtered) > 0 && m.selectedIdx < len(filtered) {
 			host := filtered[m.selectedIdx]
+			if m.armedSFTP {
+				m.armedSFTP = false
+				return m.connectToHostSFTP(host)
+			}
 			return m.connectToHost(host)
 		}
 
@@ -973,7 +1002,7 @@ func (m Model) renderSpotlightView() string {
 		}
 	}
 	
-	return m.styles.RenderSpotlight(m.width, m.height, m.searchInput, hostsInterface, m.selectedIdx)
+	return m.styles.RenderSpotlight(m.width, m.height, m.searchInput, hostsInterface, m.selectedIdx, m.armedSFTP)
 }
 
 // renderModalView renders the add/edit modal
@@ -1015,6 +1044,8 @@ func (m Model) renderDeleteView() string {
 
 // connectToHost initiates an SSH connection to the given host
 func (m Model) connectToHost(host Host) (tea.Model, tea.Cmd) {
+	m.armedSFTP = false
+
 	// Get the decrypted key if available
 	var privateKey string
 	if host.HasKey && host.KeyType != "password" {
@@ -1058,15 +1089,62 @@ func (m Model) connectToHost(host Host) (tea.Model, tea.Cmd) {
 			if tempKey != nil {
 				tempKey.Cleanup()
 			}
-			return sshFinishedMsg{err: err, hostname: host.Hostname}
+			return sshFinishedMsg{err: err, hostname: host.Hostname, proto: "SSH"}
 		}),
 	)
 }
 
-// sshFinishedMsg is sent when an SSH session ends
+func (m Model) connectToHostSFTP(host Host) (tea.Model, tea.Cmd) {
+	m.armedSFTP = false
+
+	// Get the decrypted key if available
+	var privateKey string
+	if host.HasKey && host.KeyType != "password" {
+		key, err := m.store.GetHostKey(host.ID)
+		if err != nil {
+			m.err = fmt.Errorf("failed to decrypt key: %v", err)
+			return m, nil
+		}
+		if err := ssh.ValidatePrivateKey(key); err != nil {
+			m.err = fmt.Errorf("stored private key is invalid format: %v", err)
+			return m, nil
+		}
+		privateKey = key
+	}
+
+	conn := ssh.Connection{
+		Hostname:   host.Hostname,
+		Username:   host.Username,
+		Port:       host.Port,
+		PrivateKey: privateKey,
+	}
+
+	cmd, tempKey, err := ssh.ConnectSFTP(conn)
+	if err != nil {
+		m.err = fmt.Errorf("failed to prepare SFTP session: %v", err)
+		return m, nil
+	}
+
+	if m.store != nil {
+		m.store.UpdateLastConnected(host.ID)
+	}
+
+	return m, tea.Sequence(
+		tea.ShowCursor,
+		tea.ExecProcess(cmd, func(err error) tea.Msg {
+			if tempKey != nil {
+				tempKey.Cleanup()
+			}
+			return sshFinishedMsg{err: err, hostname: host.Hostname, proto: "SFTP"}
+		}),
+	)
+}
+
+// sshFinishedMsg is sent when an SSH/SFTP session ends
 type sshFinishedMsg struct {
 	err      error
 	hostname string
+	proto    string
 }
 
 // Helper functions

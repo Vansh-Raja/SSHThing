@@ -284,7 +284,8 @@ func (s *Styles) RenderFooter(width int, err error) string {
 	// Keybindings
 	bindings := []string{
 		s.HelpKey.Render("[↑/↓]") + " " + s.HelpValue.Render("Navigate"),
-		s.HelpKey.Render("[Enter]") + " " + s.HelpValue.Render("Connect"),
+		s.HelpKey.Render("[Enter]") + " " + s.HelpValue.Render("SSH"),
+		s.HelpKey.Render("[S]") + " " + s.HelpValue.Render("Arm SFTP"),
 		s.HelpKey.Render("[a]") + " " + s.HelpValue.Render("Add"),
 		s.HelpKey.Render("[e]") + " " + s.HelpValue.Render("Edit"),
 		s.HelpKey.Render("[d]") + " " + s.HelpValue.Render("Delete"),
@@ -345,6 +346,7 @@ func classifyFooterNotice(message string) footerNoticeKind {
 	}
 	if strings.Contains(lower, "disconnected") ||
 		strings.Contains(lower, "connected") ||
+		strings.Contains(lower, "armed") ||
 		strings.Contains(lower, "database deleted") ||
 		strings.Contains(lower, "db deleted") {
 		return footerNoticeInfo
@@ -375,6 +377,7 @@ func (s *Styles) RenderHelpView(width, height int) string {
 		{"Ctrl+U/D", "Page up/down"},
 		{"Home/End or g/G", "Jump to top/bottom"},
 		{"Enter", "Connect to selected host"},
+		{"S then Enter", "Connect via SFTP"},
 		{"a or Ctrl+N", "Add new host"},
 		{"e", "Edit selected host"},
 		{"d or Delete", "Delete selected host"},

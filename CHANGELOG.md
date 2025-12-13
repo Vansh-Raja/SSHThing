@@ -55,6 +55,18 @@ Entries below are written as an “engineering history” of the major problems 
 
 **Where:** `ssh/connect.go` (`NewTempKeyFile`, cleanup).
 
+### SFTP Sessions (Using Saved Credentials)
+
+**Goal:** Launch an interactive `sftp` session using the same stored host + key setup as SSH.
+
+**Implementation:**
+- Added a second connection path that runs system `sftp` instead of `ssh`.
+- Reuses the same temp identity file + cleanup logic for key-based auth.
+- Keybinding uses a reliable chord: press `S` to arm SFTP, then `Enter` to connect.
+- Works from both the main list and spotlight search.
+
+**Where:** `internal/ssh/connect.go` (`ConnectSFTP`), `internal/app/app.go` (keybinding + routing), `internal/ui/modals.go` (spotlight footer hints), `internal/ui/main.go` (footer/help text).
+
 ### Ghostty Compatibility (Remote “unknown terminal type”)
 
 **Problem:** When connecting from Ghostty, remote shells could error on `clear`:

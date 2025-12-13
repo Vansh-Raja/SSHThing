@@ -49,7 +49,8 @@ go build -o sshthing ./cmd/sshthing
 
 ### Main View
 - `↑/↓` or `j/k`: navigate
-- `Enter`: connect to selected host
+- `Enter`: connect to selected host (SSH)
+- `S` then `Enter`: connect to selected host (SFTP)
 - `a`: add host
 - `e`: edit host
 - `d`: delete host
@@ -63,6 +64,10 @@ go build -o sshthing ./cmd/sshthing
 - `Space` on Key Type: cycle key type
 - `Shift+Enter`: save and close
 - `Esc`: cancel
+
+### Spotlight
+- `Enter`: connect (SSH)
+- `S` then `Enter`: connect (SFTP)
 
 ## Data & Safety Notes
 

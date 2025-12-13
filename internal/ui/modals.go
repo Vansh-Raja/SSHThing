@@ -585,7 +585,7 @@ func (s *Styles) RenderDeleteModal(width, height int, hostname, username string,
 }
 
 // RenderSpotlight renders the Raycast-like search overlay
-func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, results []interface{}, selectedIdx int) string {
+func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, results []interface{}, selectedIdx int, armedSFTP bool) string {
 	var modal strings.Builder
 
 	// 1. Render Search Input (Top)
@@ -659,7 +659,11 @@ func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, resul
 	
 	// Footer hint
 	modal.WriteString("\n")
-	modal.WriteString(s.HelpValue.Foreground(ColorTextDim).Padding(0, 2).Render("[Esc] Close • [Enter] Connect"))
+	if armedSFTP {
+		modal.WriteString(s.HelpValue.Foreground(ColorTextDim).Padding(0, 2).Render("[Esc] Close • [S] Cancel • [Enter] SFTP"))
+	} else {
+		modal.WriteString(s.HelpValue.Foreground(ColorTextDim).Padding(0, 2).Render("[Esc] Close • [Enter] SSH • [S] Arm SFTP"))
+	}
 
 	modalContent := modal.String()
 

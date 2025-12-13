@@ -125,6 +125,45 @@ func Connect(conn Connection) (*exec.Cmd, *TempKeyFile, error) {
 	return cmd, tempKey, nil
 }
 
+// ConnectSFTP establishes an interactive SFTP session using the system `sftp` client.
+// It returns the exec.Cmd that can be used to run the session and any temp key file
+// that must be cleaned up after exit.
+func ConnectSFTP(conn Connection) (*exec.Cmd, *TempKeyFile, error) {
+	var tempKey *TempKeyFile
+	var args []string
+
+	// Pass SSH options through to the underlying transport.
+	args = append(args, "-o", "StrictHostKeyChecking=accept-new")
+	args = append(args, "-o", "ServerAliveInterval=60")
+
+	// sftp uses -P (uppercase) for port.
+	if conn.Port != 22 && conn.Port != 0 {
+		args = append(args, "-P", fmt.Sprintf("%d", conn.Port))
+	}
+
+	// Handle authentication
+	if conn.PrivateKey != "" {
+		var err error
+		tempKey, err = NewTempKeyFile(conn.PrivateKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create temp key file: %w", err)
+		}
+		args = append(args, "-i", tempKey.Path())
+	}
+
+	// Add target
+	target := conn.Username + "@" + conn.Hostname
+	args = append(args, target)
+
+	cmd := exec.Command("sftp", args...)
+	cmd.Env = sshEnv()
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd, tempKey, nil
+}
+
 func sshEnv() []string {
 	env := os.Environ()
 
