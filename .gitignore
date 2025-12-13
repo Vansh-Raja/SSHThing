@@ -1,9 +1,9 @@
 # Binaries
-ssh-manager
-sshthing
-SSHThing
-ssh-manager-fixed
-ssh-manager-fixed2
+/ssh-manager
+/sshthing
+/SSHThing
+/ssh-manager-fixed
+/ssh-manager-fixed2
 *.exe
 *.exe~
 *.dll
