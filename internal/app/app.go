@@ -1,12 +1,12 @@
-package main
+package app
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/Vansh-Raja/SSHThing/db"
-	"github.com/Vansh-Raja/SSHThing/ssh"
-	"github.com/Vansh-Raja/SSHThing/ui"
+	"github.com/Vansh-Raja/SSHThing/internal/db"
+	"github.com/Vansh-Raja/SSHThing/internal/ssh"
+	"github.com/Vansh-Raja/SSHThing/internal/ui"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"

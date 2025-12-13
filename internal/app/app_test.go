@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"testing"
@@ -8,7 +8,12 @@ import (
 
 func TestGetFilteredHosts(t *testing.T) {
 	m := NewModel()
-	m.hosts = GetHardcodedHosts()
+	m.hosts = []Host{
+		{Hostname: "web-prod-1.example.com", Username: "ec2-user", Label: "web-prod-1"},
+		{Hostname: "db-server.internal", Username: "ubuntu", Label: "db-server"},
+		{Hostname: "staging.dev.local", Username: "deploy", Label: "staging"},
+		{Hostname: "backup-nas.home", Username: "admin", Label: "backup-nas"},
+	}
 	m.searchInput = textinput.New()
 
 	// Test case 1: No filter

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Vansh-Raja/SSHThing/crypto"
+	"github.com/Vansh-Raja/SSHThing/internal/crypto"
 	_ "github.com/mutecomm/go-sqlcipher/v4" // SQLCipher driver
 )
 
@@ -136,7 +136,7 @@ func Init(password string) (*Store, error) {
 		return nil, err
 	}
 
-	// Get or Create Salt for per-key Fernet encryption (second layer)
+	// Get or create salt for per-key AES-GCM encryption (second layer)
 	salt, err := getSalt(db)
 	if err != nil {
 		db.Close()

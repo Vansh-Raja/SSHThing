@@ -1,11 +1,11 @@
-package main
+package db_test
 
 import (
 	"fmt"
 	"os"
 	"testing"
 
-	"github.com/Vansh-Raja/SSHThing/db"
+	"github.com/Vansh-Raja/SSHThing/internal/db"
 )
 
 func TestDatabaseOperations(t *testing.T) {
