@@ -25,6 +25,7 @@ const (
 	ViewModeDeleteHost
 	ViewModeHelp
 	ViewModeSpotlight
+	ViewModeSettings
 	ViewModeLogin
 	ViewModeSetup // First-run password setup
 	ViewModeQuitConfirm
@@ -45,6 +46,8 @@ func (v ViewMode) String() string {
 		return "help"
 	case ViewModeSpotlight:
 		return "spotlight"
+	case ViewModeSettings:
+		return "settings"
 	case ViewModeLogin:
 		return "login"
 	case ViewModeSetup:

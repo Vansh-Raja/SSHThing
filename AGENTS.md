@@ -8,6 +8,8 @@
 - `internal/db/`: SQLCipher database initialization, migrations, CRUD.
 - `internal/crypto/`: PBKDF2 + AES-GCM helpers for per-key encryption.
 - `internal/ssh/`: `ssh` subprocess integration, temp key handling, key generation.
+- `internal/sync/`: Git synchronization logic (export/import, encrypted JSON, conflict resolution).
+- `internal/config/`: Configuration file handling (`config.json`) and defaults.
 - Docs: `README.md`, `QUICKSTART.md`, `CHANGELOG.md`.
 
 ## Build, Test, and Development Commands

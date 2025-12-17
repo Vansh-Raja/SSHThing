@@ -122,3 +122,17 @@ Entries below are written as an “engineering history” of the major problems 
 - Standardized build output name to `sshthing` (consistent with docs).
 - Updated docs to reflect the current encrypted architecture and keybindings.
 - Added/updated tests around filtering and DB unlock behavior (and adjusted Go tooling to work with restricted cache paths by allowing `GOCACHE` override during tests).
+
+### Git Sync Feature
+
+**Goal:** Enable users to sync their encrypted SSH hosts across multiple devices using a private Git repository.
+
+**Implementation:**
+- Added a sync manager that orchestrates Git operations, export/import, and conflict resolution.
+- Export: Hosts are serialized to JSON with keys remaining encrypted (AES-GCM), including the source database salt for re-encryption.
+- Import: Remote hosts are merged with local data, respecting timestamps to handle conflicts.
+- Git operations: Uses SSH key authentication, supports custom branches, and handles empty/first-time repositories.
+- Security: Private keys never leave the database decrypted; the master password is required on all devices to decrypt synced keys.
+- UI: Sync status shown in settings, with Shift+Y to trigger manual sync.
+
+**Where:** `internal/sync/` (manager, git, export, import, data), `internal/app/app.go` (sync triggers), `internal/ui/settings.go` (sync config display).

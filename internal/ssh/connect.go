@@ -17,6 +17,11 @@ type Connection struct {
 	Port       int
 	PrivateKey string // Decrypted private key content
 	Password   string // For password auth (not recommended)
+
+	// Options
+	HostKeyPolicy    string // "accept-new" | "strict" | "off"
+	KeepAliveSeconds int
+	Term             string // optional TERM override (env SSHTHING_SSH_TERM still wins)
 }
 
 // TempKeyFile manages a temporary file for the SSH private key
@@ -92,8 +97,8 @@ func Connect(conn Connection) (*exec.Cmd, *TempKeyFile, error) {
 	var args []string
 
 	// Build SSH command arguments
-	args = append(args, "-o", "StrictHostKeyChecking=accept-new")
-	args = append(args, "-o", "ServerAliveInterval=60")
+	args = append(args, "-o", "StrictHostKeyChecking="+strictHostKeyChecking(conn.HostKeyPolicy))
+	args = append(args, "-o", fmt.Sprintf("ServerAliveInterval=%d", keepAliveSeconds(conn.KeepAliveSeconds)))
 
 	// Add port if not default
 	if conn.Port != 22 && conn.Port != 0 {
@@ -117,7 +122,7 @@ func Connect(conn Connection) (*exec.Cmd, *TempKeyFile, error) {
 
 	// Create the command
 	cmd := exec.Command("ssh", args...)
-	cmd.Env = sshEnv()
+	cmd.Env = sshEnv(conn.Term)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -133,8 +138,8 @@ func ConnectSFTP(conn Connection) (*exec.Cmd, *TempKeyFile, error) {
 	var args []string
 
 	// Pass SSH options through to the underlying transport.
-	args = append(args, "-o", "StrictHostKeyChecking=accept-new")
-	args = append(args, "-o", "ServerAliveInterval=60")
+	args = append(args, "-o", "StrictHostKeyChecking="+strictHostKeyChecking(conn.HostKeyPolicy))
+	args = append(args, "-o", fmt.Sprintf("ServerAliveInterval=%d", keepAliveSeconds(conn.KeepAliveSeconds)))
 
 	// sftp uses -P (uppercase) for port.
 	if conn.Port != 22 && conn.Port != 0 {
@@ -156,7 +161,7 @@ func ConnectSFTP(conn Connection) (*exec.Cmd, *TempKeyFile, error) {
 	args = append(args, target)
 
 	cmd := exec.Command("sftp", args...)
-	cmd.Env = sshEnv()
+	cmd.Env = sshEnv(conn.Term)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -164,12 +169,16 @@ func ConnectSFTP(conn Connection) (*exec.Cmd, *TempKeyFile, error) {
 	return cmd, tempKey, nil
 }
 
-func sshEnv() []string {
+func sshEnv(termOverride string) []string {
 	env := os.Environ()
 
 	term := os.Getenv("SSHTHING_SSH_TERM")
 	if term == "" {
-		term = os.Getenv("TERM")
+		if strings.TrimSpace(termOverride) != "" {
+			term = termOverride
+		} else {
+			term = os.Getenv("TERM")
+		}
 	}
 	if term == "xterm-ghostty" {
 		// Many servers don't have Ghostty's terminfo entry installed yet, so
@@ -192,6 +201,27 @@ func setEnv(env []string, key, value string) []string {
 		}
 	}
 	return append(env, prefix+value)
+}
+
+func strictHostKeyChecking(policy string) string {
+	switch strings.TrimSpace(strings.ToLower(policy)) {
+	case "strict", "yes":
+		return "yes"
+	case "off", "no":
+		return "no"
+	default:
+		return "accept-new"
+	}
+}
+
+func keepAliveSeconds(v int) int {
+	if v <= 0 {
+		return 60
+	}
+	if v > 600 {
+		return 600
+	}
+	return v
 }
 
 // RunSSH runs an SSH session and waits for it to complete.

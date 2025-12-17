@@ -2,6 +2,8 @@
 /ssh-manager
 /sshthing
 /SSHThing
+/sshthing-test
+/sshthing-test.dSYM/
 /ssh-manager-fixed
 /ssh-manager-fixed2
 *.exe

@@ -28,18 +28,35 @@ type HostModel struct {
 	KeyData       string // Encrypted blob
 	KeyType       string
 	CreatedAt     time.Time
+	UpdatedAt     time.Time
 	LastConnected *time.Time
 }
 
 type MountState struct {
-	HostID    int
-	LocalPath string
+	HostID     int
+	LocalPath  string
 	RemotePath string
-	MountedAt time.Time
+	MountedAt  time.Time
 }
 
 // DBPath returns the path to the database file
 func DBPath() (string, error) {
+	// Allow overriding the DB path for testing or custom setups.
+	// - SSHTHING_DB_PATH: absolute/relative path to the DB file
+	// - SSHTHING_DATA_DIR: directory where hosts.db will be stored
+	if p := os.Getenv("SSHTHING_DB_PATH"); p != "" {
+		if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+			return "", err
+		}
+		return p, nil
+	}
+	if dir := os.Getenv("SSHTHING_DATA_DIR"); dir != "" {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return "", err
+		}
+		return filepath.Join(dir, "hosts.db"), nil
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -224,6 +241,7 @@ func createSchema(db *sql.DB) error {
 		key_data TEXT,
 		key_type TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		last_connected TIMESTAMP
 	);
 	`)
@@ -233,6 +251,12 @@ func createSchema(db *sql.DB) error {
 
 	// Migrations (older DBs won't have new columns even though CREATE TABLE changed)
 	if err := ensureColumn(db, "hosts", "label", "TEXT"); err != nil {
+		return err
+	}
+
+	// Add updated_at column for sync conflict resolution
+	// Note: SQLite ALTER TABLE doesn't support DEFAULT CURRENT_TIMESTAMP, so we use NULL default
+	if err := ensureColumn(db, "hosts", "updated_at", "TIMESTAMP"); err != nil {
 		return err
 	}
 
@@ -314,6 +338,7 @@ func migrateHostsDropNotes(db *sql.DB) error {
 			key_data TEXT,
 			key_type TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			last_connected TIMESTAMP
 		);
 	`)
@@ -322,11 +347,11 @@ func migrateHostsDropNotes(db *sql.DB) error {
 	}
 
 	_, err = tx.Exec(`
-		INSERT INTO hosts_new (id, label, hostname, username, port, key_data, key_type, created_at, last_connected)
+		INSERT INTO hosts_new (id, label, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
 		SELECT
 			id,
 			CASE WHEN COALESCE(label, '') != '' THEN label ELSE COALESCE(notes, '') END,
-			hostname, username, port, key_data, key_type, created_at, last_connected
+			hostname, username, port, key_data, key_type, created_at, created_at, last_connected
 		FROM hosts;
 	`)
 	if err != nil {
@@ -383,7 +408,7 @@ func getSalt(db *sql.DB) ([]byte, error) {
 		// Store as hex or base64. Let's use base64 for consistency.
 		// Salt is public (metadata).
 		saltStr := fmt.Sprintf("%x", newSalt)
-		
+
 		_, err = db.Exec("INSERT INTO config (key, value) VALUES ('salt', ?)", saltStr)
 		if err != nil {
 			return nil, err
@@ -403,6 +428,50 @@ func getSalt(db *sql.DB) ([]byte, error) {
 // Close closes the database connection
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// GetSalt returns the encryption salt for this database (hex encoded)
+func (s *Store) GetSalt() (string, error) {
+	var saltHex string
+	err := s.db.QueryRow("SELECT value FROM config WHERE key = 'salt'").Scan(&saltHex)
+	if err != nil {
+		return "", err
+	}
+	return saltHex, nil
+}
+
+// ReencryptKeyData decrypts key data using a source salt and re-encrypts with local salt.
+// This is used during sync import when the source database had a different salt.
+func (s *Store) ReencryptKeyData(encryptedData string, sourceSaltHex string, password string) (string, error) {
+	if encryptedData == "" {
+		return "", nil
+	}
+
+	// Decode source salt
+	sourceSalt, err := hex.DecodeString(sourceSaltHex)
+	if err != nil {
+		return "", fmt.Errorf("invalid source salt: %w", err)
+	}
+
+	// Derive source key
+	sourceKey, _, err := crypto.DeriveKey(password, sourceSalt)
+	if err != nil {
+		return "", fmt.Errorf("failed to derive source key: %w", err)
+	}
+
+	// Decrypt with source key
+	plaintext, err := crypto.Decrypt(encryptedData, sourceKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt key: %w", err)
+	}
+
+	// Re-encrypt with local key (s.masterKey)
+	reencrypted, err := crypto.Encrypt(plaintext, s.masterKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to re-encrypt key: %w", err)
+	}
+
+	return reencrypted, nil
 }
 
 func (s *Store) UpsertMountState(hostID int, localPath, remotePath string) error {
@@ -464,23 +533,43 @@ func (s *Store) CreateHost(h *HostModel, plainKey string) error {
 		}
 	}
 
+	now := time.Now()
 	_, err = s.db.Exec(`
-		INSERT INTO hosts (label, hostname, username, port, key_data, key_type, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, h.Label, h.Hostname, h.Username, h.Port, encryptedKey, h.KeyType, time.Now())
-	
+		INSERT INTO hosts (label, hostname, username, port, key_data, key_type, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, h.Label, h.Hostname, h.Username, h.Port, encryptedKey, h.KeyType, now, now)
+
 	return err
 }
 
 // GetHosts returns all hosts
 func (s *Store) GetHosts() ([]HostModel, error) {
-	rows, err := s.db.Query(`
-		SELECT id, COALESCE(label, ''), hostname, username, port,
-		       COALESCE(key_type, ''), COALESCE(key_data, ''),
-		       created_at, last_connected
-		FROM hosts
-		ORDER BY CASE WHEN COALESCE(label, '') != '' THEN label ELSE hostname END
-	`)
+	// Check if updated_at column exists (for backward compatibility)
+	hasUpdatedAt, err := hasColumn(s.db, "hosts", "updated_at")
+	if err != nil {
+		return nil, err
+	}
+
+	var query string
+	if hasUpdatedAt {
+		query = `
+			SELECT id, COALESCE(label, ''), hostname, username, port,
+			       COALESCE(key_type, ''), COALESCE(key_data, ''),
+			       created_at, COALESCE(updated_at, created_at), last_connected
+			FROM hosts
+			ORDER BY CASE WHEN COALESCE(label, '') != '' THEN label ELSE hostname END
+		`
+	} else {
+		query = `
+			SELECT id, COALESCE(label, ''), hostname, username, port,
+			       COALESCE(key_type, ''), COALESCE(key_data, ''),
+			       created_at, created_at, last_connected
+			FROM hosts
+			ORDER BY CASE WHEN COALESCE(label, '') != '' THEN label ELSE hostname END
+		`
+	}
+
+	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
 	}
@@ -489,16 +578,49 @@ func (s *Store) GetHosts() ([]HostModel, error) {
 	var hosts []HostModel
 	for rows.Next() {
 		var h HostModel
-		var lastConn sql.NullTime
-		if err := rows.Scan(&h.ID, &h.Label, &h.Hostname, &h.Username, &h.Port, &h.KeyType, &h.KeyData, &h.CreatedAt, &lastConn); err != nil {
+		var createdAtStr, updatedAtStr string
+		var lastConnStr sql.NullString
+		if err := rows.Scan(&h.ID, &h.Label, &h.Hostname, &h.Username, &h.Port, &h.KeyType, &h.KeyData, &createdAtStr, &updatedAtStr, &lastConnStr); err != nil {
 			return nil, err
 		}
-		if lastConn.Valid {
-			h.LastConnected = &lastConn.Time
+		h.CreatedAt = parseTimestamp(createdAtStr)
+		h.UpdatedAt = parseTimestamp(updatedAtStr)
+		if h.UpdatedAt.IsZero() {
+			h.UpdatedAt = h.CreatedAt
+		}
+		if lastConnStr.Valid && lastConnStr.String != "" {
+			t := parseTimestamp(lastConnStr.String)
+			if !t.IsZero() {
+				h.LastConnected = &t
+			}
 		}
 		hosts = append(hosts, h)
 	}
 	return hosts, nil
+}
+
+// parseTimestamp attempts to parse a SQLite timestamp string
+func parseTimestamp(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	// Try common SQLite timestamp formats
+	formats := []string{
+		time.RFC3339,
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02T15:04:05-07:00",
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // GetHostKey retrieves the decrypted private key for a host
@@ -508,7 +630,7 @@ func (s *Store) GetHostKey(id int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	if encryptedKey == "" {
 		return "", nil
 	}
@@ -523,9 +645,9 @@ func (s *Store) GetHostKey(id int) (string, error) {
 // UpdateHost updates a host's metadata (without changing the key)
 func (s *Store) UpdateHost(h *HostModel) error {
 	_, err := s.db.Exec(`
-		UPDATE hosts SET label=?, hostname=?, username=?, port=?, key_type=?
+		UPDATE hosts SET label=?, hostname=?, username=?, port=?, key_type=?, updated_at=?
 		WHERE id=?
-	`, h.Label, h.Hostname, h.Username, h.Port, h.KeyType, h.ID)
+	`, h.Label, h.Hostname, h.Username, h.Port, h.KeyType, time.Now(), h.ID)
 	return err
 }
 
@@ -541,9 +663,9 @@ func (s *Store) UpdateHostWithKey(h *HostModel, plainKey string) error {
 	}
 
 	_, err = s.db.Exec(`
-		UPDATE hosts SET label=?, hostname=?, username=?, port=?, key_type=?, key_data=?
+		UPDATE hosts SET label=?, hostname=?, username=?, port=?, key_type=?, key_data=?, updated_at=?
 		WHERE id=?
-	`, h.Label, h.Hostname, h.Username, h.Port, h.KeyType, encryptedKey, h.ID)
+	`, h.Label, h.Hostname, h.Username, h.Port, h.KeyType, encryptedKey, time.Now(), h.ID)
 	return err
 }
 
@@ -556,5 +678,25 @@ func (s *Store) UpdateLastConnected(id int) error {
 // DeleteHost deletes a host
 func (s *Store) DeleteHost(id int) error {
 	_, err := s.db.Exec("DELETE FROM hosts WHERE id=?", id)
+	return err
+}
+
+// CreateHostWithID creates a host with a specific ID (used for sync import).
+// The keyData should already be encrypted.
+func (s *Store) CreateHostWithID(h *HostModel, encryptedKeyData string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO hosts (id, label, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, h.ID, h.Label, h.Hostname, h.Username, h.Port, encryptedKeyData, h.KeyType, h.CreatedAt, h.UpdatedAt, h.LastConnected)
+	return err
+}
+
+// UpdateHostFromSync updates a host with sync data, preserving exact timestamps.
+// The keyData should already be encrypted.
+func (s *Store) UpdateHostFromSync(h *HostModel, encryptedKeyData string, updatedAt time.Time) error {
+	_, err := s.db.Exec(`
+		UPDATE hosts SET label=?, hostname=?, username=?, port=?, key_type=?, key_data=?, updated_at=?, last_connected=?
+		WHERE id=?
+	`, h.Label, h.Hostname, h.Username, h.Port, h.KeyType, encryptedKeyData, updatedAt, h.LastConnected, h.ID)
 	return err
 }

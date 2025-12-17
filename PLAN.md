@@ -135,3 +135,91 @@ Add `internal/mount/mount.go`:
 
 ### macOS Notes / Troubleshooting
 - Because FUSE-T uses NFS under the hood, macOS privacy settings may require enabling “Network Volumes” access for the terminal app.
+
+---
+
+## Feature: Settings Screen (Configurable App Options)
+
+### Goal
+Add a dedicated **Settings** screen to configure global app behavior (SSH/SFTP/Mount defaults, UI options, safety/security toggles) without changing per-host data.
+
+### UX / Keybindings
+- From the main host list: press `,` (comma) to open Settings.
+  - Rationale: common convention in apps, doesn’t conflict with existing bindings.
+- In Settings:
+  - `↑/↓` or `j/k`: navigate options
+  - `Enter`: edit/select
+  - `←/→` or `h/l`: change enum/number values (where applicable)
+  - `Space`: toggle boolean options
+  - `Esc`: back / close
+  - `Shift+Enter`: save & close (matches modal save behavior)
+- Note: we should not bind Settings globally inside spotlight search input because `,` is a normal character when typing.
+
+### Storage & Format
+- Store config at: `~/.config/sshthing/config.json` (via `os.UserConfigDir()`).
+- Keep config **separate from the encrypted DB**:
+  - DB = secrets + hosts (encrypted).
+  - Config = behavior/preferences (non-secret, but still private).
+- Support overrides (already exists / planned):
+  - `SSHTHING_DB_PATH` / `SSHTHING_DATA_DIR` for DB location
+  - `SSHTHING_SSH_TERM` for TERM override
+  - Settings should display when an env var is overriding a value (“Managed by env var”).
+
+### Proposed Settings (v1)
+
+**General**
+- Confirm on quit when mounts are active: `Always` / `Only if mounted` (default) / `Never`
+- Default search behavior: `Spotlight opens empty` vs `keeps last query`
+- Clipboard integration: `On` / `Off` (if used for copy actions)
+
+**UI**
+- Theme: `Default` / `High contrast`
+- List sorting: `Label` / `Last connected` / `Created`
+- Show icons in host list (e.g. ⚡): `On` / `Off`
+- Vim navigation: `On` / `Off` (j/k/h/l)
+
+**SSH / SFTP**
+- Host key policy:
+  - `accept-new` (current default; convenient)
+  - `strict` (recommended; `StrictHostKeyChecking=yes`)
+  - `off` (danger; `StrictHostKeyChecking=no`)
+- Keepalive interval (seconds): default `60`
+- TERM for launched sessions:
+  - `auto` (current logic + Ghostty fix)
+  - `xterm-256color`
+  - custom string
+
+**Finder Mounts (beta, macOS)**
+- Enable mounts feature: `On` / `Off`
+- Default remote path: `""` (home) by default, but configurable for future settings screen
+- Default mount root: `~/.config/sshthing/mounts/` (display only unless we support changing)
+- Quit behavior when mounts exist: `Prompt` (default) / `Always unmount` / `Leave mounted`
+
+**Security / Safety**
+- Hide private keys in edit view by default: `On` / `Off` (future UX, but should be a setting)
+- Require confirmation before revealing/copying a key: `On` / `Off`
+- Warn on first-connect host key trust (`accept-new`): `On` / `Off`
+
+### Integration Points (Code-level Plan)
+1. Add `internal/config/`:
+   - `Config` struct with defaults
+   - load/save JSON helpers
+   - “effective config” overlay with env overrides
+2. Add new view state: `ViewModeSettings`
+3. Build Settings UI:
+   - category list (left) + options pane (right), or single list with section headers
+   - inline editing for booleans/enums, small input for strings/numbers
+4. Wire config usage:
+   - SSH/SFTP: host key policy, keepalive, TERM override
+   - Mounts: remote path default, quit behavior
+   - UI: list sorting, icon toggles, vim mode
+5. Tests:
+   - config load/save roundtrip
+   - default config generation when file missing
+   - env var override behavior (no secrets in config)
+
+### Acceptance Criteria
+- Settings screen opens via `,` from the main view.
+- Changes persist across restarts (saved to config file).
+- Existing behavior remains default-compatible when config file is absent.
+- Clear indication for “beta” and “danger” settings (mounts, host key policy off).

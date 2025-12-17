@@ -22,6 +22,11 @@ func (s *Styles) RenderView(viewMode string, width, height int, hosts interface{
 
 // RenderListView renders the main two-panel layout
 func (s *Styles) RenderListView(width, height int, hostsInterface interface{}, selectedIdx int, searchQuery string, isSearching bool, err error) string {
+	return s.RenderListViewWithSync(width, height, hostsInterface, selectedIdx, searchQuery, isSearching, err, "")
+}
+
+// RenderListViewWithSync renders the main two-panel layout with sync status
+func (s *Styles) RenderListViewWithSync(width, height int, hostsInterface interface{}, selectedIdx int, searchQuery string, isSearching bool, err error, syncStatus string) string {
 	// Type assertion for hosts
 	hosts, ok := hostsInterface.([]interface{})
 	if !ok {
@@ -57,7 +62,7 @@ func (s *Styles) RenderListView(width, height int, hostsInterface interface{}, s
 	view.WriteString("\n")
 
 	// Footer
-	footer := s.RenderFooter(width, err)
+	footer := s.RenderFooterWithSync(width, err, syncStatus)
 	view.WriteString(footer)
 
 	return view.String()
@@ -129,6 +134,10 @@ func (s *Styles) RenderHostList(hostsInterface []interface{}, selectedIdx int, w
 			label, _ := host["Label"].(string)
 			hostname, _ := host["Hostname"].(string)
 			hasKey, _ := host["HasKey"].(bool)
+			showIcons := true
+			if v, ok := host["ShowIcons"].(bool); ok {
+				showIcons = v
+			}
 
 			isSelected := i == selectedIdx
 			_ = hostname // keep host in details only; list shows label/host display name only.
@@ -139,10 +148,10 @@ func (s *Styles) RenderHostList(hostsInterface []interface{}, selectedIdx int, w
 			}
 
 			icon := "  "
-			if hasKey {
-				icon = "⚡ "
-			} else if isSelected {
+			if isSelected {
 				icon = "▸ "
+			} else if showIcons && hasKey {
+				icon = "⚡ "
 			}
 
 			line := truncateString(icon+display, textWidth)
@@ -285,6 +294,11 @@ func (s *Styles) renderDetailRow(label, value string) string {
 
 // RenderFooter renders the footer with keybindings
 func (s *Styles) RenderFooter(width int, err error) string {
+	return s.RenderFooterWithSync(width, err, "")
+}
+
+// RenderFooterWithSync renders the footer with keybindings and optional sync status
+func (s *Styles) RenderFooterWithSync(width int, err error, syncStatus string) string {
 	var footer strings.Builder
 
 	// Show notice if present
@@ -299,6 +313,8 @@ func (s *Styles) RenderFooter(width int, err error) string {
 		s.HelpKey.Render("[Enter]") + " " + s.HelpValue.Render("SSH"),
 		s.HelpKey.Render("[S]") + " " + s.HelpValue.Render("Arm SFTP"),
 		s.HelpKey.Render("[M]") + " " + s.HelpValue.Render("Arm Mount"),
+		s.HelpKey.Render("[Y]") + " " + s.HelpValue.Render("Sync"),
+		s.HelpKey.Render("[,]") + " " + s.HelpValue.Render("Settings"),
 		s.HelpKey.Render("[a]") + " " + s.HelpValue.Render("Add"),
 		s.HelpKey.Render("[e]") + " " + s.HelpValue.Render("Edit"),
 		s.HelpKey.Render("[d]") + " " + s.HelpValue.Render("Delete"),
@@ -307,6 +323,12 @@ func (s *Styles) RenderFooter(width int, err error) string {
 	}
 
 	footerText := strings.Join(bindings, s.HelpSep.String())
+
+	// Add sync status if provided
+	if syncStatus != "" {
+		footerText += s.HelpSep.String() + s.HelpValue.Foreground(ColorTextDim).Render("Sync: "+syncStatus)
+	}
+
 	footer.WriteString(footerText)
 
 	return s.Footer.Width(width - 2).Render(footer.String())
@@ -392,6 +414,7 @@ func (s *Styles) RenderHelpView(width, height int) string {
 		{"Enter", "Connect to selected host"},
 		{"S then Enter", "Connect via SFTP"},
 		{"M then Enter", "Mount/unmount in Finder (beta)"},
+		{",", "Open settings"},
 		{"a or Ctrl+N", "Add new host"},
 		{"e", "Edit selected host"},
 		{"d or Delete", "Delete selected host"},

@@ -2,11 +2,14 @@ package app
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/Vansh-Raja/SSHThing/internal/config"
 	"github.com/Vansh-Raja/SSHThing/internal/db"
 	"github.com/Vansh-Raja/SSHThing/internal/mount"
 	"github.com/Vansh-Raja/SSHThing/internal/ssh"
+	"github.com/Vansh-Raja/SSHThing/internal/sync"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -27,6 +30,9 @@ type Model struct {
 	quitPrevView ViewMode
 	quitFocus    int // 0=Unmount&Quit, 1=Leave&Quit, 2=Cancel
 
+	cfg         config.Config
+	cfgOriginal config.Config
+
 	// Login/Setup state
 	loginInput   textinput.Model
 	confirmInput textinput.Model // For password confirmation in setup mode
@@ -34,20 +40,30 @@ type Model struct {
 	setupFocus   int             // 0=password, 1=confirm, 2=submit
 
 	// Search state (Spotlight)
-	searchInput  textinput.Model
-	isSearching  bool
+	searchInput textinput.Model
+	isSearching bool
 
 	// Delete state
 	deleteConfirmFocus bool // true = Delete button focused, false = Cancel button focused
 
-	styles       *ui.Styles
-	err          error
+	styles *ui.Styles
+	err    error
 
 	// Modal state
-	modalForm    *ModalForm
+	modalForm *ModalForm
 
 	mountManager *mount.Manager
 	pendingMount *mount.PreparedMount
+
+	// Settings state
+	settingsPrevView ViewMode
+	settingsIdx      int
+	settingsEditing  bool
+	settingsInput    textinput.Model
+
+	// Sync state
+	syncManager    *sync.Manager
+	masterPassword string // Stored for sync re-encryption (cleared on quit)
 }
 
 // ModalForm holds form state for add/edit modals
@@ -56,21 +72,22 @@ type ModalForm struct {
 	hostnameInput textinput.Model
 	usernameInput textinput.Model
 	portInput     textinput.Model
-	
+
 	authMethod    int // 0=Pass, 1=Paste, 2=Gen
 	passwordInput textinput.Model
-	
-	keyOption    string // Legacy
-	keyType      string // "ed25519", "rsa", "ecdsa"
-	
+
+	keyOption string // Legacy
+	keyType   string // "ed25519", "rsa", "ecdsa"
+
 	pastedKeyInput textarea.Model
-	
+
 	focusedField int
 }
 
-
 // NewModel creates a new application model
 func NewModel() Model {
+	cfg, _ := config.Load()
+
 	// Initialize search input
 	searchInput := textinput.New()
 	searchInput.Placeholder = "Search hosts..."
@@ -102,22 +119,32 @@ func NewModel() Model {
 		viewMode = ViewModeSetup
 	}
 
+	settingsInput := textinput.New()
+	settingsInput.Prompt = ""
+	settingsInput.Placeholder = ""
+
 	return Model{
-		hosts:        []Host{},
-		selectedIdx:  0,
-		viewMode:     viewMode,
-		styles:       ui.NewStyles(),
-		searchInput:  searchInput,
-		loginInput:   loginInput,
-		confirmInput: confirmInput,
-		isFirstRun:   isFirstRun,
-		isSearching:  false,
-		armedSFTP:    false,
-		armedMount:   false,
-		armedUnmount: false,
-		quitPrevView: ViewModeList,
-		quitFocus:    0,
-		mountManager: mount.NewManager(),
+		cfg:              cfg,
+		cfgOriginal:      cfg,
+		hosts:            []Host{},
+		selectedIdx:      0,
+		viewMode:         viewMode,
+		styles:           ui.NewStyles(),
+		searchInput:      searchInput,
+		loginInput:       loginInput,
+		confirmInput:     confirmInput,
+		isFirstRun:       isFirstRun,
+		isSearching:      false,
+		armedSFTP:        false,
+		armedMount:       false,
+		armedUnmount:     false,
+		quitPrevView:     ViewModeList,
+		quitFocus:        0,
+		mountManager:     mount.NewManager(),
+		settingsPrevView: ViewModeList,
+		settingsIdx:      0,
+		settingsEditing:  false,
+		settingsInput:    settingsInput,
 	}
 }
 
@@ -193,7 +220,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case quitFinishedMsg:
 		return m, tea.Quit
 	}
-	
+
 	// Handle blink for inputs
 	var cmd tea.Cmd
 	if m.viewMode == ViewModeSetup {
@@ -241,6 +268,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleHelpKeys(msg)
 	case ViewModeQuitConfirm:
 		return m.handleQuitConfirmKeys(msg)
+	case ViewModeSettings:
+		return m.handleSettingsKeys(msg)
 	}
 
 	return m, nil
@@ -252,6 +281,15 @@ func (m Model) requestQuit() (tea.Model, tea.Cmd) {
 	}
 	if m.mountManager != nil {
 		if mounts := m.mountManager.ListActive(); len(mounts) > 0 {
+			switch m.cfg.Mount.QuitBehavior {
+			case config.MountQuitAlwaysUnmount:
+				return m.quitAndUnmountAll()
+			case config.MountQuitLeaveMounted:
+				m.err = nil
+				return m, tea.Quit
+			default:
+				// prompt
+			}
 			m.quitPrevView = m.viewMode
 			m.quitFocus = 0
 			m.viewMode = ViewModeQuitConfirm
@@ -260,6 +298,18 @@ func (m Model) requestQuit() (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, tea.Quit
+}
+
+func (m Model) quitAndUnmountAll() (tea.Model, tea.Cmd) {
+	if m.mountManager == nil {
+		return m, tea.Quit
+	}
+	// Run unmount synchronously on quit. This can take a moment, but avoids leaving mounts behind.
+	unmountCmd := func() tea.Msg {
+		m.mountManager.UnmountAll()
+		return quitFinishedMsg{}
+	}
+	return m, tea.Sequence(tea.ShowCursor, unmountCmd, tea.Quit)
 }
 
 func (m Model) handleLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -275,33 +325,26 @@ func (m Model) handleLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		m.store = store
+		m.masterPassword = password // Store for sync re-encryption
 		m.loadHosts()
 		m.restoreMountsFromDB()
+
+		// Initialize sync manager
+		if m.store != nil {
+			syncMgr, err := sync.NewManager(&m.cfg, m.store, password)
+			if err != nil {
+				m.err = fmt.Errorf("sync init failed: %v", err)
+			} else {
+				m.syncManager = syncMgr
+			}
+		}
+
 		m.err = nil
 		m.viewMode = ViewModeList
 		return m, nil
 
 	case tea.KeyEsc:
 		return m, tea.Quit
-	}
-	if msg.String() == "ctrl+r" {
-		// Destructive reset: delete DB so user can re-run setup.
-		if err := db.Delete(); err != nil {
-			m.err = fmt.Errorf("failed to delete database: %v", err)
-			return m, nil
-		}
-		m.err = fmt.Errorf("database deleted — run setup")
-		m.isFirstRun = true
-		m.viewMode = ViewModeSetup
-		m.setupFocus = 0
-		m.loginInput.SetValue("")
-		m.confirmInput.SetValue("")
-		m.loginInput.Focus()
-		m.confirmInput.Blur()
-		m.store = nil
-		m.hosts = nil
-		m.selectedIdx = 0
-		return m, nil
 	}
 
 	var cmd tea.Cmd
@@ -366,8 +409,20 @@ func (m Model) handleSetupKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 
 			m.store = store
+			m.masterPassword = password // Store for sync re-encryption
 			m.loadHosts()
 			m.restoreMountsFromDB()
+
+			// Initialize sync manager
+			if m.store != nil {
+				syncMgr, err := sync.NewManager(&m.cfg, m.store, password)
+				if err != nil {
+					m.err = fmt.Errorf("sync init failed: %v", err)
+				} else {
+					m.syncManager = syncMgr
+				}
+			}
+
 			m.viewMode = ViewModeList
 			m.err = nil
 			return m, nil
@@ -442,13 +497,13 @@ func (m *Model) loadHosts() {
 	if m.store == nil {
 		return
 	}
-	
+
 	dbHosts, err := m.store.GetHosts()
 	if err != nil {
 		m.err = err
 		return
 	}
-	
+
 	m.hosts = make([]Host, len(dbHosts))
 	for i, h := range dbHosts {
 		hasKey := h.KeyData != ""
@@ -514,6 +569,22 @@ func (m *Model) restoreMountsFromDB() {
 	}
 }
 
+// initSyncManager initializes the sync manager after store is ready
+func (m *Model) initSyncManager() {
+	if m.store == nil {
+		return
+	}
+
+	syncMgr, err := sync.NewManager(&m.cfg, m.store, m.masterPassword)
+	if err != nil {
+		// Non-fatal; sync is optional
+		m.err = fmt.Errorf("sync init failed: %v", err)
+		return
+	}
+
+	m.syncManager = syncMgr
+}
+
 // handleSpotlightKeys handles input for the spotlight view
 func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -539,6 +610,10 @@ func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "M":
+		if !m.cfg.Mount.Enabled {
+			m.err = fmt.Errorf("⚠ mounts are disabled in settings")
+			return m, nil
+		}
 		filtered := m.getFilteredHosts()
 		if len(filtered) == 0 || m.selectedIdx >= len(filtered) {
 			return m, nil
@@ -565,7 +640,7 @@ func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("Mount (beta) armed — press Enter")
 		}
 		return m, nil
-	
+
 	case "enter":
 		// Connect to selected host
 		filtered := m.getFilteredHosts()
@@ -589,16 +664,22 @@ func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "up", "k":
+		if msg.String() == "k" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
 		if m.selectedIdx > 0 {
 			m.selectedIdx--
 		}
 
 	case "down", "j":
+		if msg.String() == "j" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
 		filtered := m.getFilteredHosts()
 		if m.selectedIdx < len(filtered)-1 {
 			m.selectedIdx++
 		}
-		
+
 	default:
 		// Forward key to search input
 		var cmd tea.Cmd
@@ -607,14 +688,16 @@ func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selectedIdx = 0
 		return m, cmd
 	}
-	
+
 	return m, nil
 }
 
 // handleListKeys handles keyboard input in list view
 func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
 	// Normal list navigation
-	switch msg.String() {
+	switch key {
 	case "q":
 		return m.requestQuit()
 
@@ -631,6 +714,10 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "M":
 		// Arm mount/unmount (global chord: M then Enter)
+		if !m.cfg.Mount.Enabled {
+			m.err = fmt.Errorf("⚠ mounts are disabled in settings")
+			return m, nil
+		}
 		filtered := m.getFilteredHosts()
 		if len(filtered) == 0 || m.selectedIdx >= len(filtered) {
 			return m, nil
@@ -669,11 +756,17 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "up", "k":
+		if key == "k" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
 		if m.selectedIdx > 0 {
 			m.selectedIdx--
 		}
 
 	case "down", "j":
+		if key == "j" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
 		filtered := m.getFilteredHosts()
 		if m.selectedIdx < len(filtered)-1 {
 			m.selectedIdx++
@@ -687,9 +780,15 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selectedIdx = min(len(filtered)-1, m.selectedIdx+10)
 
 	case "home", "g":
+		if key == "g" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
 		m.selectedIdx = 0
 
 	case "end", "G":
+		if key == "G" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
 		filtered := m.getFilteredHosts()
 		m.selectedIdx = len(filtered) - 1
 
@@ -739,6 +838,35 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "?":
 		m.viewMode = ViewModeHelp
+
+	case ",":
+		m.settingsPrevView = m.viewMode
+		m.cfgOriginal = m.cfg
+		m.settingsIdx = 0
+		m.settingsEditing = false
+		m.settingsInput.SetValue("")
+		m.settingsInput.Blur()
+		m.viewMode = ViewModeSettings
+		m.err = nil
+
+	case "Y":
+		// Manual sync trigger - always show feedback
+		if m.syncManager == nil {
+			m.err = fmt.Errorf("⚠ sync manager is nil")
+			return m, nil
+		}
+		if !m.syncManager.IsEnabled() {
+			m.err = fmt.Errorf("⚠ sync is disabled — enable in settings")
+			return m, nil
+		}
+		result := m.syncManager.Sync()
+		if result.Success {
+			m.loadHosts() // Reload hosts after sync
+			m.err = fmt.Errorf("✓ Sync: +%d ↑%d", result.HostsAdded, result.HostsUpdated)
+		} else {
+			m.err = fmt.Errorf("⚠ %s", result.Message)
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -779,7 +907,7 @@ func (m Model) newModalForm(label, hostname, username, port, keyType, existingKe
 		keyType:        initialKeyType,
 		focusedField:   ui.FieldLabel,
 	}
-	
+
 	f.labelInput.Placeholder = "Prod DB, Staging, Home NAS..."
 	f.labelInput.SetValue(label)
 	f.labelInput.Focus()
@@ -788,25 +916,25 @@ func (m Model) newModalForm(label, hostname, username, port, keyType, existingKe
 	f.hostnameInput.Placeholder = "example.com"
 	f.hostnameInput.SetValue(hostname)
 	f.hostnameInput.Prompt = ""
-	
+
 	f.usernameInput.Placeholder = "user"
 	f.usernameInput.SetValue(username)
 	f.usernameInput.Prompt = ""
-	
+
 	f.portInput.Placeholder = "22"
 	f.portInput.SetValue(port)
 	f.portInput.Prompt = ""
-	
+
 	f.passwordInput.Placeholder = "Password"
 	f.passwordInput.EchoMode = textinput.EchoPassword
 	f.passwordInput.EchoCharacter = '•'
 	f.passwordInput.Prompt = ""
-	
+
 	f.pastedKeyInput.Placeholder = "Paste private key here..."
 	f.pastedKeyInput.ShowLineNumbers = false
 	f.pastedKeyInput.SetHeight(6)
 	f.pastedKeyInput.SetValue(existingKey)
-	
+
 	return f
 }
 
@@ -911,11 +1039,15 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	focusField := func(idx int) {
 		blurAll()
 		switch idx {
-		case ui.FieldLabel:    m.modalForm.labelInput.Focus()
-		case ui.FieldHostname: m.modalForm.hostnameInput.Focus()
-		case ui.FieldUsername: m.modalForm.usernameInput.Focus()
-		case ui.FieldPort:     m.modalForm.portInput.Focus()
-		case ui.FieldAuthDetails: 
+		case ui.FieldLabel:
+			m.modalForm.labelInput.Focus()
+		case ui.FieldHostname:
+			m.modalForm.hostnameInput.Focus()
+		case ui.FieldUsername:
+			m.modalForm.usernameInput.Focus()
+		case ui.FieldPort:
+			m.modalForm.portInput.Focus()
+		case ui.FieldAuthDetails:
 			if m.modalForm.authMethod == ui.AuthKeyPaste {
 				m.modalForm.pastedKeyInput.Focus()
 			}
@@ -929,7 +1061,7 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	cycleAuth := func(dir int) {
 		m.modalForm.authMethod = (m.modalForm.authMethod + dir + 3) % 3
 	}
-	
+
 	cycleButtons := func() {
 		if m.modalForm.focusedField == ui.FieldSubmit {
 			m.modalForm.focusedField = ui.FieldCancel
@@ -986,51 +1118,51 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	default:
-			// Handle runes and string-based keys
-			str := msg.String()
+		// Handle runes and string-based keys
+		str := msg.String()
 
-			// Quick-save from anywhere
-			if str == "shift+enter" || str == "shift+return" {
-				return submitAndClose()
-			}
-	
-			// Spacebar for Key Gen Type (keep specific inner toggle)
-			if str == " " && m.modalForm.focusedField == ui.FieldAuthDetails && m.modalForm.authMethod == ui.AuthKeyGen {
-				keyTypes := []string{"ed25519", "rsa", "ecdsa"}
-				for i, kt := range keyTypes {
-					if m.modalForm.keyType == kt {
-						m.modalForm.keyType = keyTypes[(i+1)%len(keyTypes)]
-						break
-					}
-				}
-				return m, cmd
-			}
-	
-			// Vim navigation h/l
-			if str == "h" && m.modalForm.focusedField == ui.FieldAuthMethod {
-				cycleAuth(-1)
-				return m, cmd
-			} else if str == "l" && m.modalForm.focusedField == ui.FieldAuthMethod {
-				cycleAuth(1)
-				return m, cmd
-			} else if str == "h" && (m.modalForm.focusedField == ui.FieldSubmit || m.modalForm.focusedField == ui.FieldCancel) {
-				cycleButtons()
-				return m, cmd
-			} else if str == "l" && (m.modalForm.focusedField == ui.FieldSubmit || m.modalForm.focusedField == ui.FieldCancel) {
-				cycleButtons()
-				return m, cmd
-			}
-			
-			// Shift+Tab fallback
-			if str == "shift+tab" {
-				m.modalForm.focusedField = (m.modalForm.focusedField - 1 + totalFields) % totalFields
-				focusField(m.modalForm.focusedField)
-				return m, nil
-			}
-			
-			// Default: Pass to inputs
-			cmd = m.handleInputUpdate(msg)
+		// Quick-save from anywhere
+		if str == "shift+enter" || str == "shift+return" {
+			return submitAndClose()
 		}
+
+		// Spacebar for Key Gen Type (keep specific inner toggle)
+		if str == " " && m.modalForm.focusedField == ui.FieldAuthDetails && m.modalForm.authMethod == ui.AuthKeyGen {
+			keyTypes := []string{"ed25519", "rsa", "ecdsa"}
+			for i, kt := range keyTypes {
+				if m.modalForm.keyType == kt {
+					m.modalForm.keyType = keyTypes[(i+1)%len(keyTypes)]
+					break
+				}
+			}
+			return m, cmd
+		}
+
+		// Vim navigation h/l
+		if str == "h" && m.modalForm.focusedField == ui.FieldAuthMethod {
+			cycleAuth(-1)
+			return m, cmd
+		} else if str == "l" && m.modalForm.focusedField == ui.FieldAuthMethod {
+			cycleAuth(1)
+			return m, cmd
+		} else if str == "h" && (m.modalForm.focusedField == ui.FieldSubmit || m.modalForm.focusedField == ui.FieldCancel) {
+			cycleButtons()
+			return m, cmd
+		} else if str == "l" && (m.modalForm.focusedField == ui.FieldSubmit || m.modalForm.focusedField == ui.FieldCancel) {
+			cycleButtons()
+			return m, cmd
+		}
+
+		// Shift+Tab fallback
+		if str == "shift+tab" {
+			m.modalForm.focusedField = (m.modalForm.focusedField - 1 + totalFields) % totalFields
+			focusField(m.modalForm.focusedField)
+			return m, nil
+		}
+
+		// Default: Pass to inputs
+		cmd = m.handleInputUpdate(msg)
+	}
 	return m, cmd
 }
 
@@ -1039,7 +1171,7 @@ func (m *Model) handleInputUpdate(msg tea.Msg) tea.Cmd {
 	if m.modalForm == nil {
 		return nil
 	}
-	
+
 	var cmd tea.Cmd
 	switch m.modalForm.focusedField {
 	case ui.FieldLabel:
@@ -1057,7 +1189,6 @@ func (m *Model) handleInputUpdate(msg tea.Msg) tea.Cmd {
 	}
 	return cmd
 }
-
 
 // handleDeleteKeys handles keyboard input in delete confirmation view
 func (m Model) handleDeleteKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1089,11 +1220,11 @@ func (m Model) handleDeleteKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Shortcut to Cancel
 		m.viewMode = ViewModeList
 		return m, nil
-		
+
 	case "left", "h", "right", "l", "tab", "shift+tab":
 		m.deleteConfirmFocus = !m.deleteConfirmFocus
 		return m, nil
-		
+
 	case "enter":
 		if m.deleteConfirmFocus {
 			// Delete confirmed
@@ -1114,6 +1245,324 @@ func (m Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?", "esc", "q":
 		m.viewMode = ViewModeList
 	}
+	return m, nil
+}
+
+func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	const maxIdx = 13
+
+	key := msg.String()
+
+	applyEditValue := func(val string) bool {
+		val = strings.TrimSpace(val)
+		switch m.settingsIdx {
+		case 3:
+			n, err := strconv.Atoi(val)
+			if err != nil {
+				m.err = fmt.Errorf("keepalive must be a number")
+				return false
+			}
+			if n < 10 {
+				n = 10
+			}
+			if n > 600 {
+				n = 600
+			}
+			m.cfg.SSH.KeepAliveSeconds = n
+			return true
+		case 5:
+			m.cfg.SSH.TermCustom = val
+			return true
+		case 7:
+			m.cfg.Mount.DefaultRemotePath = val
+			return true
+		case 10:
+			m.cfg.Sync.RepoURL = val
+			return true
+		case 11:
+			m.cfg.Sync.SSHKeyPath = val
+			return true
+		case 12:
+			if val == "" {
+				val = "main"
+			}
+			m.cfg.Sync.Branch = val
+			return true
+		case 13:
+			m.cfg.Sync.LocalPath = val
+			return true
+		}
+		return true
+	}
+
+	startEdit := func(initial string, placeholder string) (tea.Model, tea.Cmd) {
+		m.settingsEditing = true
+		m.settingsInput.SetValue(initial)
+		m.settingsInput.Placeholder = placeholder
+		m.settingsInput.CursorEnd()
+		m.settingsInput.Focus()
+		m.err = nil
+		return m, textinput.Blink
+	}
+
+	if m.settingsEditing {
+		switch key {
+		case "esc":
+			m.settingsEditing = false
+			m.settingsInput.Blur()
+			m.settingsInput.SetValue("")
+			m.err = nil
+			return m, nil
+		case "enter":
+			if !applyEditValue(m.settingsInput.Value()) {
+				return m, nil
+			}
+			m.settingsEditing = false
+			m.settingsInput.Blur()
+			m.settingsInput.SetValue("")
+			m.err = nil
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.settingsInput, cmd = m.settingsInput.Update(msg)
+		return m, cmd
+	}
+
+	switch key {
+	case "esc", "q":
+		// Auto-save changes when leaving settings
+		if m.cfg != m.cfgOriginal {
+			if err := config.Save(m.cfg); err != nil {
+				m.err = fmt.Errorf("failed to save settings: %v", err)
+				return m, nil
+			}
+			// Reinitialize sync manager if sync settings changed
+			if m.cfg.Sync != m.cfgOriginal.Sync && m.store != nil {
+				syncMgr, err := sync.NewManager(&m.cfg, m.store, m.masterPassword)
+				if err == nil {
+					m.syncManager = syncMgr
+				}
+			}
+			m.err = fmt.Errorf("✓ Settings saved")
+		}
+		m.viewMode = m.settingsPrevView
+		return m, nil
+
+	case "up", "k":
+		if key == "k" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		if m.settingsIdx > 0 {
+			m.settingsIdx--
+		}
+		m.err = nil
+		return m, nil
+
+	case "down", "j":
+		if key == "j" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		if m.settingsIdx < maxIdx {
+			m.settingsIdx++
+		}
+		m.err = nil
+		return m, nil
+
+	case "left", "h":
+		if key == "h" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		switch m.settingsIdx {
+		case 2:
+			// Host key policy (cycle backwards)
+			switch m.cfg.SSH.HostKeyPolicy {
+			case config.HostKeyStrict:
+				m.cfg.SSH.HostKeyPolicy = config.HostKeyAcceptNew
+			case config.HostKeyOff:
+				m.cfg.SSH.HostKeyPolicy = config.HostKeyStrict
+			default:
+				m.cfg.SSH.HostKeyPolicy = config.HostKeyOff
+			}
+		case 3:
+			// Keepalive seconds
+			m.cfg.SSH.KeepAliveSeconds = max(10, m.cfg.SSH.KeepAliveSeconds-5)
+		case 4:
+			// TERM mode
+			switch m.cfg.SSH.TermMode {
+			case config.TermXterm:
+				m.cfg.SSH.TermMode = config.TermAuto
+			case config.TermCustom:
+				m.cfg.SSH.TermMode = config.TermXterm
+			default:
+				m.cfg.SSH.TermMode = config.TermCustom
+			}
+		case 8:
+			// Mount quit behavior
+			switch m.cfg.Mount.QuitBehavior {
+			case config.MountQuitAlwaysUnmount:
+				m.cfg.Mount.QuitBehavior = config.MountQuitPrompt
+			case config.MountQuitLeaveMounted:
+				m.cfg.Mount.QuitBehavior = config.MountQuitAlwaysUnmount
+			default:
+				m.cfg.Mount.QuitBehavior = config.MountQuitLeaveMounted
+			}
+		}
+		return m, nil
+
+	case "right", "l":
+		if key == "l" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		switch m.settingsIdx {
+		case 2:
+			// Host key policy (cycle forwards)
+			switch m.cfg.SSH.HostKeyPolicy {
+			case config.HostKeyAcceptNew:
+				m.cfg.SSH.HostKeyPolicy = config.HostKeyStrict
+			case config.HostKeyStrict:
+				m.cfg.SSH.HostKeyPolicy = config.HostKeyOff
+			default:
+				m.cfg.SSH.HostKeyPolicy = config.HostKeyAcceptNew
+			}
+		case 3:
+			m.cfg.SSH.KeepAliveSeconds = min(300, m.cfg.SSH.KeepAliveSeconds+5)
+		case 4:
+			switch m.cfg.SSH.TermMode {
+			case config.TermAuto:
+				m.cfg.SSH.TermMode = config.TermXterm
+			case config.TermXterm:
+				m.cfg.SSH.TermMode = config.TermCustom
+			default:
+				m.cfg.SSH.TermMode = config.TermAuto
+			}
+		case 8:
+			switch m.cfg.Mount.QuitBehavior {
+			case config.MountQuitPrompt:
+				m.cfg.Mount.QuitBehavior = config.MountQuitAlwaysUnmount
+			case config.MountQuitAlwaysUnmount:
+				m.cfg.Mount.QuitBehavior = config.MountQuitLeaveMounted
+			default:
+				m.cfg.Mount.QuitBehavior = config.MountQuitPrompt
+			}
+		}
+		return m, nil
+
+	default:
+		// Quick save from anywhere
+		if key == "shift+enter" || key == "shift+return" {
+			if err := config.Save(m.cfg); err != nil {
+				m.err = fmt.Errorf("failed to save settings: %v", err)
+				return m, nil
+			}
+			// Reinitialize sync manager if sync settings changed
+			if m.cfg.Sync != m.cfgOriginal.Sync && m.store != nil {
+				syncMgr, err := sync.NewManager(&m.cfg, m.store, m.masterPassword)
+				if err == nil {
+					m.syncManager = syncMgr
+				}
+			}
+			m.viewMode = m.settingsPrevView
+			m.err = fmt.Errorf("✓ Settings saved")
+			return m, nil
+		}
+
+		if key == " " || key == "enter" {
+			switch m.settingsIdx {
+			case 0:
+				m.cfg.UI.VimMode = !m.cfg.UI.VimMode
+				return m, nil
+			case 1:
+				m.cfg.UI.ShowIcons = !m.cfg.UI.ShowIcons
+				return m, nil
+			case 2:
+				// Cycle host key policy forward
+				switch m.cfg.SSH.HostKeyPolicy {
+				case config.HostKeyAcceptNew:
+					m.cfg.SSH.HostKeyPolicy = config.HostKeyStrict
+				case config.HostKeyStrict:
+					m.cfg.SSH.HostKeyPolicy = config.HostKeyOff
+				default:
+					m.cfg.SSH.HostKeyPolicy = config.HostKeyAcceptNew
+				}
+				return m, nil
+			case 3:
+				return startEdit(fmt.Sprintf("%d", m.cfg.SSH.KeepAliveSeconds), "10-600 (default 60)")
+			case 4:
+				// Cycle TERM mode forward
+				switch m.cfg.SSH.TermMode {
+				case config.TermAuto:
+					m.cfg.SSH.TermMode = config.TermXterm
+				case config.TermXterm:
+					m.cfg.SSH.TermMode = config.TermCustom
+				default:
+					m.cfg.SSH.TermMode = config.TermAuto
+				}
+				return m, nil
+			case 5:
+				if m.cfg.SSH.TermMode != config.TermCustom {
+					m.err = fmt.Errorf("TERM mode must be 'custom' to edit")
+					return m, nil
+				}
+				return startEdit(m.cfg.SSH.TermCustom, "e.g. xterm-256color")
+			case 6:
+				m.cfg.Mount.Enabled = !m.cfg.Mount.Enabled
+				return m, nil
+			case 7:
+				return startEdit(m.cfg.Mount.DefaultRemotePath, "empty = remote home (recommended)")
+			case 8:
+				// Cycle quit behavior forward
+				switch m.cfg.Mount.QuitBehavior {
+				case config.MountQuitPrompt:
+					m.cfg.Mount.QuitBehavior = config.MountQuitAlwaysUnmount
+				case config.MountQuitAlwaysUnmount:
+					m.cfg.Mount.QuitBehavior = config.MountQuitLeaveMounted
+				default:
+					m.cfg.Mount.QuitBehavior = config.MountQuitPrompt
+				}
+				return m, nil
+			case 9:
+				// Toggle sync enabled
+				m.cfg.Sync.Enabled = !m.cfg.Sync.Enabled
+				// Reinitialize sync manager when enabled/disabled
+				if m.store != nil {
+					syncMgr, err := sync.NewManager(&m.cfg, m.store, m.masterPassword)
+					if err == nil {
+						m.syncManager = syncMgr
+					}
+				}
+				return m, nil
+			case 10:
+				// Sync repo URL
+				if !m.cfg.Sync.Enabled {
+					m.err = fmt.Errorf("enable sync first")
+					return m, nil
+				}
+				return startEdit(m.cfg.Sync.RepoURL, "git@github.com:user/hosts.git")
+			case 11:
+				// Sync SSH key path
+				if !m.cfg.Sync.Enabled {
+					m.err = fmt.Errorf("enable sync first")
+					return m, nil
+				}
+				return startEdit(m.cfg.Sync.SSHKeyPath, "~/.ssh/id_ed25519 (empty = auto)")
+			case 12:
+				// Sync branch
+				if !m.cfg.Sync.Enabled {
+					m.err = fmt.Errorf("enable sync first")
+					return m, nil
+				}
+				return startEdit(m.cfg.Sync.Branch, "main")
+			case 13:
+				// Sync local path
+				if !m.cfg.Sync.Enabled {
+					m.err = fmt.Errorf("enable sync first")
+					return m, nil
+				}
+				return startEdit(m.cfg.Sync.LocalPath, "empty = default path")
+			}
+		}
+	}
+
 	return m, nil
 }
 
@@ -1222,6 +1671,7 @@ func (m Model) View() string {
 			"KeyType":       host.KeyType,
 			"Mounted":       mounted,
 			"MountPath":     mountPath,
+			"ShowIcons":     m.cfg.UI.ShowIcons,
 			"CreatedAt":     host.CreatedAt,
 			"LastConnected": host.LastConnected,
 		}
@@ -1233,7 +1683,11 @@ func (m Model) View() string {
 	case ViewModeLogin:
 		return m.styles.RenderLoginView(m.width, m.height, m.loginInput, m.err) + hideCursorAndMoveAway
 	case ViewModeList:
-		return m.styles.RenderListView(m.width, m.height, hostsInterface, m.selectedIdx, m.searchInput.Value(), m.isSearching, m.err) + hideCursorAndMoveAway
+		syncStatus := ""
+		if m.syncManager != nil && m.syncManager.IsEnabled() {
+			syncStatus = m.syncManager.StatusString()
+		}
+		return m.styles.RenderListViewWithSync(m.width, m.height, hostsInterface, m.selectedIdx, m.searchInput.Value(), m.isSearching, m.err, syncStatus) + hideCursorAndMoveAway
 	case ViewModeHelp:
 		return m.styles.RenderHelpView(m.width, m.height) + hideCursorAndMoveAway
 	case ViewModeAddHost, ViewModeEditHost:
@@ -1244,9 +1698,15 @@ func (m Model) View() string {
 		return m.renderSpotlightView() + hideCursorAndMoveAway
 	case ViewModeQuitConfirm:
 		return m.renderQuitConfirmView() + hideCursorAndMoveAway
+	case ViewModeSettings:
+		return m.renderSettingsView() + hideCursorAndMoveAway
 	default:
 		return "Unknown view mode" + hideCursorAndMoveAway
 	}
+}
+
+func (m Model) renderSettingsView() string {
+	return m.styles.RenderSettingsView(m.width, m.height, m.cfg, m.settingsIdx, m.settingsEditing, m.settingsInput, m.err)
 }
 
 func (m Model) renderQuitConfirmView() string {
@@ -1280,7 +1740,7 @@ func (m Model) renderSpotlightView() string {
 			"Mounted":  mounted,
 		}
 	}
-	
+
 	return m.styles.RenderSpotlight(m.width, m.height, m.searchInput, hostsInterface, m.selectedIdx, m.armedSFTP, m.armedMount, m.armedUnmount)
 }
 
@@ -1343,11 +1803,21 @@ func (m Model) connectToHost(host Host) (tea.Model, tea.Cmd) {
 	}
 
 	// Build the SSH connection
+	term := ""
+	switch m.cfg.SSH.TermMode {
+	case config.TermXterm:
+		term = "xterm-256color"
+	case config.TermCustom:
+		term = strings.TrimSpace(m.cfg.SSH.TermCustom)
+	}
 	conn := ssh.Connection{
-		Hostname:   host.Hostname,
-		Username:   host.Username,
-		Port:       host.Port,
-		PrivateKey: privateKey,
+		Hostname:         host.Hostname,
+		Username:         host.Username,
+		Port:             host.Port,
+		PrivateKey:       privateKey,
+		HostKeyPolicy:    string(m.cfg.SSH.HostKeyPolicy),
+		KeepAliveSeconds: m.cfg.SSH.KeepAliveSeconds,
+		Term:             term,
 	}
 
 	// For password auth, we don't pass a password - SSH will prompt
@@ -1395,11 +1865,21 @@ func (m Model) connectToHostSFTP(host Host) (tea.Model, tea.Cmd) {
 		privateKey = key
 	}
 
+	term := ""
+	switch m.cfg.SSH.TermMode {
+	case config.TermXterm:
+		term = "xterm-256color"
+	case config.TermCustom:
+		term = strings.TrimSpace(m.cfg.SSH.TermCustom)
+	}
 	conn := ssh.Connection{
-		Hostname:   host.Hostname,
-		Username:   host.Username,
-		Port:       host.Port,
-		PrivateKey: privateKey,
+		Hostname:         host.Hostname,
+		Username:         host.Username,
+		Port:             host.Port,
+		PrivateKey:       privateKey,
+		HostKeyPolicy:    string(m.cfg.SSH.HostKeyPolicy),
+		KeepAliveSeconds: m.cfg.SSH.KeepAliveSeconds,
+		Term:             term,
 	}
 
 	cmd, tempKey, err := ssh.ConnectSFTP(conn)
@@ -1468,17 +1948,27 @@ func (m Model) handleMountEnter(host Host) (tea.Model, tea.Cmd) {
 		privateKey = key
 	}
 
-	remotePath := "" // default home dir; configurable later via settings.
+	remotePath := m.cfg.Mount.DefaultRemotePath
 	display := strings.TrimSpace(host.Label)
 	if display == "" {
 		display = host.Hostname
 	}
 
+	term := ""
+	switch m.cfg.SSH.TermMode {
+	case config.TermXterm:
+		term = "xterm-256color"
+	case config.TermCustom:
+		term = strings.TrimSpace(m.cfg.SSH.TermCustom)
+	}
 	prep, err := m.mountManager.PrepareMount(host.ID, ssh.Connection{
-		Hostname:   host.Hostname,
-		Username:   host.Username,
-		Port:       host.Port,
-		PrivateKey: privateKey,
+		Hostname:         host.Hostname,
+		Username:         host.Username,
+		Port:             host.Port,
+		PrivateKey:       privateKey,
+		HostKeyPolicy:    string(m.cfg.SSH.HostKeyPolicy),
+		KeepAliveSeconds: m.cfg.SSH.KeepAliveSeconds,
+		Term:             term,
 	}, remotePath, display)
 	if err != nil {
 		m.err = err
@@ -1502,10 +1992,10 @@ type sshFinishedMsg struct {
 }
 
 type mountFinishedMsg struct {
-	action  string // "mount" | "unmount"
-	hostID  int
-	local   string
-	err     error
+	action string // "mount" | "unmount"
+	hostID int
+	local  string
+	err    error
 }
 
 type quitFinishedMsg struct{}

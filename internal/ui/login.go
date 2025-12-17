@@ -27,7 +27,7 @@ func (s *Styles) RenderLoginView(width, height int, input textinput.Model, err e
 		b.WriteString("\n\n")
 	}
 
-	b.WriteString(s.HelpValue.Foreground(ColorTextDim).Render("[Enter] Unlock • [Ctrl+R] Reset DB • [Esc] Quit"))
+	b.WriteString(s.HelpValue.Foreground(ColorTextDim).Render("[Enter] Unlock • [Esc] Quit"))
 
 	// Center the box
 	content := s.LoginBox.Render(b.String())

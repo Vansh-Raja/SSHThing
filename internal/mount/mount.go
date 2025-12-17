@@ -247,8 +247,8 @@ func (m *Manager) PrepareMount(hostID int, conn ssh.Connection, remotePath strin
 	args = append(args, "-o", strings.Join(mountOpts, ","))
 
 	// SSH options passed through.
-	args = append(args, "-o", "StrictHostKeyChecking=accept-new")
-	args = append(args, "-o", "ServerAliveInterval=60")
+	args = append(args, "-o", "StrictHostKeyChecking="+strictHostKeyChecking(conn.HostKeyPolicy))
+	args = append(args, "-o", fmt.Sprintf("ServerAliveInterval=%d", keepAliveSeconds(conn.KeepAliveSeconds)))
 
 	// Port: sshfs supports -p in many builds; this is the most explicit form.
 	if conn.Port != 0 && conn.Port != 22 {
@@ -494,4 +494,25 @@ func isMounted(localPath string) (bool, error) {
 // IsMounted reports whether a given local mount path is currently mounted.
 func IsMounted(localPath string) (bool, error) {
 	return isMounted(localPath)
+}
+
+func strictHostKeyChecking(policy string) string {
+	switch strings.TrimSpace(strings.ToLower(policy)) {
+	case "strict", "yes":
+		return "yes"
+	case "off", "no":
+		return "no"
+	default:
+		return "accept-new"
+	}
+}
+
+func keepAliveSeconds(v int) int {
+	if v <= 0 {
+		return 60
+	}
+	if v > 600 {
+		return 600
+	}
+	return v
 }
