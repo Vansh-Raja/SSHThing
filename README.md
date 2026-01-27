@@ -32,10 +32,10 @@ A secure, modern SSH host manager TUI built with Go and Bubble Tea.
 ## Requirements
 
 - Go **1.25+** (matches `go.mod`)
-- OpenSSH tools available: `ssh`, `ssh-keygen`
+- OpenSSH tools available: `ssh`, `ssh-keygen`, `sftp`
 - A terminal with 256-color support
 - SQLCipher build support (this project uses `github.com/mutecomm/go-sqlcipher/v4`, which typically requires CGO and SQLCipher on your system)
-- Finder mounts (beta): macOS + `sshfs` (FUSE-T)
+- Finder mounts (beta): macOS only + `sshfs` (FUSE-T)
 
 ## Install / Run
 
@@ -47,6 +47,24 @@ brew install sshthing
 sshthing
 ```
 
+### Windows
+
+**Requirements:**
+- Windows 10/11
+- OpenSSH Client (Settings > Apps > Optional Features > OpenSSH Client)
+
+**Install from Release:**
+1. Download `sshthing-windows-amd64.zip` from [Releases](https://github.com/Vansh-Raja/SSHThing/releases)
+2. Extract to a folder (e.g., `C:\Tools\sshthing`)
+3. (Optional) Add to PATH for global access:
+   - Open System Properties > Environment Variables
+   - Edit `Path` under User variables
+   - Add `C:\Tools\sshthing`
+   - Restart your terminal
+4. Run `sshthing.exe` (or just `sshthing` if added to PATH)
+
+**Note:** The Mount feature is not available on Windows.
+
 ### From source
 
 ```bash
@@ -55,6 +73,8 @@ cd SSHThing
 go build -o sshthing ./cmd/sshthing
 ./sshthing
 ```
+
+**Windows from source:** See [BUILDING_WINDOWS.md](BUILDING_WINDOWS.md) for CGO/SQLCipher setup.
 
 ## Finder Mounts (Beta, macOS)
 
@@ -128,12 +148,20 @@ The sync status is displayed in the footer (e.g., "Sync: 2m ago", "Syncing...", 
 
 ## Data & Safety Notes
 
-- Database location: `~/.ssh-manager/hosts.db`
-- Config location: `~/Library/Application Support/sshthing/config.json` (macOS)
-- Sync repository: `~/Library/Application Support/sshthing/sync/` (macOS)
+- Database location:
+  - macOS/Linux: `~/.ssh-manager/hosts.db`
+  - Windows: `%APPDATA%\sshthing\hosts.db`
+- Config location:
+  - macOS: `~/Library/Application Support/sshthing/config.json`
+  - Linux: `~/.config/sshthing/config.json`
+  - Windows: `%APPDATA%\sshthing\config.json`
+- Sync repository:
+  - macOS: `~/Library/Application Support/sshthing/sync/`
+  - Linux: `~/.config/sshthing/sync/`
+  - Windows: `%APPDATA%\sshthing\sync\`
 - If you forget the master password, the encrypted DB cannot be recovered.
-- Mount points: `~/.config/sshthing/mounts/`
-- If you choose "Leave Mounted & Quit", a mount key file may remain at `~/.config/sshthing/mount-keys/` until you unmount.
+- Mount points (macOS only): `~/Library/Application Support/sshthing/mounts/`
+- If you choose "Leave Mounted & Quit", a mount key file may remain at the mount-keys directory until you unmount.
 
 ### Environment Variables
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/Vansh-Raja/SSHThing/internal/crypto"
@@ -57,6 +58,21 @@ func DBPath() (string, error) {
 		return filepath.Join(dir, "hosts.db"), nil
 	}
 
+	// Platform-specific default paths
+	if runtime.GOOS == "windows" {
+		// On Windows, use %APPDATA%\sshthing\hosts.db
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			return "", err
+		}
+		appDir := filepath.Join(configDir, "sshthing")
+		if err := os.MkdirAll(appDir, 0700); err != nil {
+			return "", err
+		}
+		return filepath.Join(appDir, "hosts.db"), nil
+	}
+
+	// On Unix (macOS/Linux), keep ~/.ssh-manager for backward compatibility
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err

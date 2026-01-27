@@ -14,9 +14,12 @@
 
 ## Build, Test, and Development Commands
 
-- Build: `go build -o sshthing ./cmd/sshthing`
-  - Produces the local binary (not committed).
-- Run: `./sshthing`
+- Build (macOS/Linux): `go build -o sshthing ./cmd/sshthing`
+- Build (Windows): `go build -o sshthing.exe ./cmd/sshthing`
+  - Requires MSYS2/MinGW-w64 for CGO. See [BUILDING_WINDOWS.md](BUILDING_WINDOWS.md).
+- Produces the local binary (not committed).
+- Run (macOS/Linux): `./sshthing`
+- Run (Windows): `.\sshthing.exe`
 - Tests: `go test ./...`
   - If your environment blocks the default Go build cache, run:
     - `GOCACHE=$PWD/.gocache go test ./...`

@@ -59,8 +59,13 @@ func (m *Manager) IsMounted(hostID int) (bool, *Mount) {
 }
 
 func (m *Manager) CheckPrereqs() error {
-	if runtime.GOOS != "darwin" {
-		return fmt.Errorf("⚠ Finder mounts are currently supported only on macOS (darwin)")
+	switch runtime.GOOS {
+	case "darwin":
+		// macOS - continue with FUSE-T/SSHFS checks below
+	case "windows":
+		return fmt.Errorf("Mount feature is not yet available on Windows.\nThis feature requires FUSE filesystem support which is macOS-only for now.")
+	default:
+		return fmt.Errorf("Mount feature is currently only supported on macOS (darwin)")
 	}
 
 	// Prefer the standard `sshfs` name, but allow variants.
@@ -90,19 +95,19 @@ func (m *Manager) CheckPrereqs() error {
 }
 
 func mountRoot() (string, error) {
-	home, err := os.UserHomeDir()
+	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".config", "sshthing", "mounts"), nil
+	return filepath.Join(configDir, "sshthing", "mounts"), nil
 }
 
 func mountKeyDir() (string, error) {
-	home, err := os.UserHomeDir()
+	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".config", "sshthing", "mount-keys"), nil
+	return filepath.Join(configDir, "sshthing", "mount-keys"), nil
 }
 
 func mountKeyPathFor(hostID int) (string, error) {

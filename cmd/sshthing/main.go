@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/Vansh-Raja/SSHThing/internal/app"
+	"github.com/Vansh-Raja/SSHThing/internal/ssh"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -25,6 +26,12 @@ func main() {
 			fmt.Println("  sshthing --help     Show this help")
 			return
 		}
+	}
+
+	// Check for required OpenSSH tools before starting the TUI
+	if err := ssh.CheckPrereqs(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Create the initial model

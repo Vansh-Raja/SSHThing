@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-sqlcipher
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          export PATH="/mingw64/bin:$PATH"
+          export CGO_ENABLED=1
+          export CC=gcc
+          go build -o sshthing.exe ./cmd/sshthing
+
+      - name: Test
+        shell: msys2 {0}
+        run: |
+          export PATH="/mingw64/bin:$PATH"
+          export CGO_ENABLED=1
+          export CC=gcc
+          go test ./...
+
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install SQLCipher
+        run: brew install sqlcipher
+
+      - name: Build
+        run: |
+          export CGO_ENABLED=1
+          export CGO_CFLAGS="-I$(brew --prefix sqlcipher)/include"
+          export CGO_LDFLAGS="-L$(brew --prefix sqlcipher)/lib"
+          go build -o sshthing ./cmd/sshthing
+
+      - name: Test
+        run: |
+          export CGO_ENABLED=1
+          export CGO_CFLAGS="-I$(brew --prefix sqlcipher)/include"
+          export CGO_LDFLAGS="-L$(brew --prefix sqlcipher)/lib"
+          go test ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Check formatting
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Go files are not formatted. Run 'gofmt -w .' to fix."
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
