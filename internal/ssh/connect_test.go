@@ -56,4 +56,3 @@ func TestConnectSFTP_DefaultPort_NoKey(t *testing.T) {
 		t.Fatalf("expected target at end, got: %q", args)
 	}
 }
-

@@ -34,7 +34,7 @@ func GenerateKey(keyType KeyType, comment string) (privateKey, publicKey string,
 		"-t", string(keyType),
 		"-f", keyPath,
 		"-N", "", // No passphrase (we encrypt at app level)
-		"-q",     // Quiet mode
+		"-q", // Quiet mode
 	}
 
 	// Add key-specific options

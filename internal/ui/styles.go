@@ -12,21 +12,21 @@ var (
 	ColorWarning   = lipgloss.Color("#F59E0B") // Amber
 
 	// Neutral colors
-	ColorText      = lipgloss.Color("#E5E7EB") // Light gray
-	ColorTextDim   = lipgloss.Color("#9CA3AF") // Medium gray
-	ColorBorder    = lipgloss.Color("#4B5563") // Dark gray
-	ColorBg        = lipgloss.Color("#1F2937") // Very dark gray
-	ColorBgAlt     = lipgloss.Color("#111827") // Almost black
+	ColorText    = lipgloss.Color("#E5E7EB") // Light gray
+	ColorTextDim = lipgloss.Color("#9CA3AF") // Medium gray
+	ColorBorder  = lipgloss.Color("#4B5563") // Dark gray
+	ColorBg      = lipgloss.Color("#1F2937") // Very dark gray
+	ColorBgAlt   = lipgloss.Color("#111827") // Almost black
 )
 
 // Styles defines all UI styles
 type Styles struct {
 	// Layout
-	App          lipgloss.Style
-	Header       lipgloss.Style
-	Footer       lipgloss.Style
-	Panel        lipgloss.Style
-	PanelBorder  lipgloss.Style
+	App         lipgloss.Style
+	Header      lipgloss.Style
+	Footer      lipgloss.Style
+	Panel       lipgloss.Style
+	PanelBorder lipgloss.Style
 
 	// List
 	ListItem         lipgloss.Style
@@ -39,9 +39,9 @@ type Styles struct {
 	DetailRow   lipgloss.Style
 
 	// Status indicators
-	StatusReady    lipgloss.Style
-	StatusWarning  lipgloss.Style
-	StatusError    lipgloss.Style
+	StatusReady   lipgloss.Style
+	StatusWarning lipgloss.Style
+	StatusError   lipgloss.Style
 
 	// Help/Keybindings
 	HelpKey   lipgloss.Style
@@ -52,7 +52,7 @@ type Styles struct {
 	Modal        lipgloss.Style
 	ModalTitle   lipgloss.Style
 	ModalOverlay lipgloss.Style
-	
+
 	// Spotlight
 	Spotlight         lipgloss.Style
 	SpotlightInput    lipgloss.Style
@@ -63,10 +63,10 @@ type Styles struct {
 	LoginBox lipgloss.Style
 
 	// Form
-	FormLabel    lipgloss.Style
-	FormInput    lipgloss.Style
-	FormInputFocused lipgloss.Style
-	FormButton   lipgloss.Style
+	FormLabel         lipgloss.Style
+	FormInput         lipgloss.Style
+	FormInputFocused  lipgloss.Style
+	FormButton        lipgloss.Style
 	FormButtonFocused lipgloss.Style
 
 	// General

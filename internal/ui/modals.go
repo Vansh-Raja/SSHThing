@@ -11,24 +11,24 @@ import (
 
 // ModalFormData holds the form state for add/edit modals
 type ModalFormData struct {
-	Label         textinput.Model
-	Hostname      textinput.Model
-	Username      textinput.Model
-	Port          textinput.Model
-	AuthMethod    int // 0=Password, 1=Key File, 2=Generate
-	Password      textinput.Model
-	KeyOption     string // Legacy
-	KeyType       string // "ed25519", "rsa", "ecdsa"
-	PastedKey     textarea.Model
-	FocusedField  int
-	TitleSuffix   string // Debug or status info
+	Label        textinput.Model
+	Hostname     textinput.Model
+	Username     textinput.Model
+	Port         textinput.Model
+	AuthMethod   int // 0=Password, 1=Key File, 2=Generate
+	Password     textinput.Model
+	KeyOption    string // Legacy
+	KeyType      string // "ed25519", "rsa", "ecdsa"
+	PastedKey    textarea.Model
+	FocusedField int
+	TitleSuffix  string // Debug or status info
 }
 
 // FormField represents individual form fields
 const (
 	FieldLabel = iota
 	FieldHostname
-	FieldPort     // Moved Port up
+	FieldPort // Moved Port up
 	FieldUsername
 	FieldAuthMethod
 	FieldAuthDetails // Password or Key details
@@ -36,7 +36,7 @@ const (
 	FieldCancel
 	// Legacy constants for compatibility if needed, but we reordered
 	FieldKeyOption = 99
-	FieldKeyType = 100
+	FieldKeyType   = 100
 	FieldPastedKey = 101
 )
 
@@ -61,8 +61,8 @@ func (s *Styles) RenderAddHostModal(width, height int, form *ModalFormData, isEd
 	// Layout calculations
 	// Modal has padding 1, 2. Border 1.
 	// Inner width = modalWidth - 2(border) - 4(padding) = modalWidth - 6
-	rowWidth := modalWidth - 6 
-	
+	rowWidth := modalWidth - 6
+
 	var modal strings.Builder
 
 	// Title
@@ -73,7 +73,7 @@ func (s *Styles) RenderAddHostModal(width, height int, form *ModalFormData, isEd
 	if form.TitleSuffix != "" {
 		title += form.TitleSuffix
 	}
-	
+
 	modal.WriteString(s.ModalTitle.Render(title))
 	modal.WriteString("\n")
 
@@ -84,21 +84,23 @@ func (s *Styles) RenderAddHostModal(width, height int, form *ModalFormData, isEd
 	// Host Label (13) + Host Input (flex) + Spacer (2) + Port Label (7) + Port Input (10)
 	// Fixed elements width = 13 + 2 + 7 + 10 = 32
 	// Host Input Width = rowWidth - 32
-	
+
 	portInputWidth := 6
 	portTotalWidth := portInputWidth + 4 // border/padding
-	
+
 	// Custom labels for this row
 	hostLabelView := s.FormLabel.Width(12).Align(lipgloss.Right).MarginRight(1).Render("Host*:") // required
 	portLabelView := s.FormLabel.Width(6).Align(lipgloss.Right).MarginRight(1).Render("Port*:")  // required
-	
+
 	// Calculate flexible host width
 	// Available = rowWidth
 	// Used = 13 (Host Label) + 2 (Spacer) + 7 (Port Label) + 10 (Port Input) = 32
 	// + 4 (Host Input Border/Padding) = 36 total overhead
 	hostInputWidth := rowWidth - 36
-	if hostInputWidth < 15 { hostInputWidth = 15 }
-	
+	if hostInputWidth < 15 {
+		hostInputWidth = 15
+	}
+
 	// Configure Host Input
 	hostStyle := s.FormInput.Width(hostInputWidth)
 	if form.FocusedField == FieldHostname {
@@ -116,7 +118,7 @@ func (s *Styles) RenderAddHostModal(width, height int, form *ModalFormData, isEd
 	form.Port.Width = portInputWidth
 	form.Port.Prompt = ""
 	portView := portStyle.Render(form.Port.View())
-	
+
 	row1 := lipgloss.JoinHorizontal(lipgloss.Center,
 		hostLabelView,
 		hostView,
@@ -168,7 +170,7 @@ func (s *Styles) RenderAddHostModal(width, height int, form *ModalFormData, isEd
 			typeStyle = s.FormInputFocused.Width(rowWidth - 14)
 			typeValue += " (Press Space to cycle)"
 		}
-		
+
 		modal.WriteString(lipgloss.JoinHorizontal(lipgloss.Center,
 			s.FormLabel.Width(12).Align(lipgloss.Right).MarginRight(1).Render(typeLabel),
 			typeStyle.Render(typeValue),
@@ -192,12 +194,12 @@ func (s *Styles) RenderAddHostModal(width, height int, form *ModalFormData, isEd
 
 	// Measure actual rendered height
 	boxHeight := lipgloss.Height(modalBox)
-	
+
 	// SCROLLING LOGIC:
 	if boxHeight > height {
 		lines := strings.Split(modalBox, "\n")
 		totalLines := len(lines)
-		
+
 		// Find focused line
 		focusLine := 0
 		foundCursor := false
@@ -208,7 +210,7 @@ func (s *Styles) RenderAddHostModal(width, height int, form *ModalFormData, isEd
 				break
 			}
 		}
-		
+
 		// Fallback focus detection
 		if !foundCursor {
 			if form.FocusedField == FieldSubmit || form.FocusedField == FieldCancel {
@@ -217,26 +219,34 @@ func (s *Styles) RenderAddHostModal(width, height int, form *ModalFormData, isEd
 				focusLine = 8 // Approx row for auth method
 			}
 		}
-		
+
 		// Calculate scroll offset
 		scrollOffset := focusLine - (height / 2)
 		maxOffset := totalLines - height
-		if scrollOffset < 0 { scrollOffset = 0 }
-		if scrollOffset > maxOffset { scrollOffset = maxOffset }
-		
+		if scrollOffset < 0 {
+			scrollOffset = 0
+		}
+		if scrollOffset > maxOffset {
+			scrollOffset = maxOffset
+		}
+
 		// Slice lines
 		visibleLines := lines[scrollOffset : scrollOffset+height]
 		modalBox = strings.Join(visibleLines, "\n")
-		
+
 		return lipgloss.PlaceHorizontal(width, lipgloss.Center, modalBox)
 	}
 
 	// Standard centering
 	topPadding := (height - boxHeight) / 2
-	if topPadding < 0 { topPadding = 0 }
+	if topPadding < 0 {
+		topPadding = 0
+	}
 
 	bottomPadding := height - boxHeight - topPadding
-	if bottomPadding < 0 { bottomPadding = 0 }
+	if bottomPadding < 0 {
+		bottomPadding = 0
+	}
 
 	centeredModal := lipgloss.NewStyle().
 		PaddingTop(topPadding).
@@ -261,7 +271,7 @@ func (s *Styles) renderAuthSelector(form *ModalFormData) string {
 	// Style for the spinner box
 	var style lipgloss.Style
 	var arrowColor lipgloss.Style
-	
+
 	if form.FocusedField == FieldAuthMethod {
 		style = s.FormInputFocused.Width(20).Align(lipgloss.Center)
 		arrowColor = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
@@ -284,20 +294,22 @@ func (s *Styles) renderAuthSelector(form *ModalFormData) string {
 func (s *Styles) renderFormFieldResponsive(label string, input textinput.Model, totalWidth int) string {
 	// Fixed dimensions
 	labelWidth := 14 // 12 chars + 1 margin + 1 extra space
-	
+
 	// Calculate available width for the input box
 	inputBoxWidth := totalWidth - labelWidth
-	if inputBoxWidth < 10 { inputBoxWidth = 10 }
-	
+	if inputBoxWidth < 10 {
+		inputBoxWidth = 10
+	}
+
 	// Calculate inner text width (accounting for border/padding)
 	// Border (2) + Padding (2) = 4
 	input.Width = inputBoxWidth - 4
-	input.Prompt = "" 
-	
+	input.Prompt = ""
+
 	// Reset styles
 	input.TextStyle = lipgloss.NewStyle()
 	input.Cursor.Style = lipgloss.NewStyle().Foreground(ColorPrimary)
-	
+
 	// Determine style
 	var style lipgloss.Style
 	if input.Focused() {
@@ -305,13 +317,13 @@ func (s *Styles) renderFormFieldResponsive(label string, input textinput.Model, 
 	} else {
 		style = s.FormInput.Width(inputBoxWidth)
 	}
-	
+
 	// Render input
 	inputView := style.Render(input.View())
-	
+
 	// Render Label
 	labelView := s.FormLabel.Width(12).Align(lipgloss.Right).MarginRight(1).Render(label)
-	
+
 	// Join
 	row := lipgloss.JoinHorizontal(
 		lipgloss.Center,
@@ -439,11 +451,11 @@ func (s *Styles) renderKeyOptionsResponsive(form *ModalFormData, width int) stri
 			pasteAreaStyle = s.FormInputFocused.Width(width).Height(2)
 		}
 
-			// Update pasted key input width
-			form.PastedKey.SetWidth(width - 5) // Adjust for padding
-		
-			// Render textarea view
-			content := form.PastedKey.View()
+		// Update pasted key input width
+		form.PastedKey.SetWidth(width - 5) // Adjust for padding
+
+		// Render textarea view
+		content := form.PastedKey.View()
 		if form.PastedKey.Value() == "" && !pasteAreaFocused {
 			content = s.DetailValue.Foreground(ColorTextDim).Render("Paste key...")
 		}
@@ -644,9 +656,9 @@ func (s *Styles) RenderQuitModal(width, height int, mounts []string, focus int) 
 	b.WriteString(s.HelpValue.Foreground(ColorTextDim).Render("[◄/►] Select • [Enter] Confirm • [Esc] Cancel"))
 
 	modalBox := s.Modal.
-	BorderForeground(ColorWarning).
-	Width(modalWidth - 4).
-	Render(b.String())
+		BorderForeground(ColorWarning).
+		Width(modalWidth - 4).
+		Render(b.String())
 
 	topPadding := (height - lipgloss.Height(modalBox)) / 2
 	if topPadding < 0 {
@@ -673,18 +685,18 @@ func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, resul
 	// Apply custom styling to input
 	// input.TextStyle = s.SpotlightInput // We can't easily override style inside model without updating it.
 	// So we wrap it.
-	
+
 	// Create a clear input view without border, we will wrap it
 	inputView := input.View()
 	styledInput := s.SpotlightInput.Width(58).Render(inputView)
 	modal.WriteString(styledInput)
 	modal.WriteString("\n")
-	
+
 	// 2. Render Results List
 	// Limit results to 5-8 items to fit in the box
 	maxItems := 8
 	displayCount := 0
-	
+
 	if len(results) == 0 {
 		modal.WriteString(s.SpotlightItem.Render("No results found"))
 	} else {
@@ -698,7 +710,7 @@ func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, resul
 		if endIdx > len(results) {
 			endIdx = len(results)
 		}
-		
+
 		for i := startIdx; i < endIdx; i++ {
 			// Extract host data
 			hostMap, ok := results[i].(map[string]interface{})
@@ -709,7 +721,7 @@ func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, resul
 			hostname, _ := hostMap["Hostname"].(string)
 			username, _ := hostMap["Username"].(string)
 			mounted, _ := hostMap["Mounted"].(bool)
-			
+
 			// Build item string
 			itemText := fmt.Sprintf("%s @ %s", username, hostname)
 			displayLabel := strings.TrimSpace(label)
@@ -719,12 +731,12 @@ func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, resul
 			if mounted {
 				itemText = "📁 " + itemText
 			}
-			
+
 			// Truncate if too long
 			if len(itemText) > 50 {
 				itemText = itemText[:47] + "..."
 			}
-			
+
 			// Render item
 			if i == selectedIdx {
 				modal.WriteString(s.SpotlightSelected.Width(56).Render(itemText))
@@ -735,13 +747,13 @@ func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, resul
 			displayCount++
 		}
 	}
-	
+
 	// Pad remaining space to keep box stable size
 	for displayCount < maxItems {
 		modal.WriteString("\n")
 		displayCount++
 	}
-	
+
 	// Footer hint
 	modal.WriteString("\n")
 	if armedUnmount {

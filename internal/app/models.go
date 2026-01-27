@@ -4,14 +4,14 @@ import "time"
 
 // Host represents an SSH host configuration
 type Host struct {
-	ID            int       `json:"id"`
-	Label         string    `json:"label,omitempty"`
-	Hostname      string    `json:"hostname"`
-	Username      string    `json:"username"`
-	Port          int       `json:"port"`
-	HasKey        bool      `json:"has_key"`
-	KeyType       string    `json:"key_type"` // "ed25519", "rsa", "ecdsa", or "pasted"
-	CreatedAt     time.Time `json:"created_at"`
+	ID            int        `json:"id"`
+	Label         string     `json:"label,omitempty"`
+	Hostname      string     `json:"hostname"`
+	Username      string     `json:"username"`
+	Port          int        `json:"port"`
+	HasKey        bool       `json:"has_key"`
+	KeyType       string     `json:"key_type"` // "ed25519", "rsa", "ecdsa", or "pasted"
+	CreatedAt     time.Time  `json:"created_at"`
 	LastConnected *time.Time `json:"last_connected,omitempty"`
 }
 
