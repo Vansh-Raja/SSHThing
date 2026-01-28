@@ -21,6 +21,8 @@ AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}
 AppUpdatesURL={#AppURL}
 
+ChangesEnvironment=yes
+
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 DisableDirPage=no
@@ -96,26 +98,25 @@ end;
 procedure RemoveFromPath(const AppDir: string);
 var
   OrigPath: string;
-  Parts: TArrayOfString;
-  I: Integer;
   NewPath: string;
-  Part: string;
 begin
   if not RegQueryStringValue(HKCU, 'Environment', 'Path', OrigPath) then
     Exit;
 
-  Parts := SplitString(OrigPath, ';');
-  NewPath := '';
-  for I := 0 to GetArrayLength(Parts) - 1 do
-  begin
-    Part := Trim(Parts[I]);
-    if (Part = '') or (CompareText(Part, AppDir) = 0) then
-      continue;
-    if NewPath = '' then
-      NewPath := Part
-    else
-      NewPath := NewPath + ';' + Part;
-  end;
+  NewPath := OrigPath;
+
+  StringChangeEx(NewPath, ';' + AppDir + ';', ';', True);
+  StringChangeEx(NewPath, ';' + AppDir, '', True);
+  StringChangeEx(NewPath, AppDir + ';', '', True);
+  if CompareText(NewPath, AppDir) = 0 then
+    NewPath := '';
+
+  while Pos(';;', NewPath) > 0 do
+    StringChangeEx(NewPath, ';;', ';', True);
+  if (Length(NewPath) > 0) and (NewPath[1] = ';') then
+    Delete(NewPath, 1, 1);
+  if (Length(NewPath) > 0) and (NewPath[Length(NewPath)] = ';') then
+    Delete(NewPath, Length(NewPath), 1);
 
   RegWriteExpandStringValue(HKCU, 'Environment', 'Path', NewPath);
 end;
