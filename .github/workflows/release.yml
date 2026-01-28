@@ -52,7 +52,7 @@ jobs:
           $v = $env:GITHUB_REF_NAME
           if ($v.StartsWith('v')) { $v = $v.Substring(1) }
           $candidates = @(
-            "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
             "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
