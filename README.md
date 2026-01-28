@@ -47,6 +47,31 @@ brew install sshthing
 sshthing
 ```
 
+### macOS (Download a Release)
+
+1. Download the right ZIP from [Releases](https://github.com/Vansh-Raja/SSHThing/releases):
+   - Apple Silicon (M1/M2/M3): `sshthing-macos-arm64.zip`
+   - Intel: `sshthing-macos-amd64.zip`
+2. Unzip it and run:
+
+```bash
+unzip sshthing-macos-*.zip
+chmod +x sshthing
+./sshthing
+```
+
+3. (Optional) Install it on your PATH:
+
+```bash
+sudo mv sshthing /usr/local/bin/sshthing
+```
+
+If macOS blocks the binary on first run:
+
+```bash
+xattr -dr com.apple.quarantine sshthing
+```
+
 ### Windows
 
 **Requirements:**
@@ -54,14 +79,16 @@ sshthing
 - OpenSSH Client (Settings > Apps > Optional Features > OpenSSH Client)
 
 **Install from Release:**
+1. Download `sshthing-setup-windows-amd64.exe` from [Releases](https://github.com/Vansh-Raja/SSHThing/releases)
+2. Run the installer
+3. Leave the “Add SSHThing to PATH” option enabled (recommended)
+4. Launch from the Start Menu, or run `sshthing` in a new terminal
+
+**Alternative (portable zip):**
 1. Download `sshthing-windows-amd64.zip` from [Releases](https://github.com/Vansh-Raja/SSHThing/releases)
 2. Extract to a folder (e.g., `C:\Tools\sshthing`)
-3. (Optional) Add to PATH for global access:
-   - Open System Properties > Environment Variables
-   - Edit `Path` under User variables
-   - Add `C:\Tools\sshthing`
-   - Restart your terminal
-4. Run `sshthing.exe` (or just `sshthing` if added to PATH)
+3. Run `sshthing.exe`
+4. (Optional) Add that folder to PATH manually
 
 **Note:** The Mount feature is not available on Windows.
 
