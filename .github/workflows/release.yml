@@ -37,7 +37,7 @@ jobs:
           export PATH="/mingw64/bin:$PATH"
           export CGO_ENABLED=1
           export CC=gcc
-          go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o sshthing.exe ./cmd/sshthing
+          go build -o sshthing.exe ./cmd/sshthing
 
       - name: Create archive
         shell: pwsh
