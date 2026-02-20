@@ -3,6 +3,57 @@
 This repo is developed on `main`. Versioned releases are published as tags (starting at `v0.1.0`).
 Entries below are written as an “engineering history” of the major problems we hit and how we fixed them (useful for future write-ups/portfolio posts).
 
+## Running Log
+
+- id: 2026-02-20T11:44:38Z-8192
+  time: 2026-02-20T11:44:38Z
+  type: code-change
+  summary: Auto-clear status messages by type in the UI, with checkmark-prefixed successes clearing after 5s and warnings/errors after 10s while keeping the sequence-safe timer to avoid clearing newer messages.
+  files: internal/app/, internal/ui/
+  commit: pending
+
+- id: 2026-02-19T13:08:17Z-c19e
+  time: 2026-02-19T13:08:17Z
+  type: code-change
+  summary: Add a Windows build helper script and document CGO_CFLAGS to suppress a known sqlite warning during CGO builds.
+  files: scripts/build-windows.ps1, BUILDING_WINDOWS.md
+  commit: pending
+
+- id: 2026-02-19T13:08:14Z-6a2f
+  time: 2026-02-19T13:08:14Z
+  type: code-change
+  summary: Reduce modal jank by skipping list rebuild and render prep when the app is not in the list view.
+  files: internal/app/app.go, internal/ui/main.go
+  commit: pending
+
+- id: 2026-02-19T12:51:02Z-1d4d
+  time: 2026-02-19T12:51:02Z
+  type: code-change
+  summary: Clean up create/rename group modal focus + layout with explicit input/submit/cancel focus, correct button highlighting, fixed Tab/Shift+Tab navigation, and updated help text.
+  files: internal/app/app.go, internal/ui/modals.go, internal/ui/main.go
+  commit: pending
+
+- id: 2026-02-19T10:37:53Z-db0c
+  time: 2026-02-19T10:37:53Z
+  type: code-change
+  summary: Classify DB unlock errors so a locked database shows a clear "database is in use by another process" message instead of a generic invalid password.
+  files: internal/db/, internal/ui/
+  commit: pending
+
+- id: 2026-02-19T10:37:53Z-ab81
+  time: 2026-02-19T10:37:53Z
+  type: code-change
+  summary: Improve modal QoL with a group selector spinner + position cue and Enter/Ctrl+S save behavior in the add/edit modal.
+  files: internal/app/, internal/ui/
+  commit: pending
+
+- id: 2026-02-19T10:37:53Z-1afd
+  time: 2026-02-19T10:37:53Z
+  type: code-change
+  summary: Implement Groups across DB/app/ui/sync with grouped list, spotlight fuzzy group matches, and tombstones with 90-day retention.
+  files: internal/db/, internal/app/, internal/ui/, internal/sync/
+  commit: pending
+
 ## 2025-12-13 — Stabilization, Security, and Polish
 
 ### Authentication & Encrypted DB Unlocking

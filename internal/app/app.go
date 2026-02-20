@@ -2,8 +2,10 @@ package app
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Vansh-Raja/SSHThing/internal/config"
 	"github.com/Vansh-Raja/SSHThing/internal/db"
@@ -20,6 +22,8 @@ import (
 type Model struct {
 	store        *db.Store
 	hosts        []Host
+	groups       []string
+	listItems    []ListItem
 	selectedIdx  int
 	viewMode     ViewMode
 	width        int
@@ -27,6 +31,7 @@ type Model struct {
 	armedSFTP    bool
 	armedMount   bool
 	armedUnmount bool
+	collapsed    map[string]bool // group name -> collapsed
 	quitPrevView ViewMode
 	quitFocus    int // 0=Unmount&Quit, 1=Leave&Quit, 2=Cancel
 
@@ -48,9 +53,19 @@ type Model struct {
 
 	styles *ui.Styles
 	err    error
+	errSeq int
 
 	// Modal state
 	modalForm *ModalForm
+
+	// Group modal state (create/rename)
+	groupInput       textinput.Model
+	groupOldName     string
+	groupFocus       int  // 0=input, 1=submit, 2=cancel
+	groupDeleteFocus bool // true=Delete focused
+
+	// Spotlight results
+	spotlightItems []SpotlightItem
 
 	mountManager *mount.Manager
 	pendingMount *mount.PreparedMount
@@ -69,6 +84,9 @@ type Model struct {
 // ModalForm holds form state for add/edit modals
 type ModalForm struct {
 	labelInput    textinput.Model
+	groupInput    textinput.Model
+	groupOptions  []string
+	groupSelected int
 	hostnameInput textinput.Model
 	usernameInput textinput.Model
 	portInput     textinput.Model
@@ -83,6 +101,12 @@ type ModalForm struct {
 
 	focusedField int
 }
+
+const (
+	groupFocusInput = iota
+	groupFocusSubmit
+	groupFocusCancel
+)
 
 // NewModel creates a new application model
 func NewModel() Model {
@@ -123,10 +147,16 @@ func NewModel() Model {
 	settingsInput.Prompt = ""
 	settingsInput.Placeholder = ""
 
+	groupInput := textinput.New()
+	groupInput.Prompt = ""
+	groupInput.Placeholder = "Group name"
+
 	return Model{
 		cfg:              cfg,
 		cfgOriginal:      cfg,
 		hosts:            []Host{},
+		groups:           []string{},
+		listItems:        []ListItem{},
 		selectedIdx:      0,
 		viewMode:         viewMode,
 		styles:           ui.NewStyles(),
@@ -138,6 +168,7 @@ func NewModel() Model {
 		armedSFTP:        false,
 		armedMount:       false,
 		armedUnmount:     false,
+		collapsed:        map[string]bool{},
 		quitPrevView:     ViewModeList,
 		quitFocus:        0,
 		mountManager:     mount.NewManager(),
@@ -145,6 +176,8 @@ func NewModel() Model {
 		settingsIdx:      0,
 		settingsEditing:  false,
 		settingsInput:    settingsInput,
+		groupInput:       groupInput,
+		spotlightItems:   []SpotlightItem{},
 	}
 }
 
@@ -155,9 +188,25 @@ func (m Model) Init() tea.Cmd {
 
 // Update handles messages and updates the model
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	prevErr := ""
+	if m.err != nil {
+		prevErr = m.err.Error()
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		return m.handleKeyPress(msg)
+		nextModel, nextCmd := m.handleKeyPress(msg)
+		nm, ok := nextModel.(Model)
+		if !ok {
+			return nextModel, nextCmd
+		}
+		return nm, tea.Batch(nextCmd, nm.errorAutoClearCmd(prevErr))
+
+	case clearErrMsg:
+		if msg.seq == m.errSeq {
+			m.err = nil
+		}
+		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -173,7 +222,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.err = fmt.Errorf("Disconnected from %s", msg.hostname)
 		}
-		return m, tea.HideCursor
+		return m, tea.Batch(tea.HideCursor, m.errorAutoClearCmd(prevErr))
 
 	case mountFinishedMsg:
 		m.viewMode = ViewModeList
@@ -181,18 +230,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "mount":
 			if m.pendingMount == nil {
 				m.err = fmt.Errorf("mount failed: missing pending state")
-				return m, tea.HideCursor
+				return m, tea.Batch(tea.HideCursor, m.errorAutoClearCmd(prevErr))
 			}
 			if msg.err != nil {
 				m.mountManager.AbortMount(m.pendingMount)
 				m.pendingMount = nil
 				m.err = fmt.Errorf("mount failed: %v", msg.err)
-				return m, tea.HideCursor
+				return m, tea.Batch(tea.HideCursor, m.errorAutoClearCmd(prevErr))
 			}
 			if err := m.mountManager.FinalizeMount(m.pendingMount); err != nil {
 				m.pendingMount = nil
 				m.err = err
-				return m, tea.HideCursor
+				return m, tea.Batch(tea.HideCursor, m.errorAutoClearCmd(prevErr))
 			}
 			local := m.pendingMount.LocalPath
 			m.pendingMount = nil
@@ -201,20 +250,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Persist that this host is mounted (best-effort). Next launch will reconcile with system mounts.
 				_ = m.store.UpsertMountState(msg.hostID, local, "")
 			}
-			return m, tea.HideCursor
+			return m, tea.Batch(tea.HideCursor, m.errorAutoClearCmd(prevErr))
 		case "unmount":
 			if err := m.mountManager.FinalizeUnmount(msg.hostID, msg.err); err != nil {
 				m.err = err
-				return m, tea.HideCursor
+				return m, tea.Batch(tea.HideCursor, m.errorAutoClearCmd(prevErr))
 			}
 			if m.store != nil {
 				_ = m.store.DeleteMountState(msg.hostID)
 			}
 			m.err = fmt.Errorf("✓ Unmounted")
-			return m, tea.HideCursor
+			return m, tea.Batch(tea.HideCursor, m.errorAutoClearCmd(prevErr))
 		default:
 			m.err = fmt.Errorf("mount error: unknown action")
-			return m, tea.HideCursor
+			return m, tea.Batch(tea.HideCursor, m.errorAutoClearCmd(prevErr))
 		}
 
 	case quitFinishedMsg:
@@ -236,12 +285,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	} else if m.viewMode == ViewModeAddHost || m.viewMode == ViewModeEditHost {
 		cmd = m.handleInputUpdate(msg)
 		return m, cmd
+	} else if m.viewMode == ViewModeCreateGroup || m.viewMode == ViewModeRenameGroup {
+		if m.groupFocus == groupFocusInput {
+			m.groupInput, cmd = m.groupInput.Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	} else if m.isSearching {
 		m.searchInput, cmd = m.searchInput.Update(msg)
 		return m, cmd
 	}
 
 	return m, nil
+}
+
+func (m *Model) errorAutoClearCmd(prevErr string) tea.Cmd {
+	currErr := ""
+	if m.err != nil {
+		currErr = m.err.Error()
+	}
+	if currErr == "" || currErr == prevErr {
+		return nil
+	}
+
+	m.errSeq++
+	seq := m.errSeq
+	d := autoClearDuration(currErr)
+	return tea.Tick(d, func(time.Time) tea.Msg {
+		return clearErrMsg{seq: seq}
+	})
+}
+
+func autoClearDuration(msg string) time.Duration {
+	msg = strings.TrimSpace(msg)
+	if strings.HasPrefix(msg, "✓") {
+		return 5 * time.Second
+	}
+	return 10 * time.Second
 }
 
 // handleKeyPress processes keyboard input
@@ -262,6 +342,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleModalKeys(msg)
 	case ViewModeDeleteHost:
 		return m.handleDeleteKeys(msg)
+	case ViewModeCreateGroup, ViewModeRenameGroup:
+		return m.handleGroupInputKeys(msg)
+	case ViewModeDeleteGroup:
+		return m.handleDeleteGroupKeys(msg)
 	case ViewModeSpotlight:
 		return m.handleSpotlightKeys(msg)
 	case ViewModeHelp:
@@ -515,6 +599,7 @@ func (m *Model) loadHosts() {
 		m.hosts[i] = Host{
 			ID:            h.ID,
 			Label:         label,
+			GroupName:     strings.TrimSpace(h.GroupName),
 			Hostname:      h.Hostname,
 			Username:      h.Username,
 			Port:          h.Port,
@@ -524,6 +609,147 @@ func (m *Model) loadHosts() {
 			LastConnected: h.LastConnected,
 		}
 	}
+
+	m.loadGroups()
+	m.rebuildListItems()
+}
+
+func (m *Model) loadGroups() {
+	if m.store == nil {
+		return
+	}
+	groups, err := m.store.GetGroups()
+	if err != nil {
+		m.err = err
+		return
+	}
+	m.groups = groups
+}
+
+func hostDisplayName(h Host) string {
+	d := strings.TrimSpace(h.Label)
+	if d == "" {
+		d = strings.TrimSpace(h.Hostname)
+	}
+	return d
+}
+
+func (m *Model) rebuildListItems() {
+	counts := make(map[string]int)
+	hostsByGroup := make(map[string][]Host)
+	for _, h := range m.hosts {
+		g := strings.TrimSpace(h.GroupName)
+		hostsByGroup[g] = append(hostsByGroup[g], h)
+		counts[g]++
+	}
+
+	groupSet := make(map[string]struct{})
+	for _, g := range m.groups {
+		name := strings.TrimSpace(g)
+		if name == "" {
+			continue
+		}
+		groupSet[name] = struct{}{}
+	}
+	for g := range hostsByGroup {
+		if g == "" {
+			continue
+		}
+		groupSet[g] = struct{}{}
+	}
+
+	groups := make([]string, 0, len(groupSet))
+	for g := range groupSet {
+		groups = append(groups, g)
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		return strings.ToLower(groups[i]) < strings.ToLower(groups[j])
+	})
+
+	for g := range hostsByGroup {
+		sort.Slice(hostsByGroup[g], func(i, j int) bool {
+			a := strings.ToLower(hostDisplayName(hostsByGroup[g][i]))
+			b := strings.ToLower(hostDisplayName(hostsByGroup[g][j]))
+			if a == b {
+				return strings.ToLower(hostsByGroup[g][i].Hostname) < strings.ToLower(hostsByGroup[g][j].Hostname)
+			}
+			return a < b
+		})
+	}
+
+	items := make([]ListItem, 0, len(m.hosts)+len(groups)+2)
+	for _, g := range groups {
+		items = append(items, ListItem{Kind: ListItemGroup, GroupName: g, Count: counts[g]})
+		if !m.collapsed[g] {
+			for _, h := range hostsByGroup[g] {
+				items = append(items, ListItem{Kind: ListItemHost, GroupName: g, Host: h})
+			}
+		}
+	}
+
+	if len(hostsByGroup[""]) > 0 {
+		items = append(items, ListItem{Kind: ListItemGroup, GroupName: "Ungrouped", Count: counts[""]})
+		if !m.collapsed["Ungrouped"] {
+			for _, h := range hostsByGroup[""] {
+				items = append(items, ListItem{Kind: ListItemHost, GroupName: "", Host: h})
+			}
+		}
+	}
+
+	items = append(items, ListItem{Kind: ListItemNewGroup})
+	m.listItems = items
+	if len(m.listItems) == 0 {
+		m.selectedIdx = 0
+	} else if m.selectedIdx >= len(m.listItems) {
+		m.selectedIdx = len(m.listItems) - 1
+	}
+}
+
+func (m *Model) selectedListItem() (ListItem, bool) {
+	if m.selectedIdx < 0 || m.selectedIdx >= len(m.listItems) {
+		return ListItem{}, false
+	}
+	return m.listItems[m.selectedIdx], true
+}
+
+func (m *Model) selectedHost() (Host, bool) {
+	item, ok := m.selectedListItem()
+	if !ok || item.Kind != ListItemHost {
+		return Host{}, false
+	}
+	return item.Host, true
+}
+
+func (m *Model) selectedGroup() (string, bool) {
+	item, ok := m.selectedListItem()
+	if !ok || item.Kind != ListItemGroup {
+		return "", false
+	}
+	if item.GroupName == "Ungrouped" {
+		return "", true
+	}
+	return item.GroupName, true
+}
+
+func (m *Model) hostCountForGroup(groupName string) int {
+	count := 0
+	norm := strings.TrimSpace(groupName)
+	if strings.EqualFold(norm, "Ungrouped") {
+		norm = ""
+	}
+	for _, h := range m.hosts {
+		hg := strings.TrimSpace(h.GroupName)
+		if norm == "" {
+			if hg == "" {
+				count++
+			}
+			continue
+		}
+		if strings.EqualFold(hg, norm) {
+			count++
+		}
+	}
+	return count
 }
 
 func (m *Model) restoreMountsFromDB() {
@@ -593,12 +819,18 @@ func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.isSearching = false
 		m.searchInput.Blur()
 		m.searchInput.Reset()
+		m.spotlightItems = nil
 		m.armedSFTP = false
 		m.armedMount = false
 		m.armedUnmount = false
 		return m, nil
 
 	case "S":
+		item, ok := m.selectedSpotlightItem()
+		if !ok || item.Kind != SpotlightItemHost {
+			m.err = fmt.Errorf("select a host first")
+			return m, nil
+		}
 		m.armedSFTP = !m.armedSFTP
 		m.armedMount = false
 		m.armedUnmount = false
@@ -614,11 +846,12 @@ func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("⚠ mounts are disabled in settings")
 			return m, nil
 		}
-		filtered := m.getFilteredHosts()
-		if len(filtered) == 0 || m.selectedIdx >= len(filtered) {
+		item, ok := m.selectedSpotlightItem()
+		if !ok || item.Kind != SpotlightItemHost {
+			m.err = fmt.Errorf("select a host first")
 			return m, nil
 		}
-		host := filtered[m.selectedIdx]
+		host := item.Host
 		isMounted := false
 		if m.mountManager != nil {
 			isMounted, _ = m.mountManager.IsMounted(host.ID)
@@ -642,26 +875,32 @@ func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "enter":
-		// Connect to selected host
-		filtered := m.getFilteredHosts()
-		if len(filtered) > 0 {
-			if m.selectedIdx >= len(filtered) {
-				m.selectedIdx = 0
-			}
-			host := filtered[m.selectedIdx]
+		item, ok := m.selectedSpotlightItem()
+		if !ok {
+			return m, nil
+		}
+		if item.Kind == SpotlightItemGroup {
+			m.viewMode = ViewModeList
 			m.isSearching = false
 			m.searchInput.Blur()
 			m.searchInput.Reset()
-			if m.armedMount || m.armedUnmount {
-				return m.handleMountEnter(host)
-			}
-			if m.armedSFTP {
-				m.armedSFTP = false
-				return m.connectToHostSFTP(host)
-			}
-			return m.connectToHost(host)
+			m.spotlightItems = nil
+			m.selectGroupInList(item.GroupName)
+			return m, nil
 		}
-		return m, nil
+		host := item.Host
+		m.isSearching = false
+		m.searchInput.Blur()
+		m.searchInput.Reset()
+		m.spotlightItems = nil
+		if m.armedMount || m.armedUnmount {
+			return m.handleMountEnter(host)
+		}
+		if m.armedSFTP {
+			m.armedSFTP = false
+			return m.connectToHostSFTP(host)
+		}
+		return m.connectToHost(host)
 
 	case "up", "k":
 		if msg.String() == "k" && !m.cfg.UI.VimMode {
@@ -675,8 +914,7 @@ func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.String() == "j" && !m.cfg.UI.VimMode {
 			return m, nil
 		}
-		filtered := m.getFilteredHosts()
-		if m.selectedIdx < len(filtered)-1 {
+		if m.selectedIdx < len(m.spotlightItems)-1 {
 			m.selectedIdx++
 		}
 
@@ -684,6 +922,7 @@ func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Forward key to search input
 		var cmd tea.Cmd
 		m.searchInput, cmd = m.searchInput.Update(msg)
+		m.spotlightItems = m.buildSpotlightItems(m.searchInput.Value())
 		// Reset selection when typing
 		m.selectedIdx = 0
 		return m, cmd
@@ -695,6 +934,7 @@ func (m Model) handleSpotlightKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // handleListKeys handles keyboard input in list view
 func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	m.rebuildListItems()
 
 	// Normal list navigation
 	switch key {
@@ -718,11 +958,11 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("⚠ mounts are disabled in settings")
 			return m, nil
 		}
-		filtered := m.getFilteredHosts()
-		if len(filtered) == 0 || m.selectedIdx >= len(filtered) {
+		host, ok := m.selectedHost()
+		if !ok {
+			m.err = fmt.Errorf("select a host first")
 			return m, nil
 		}
-		host := filtered[m.selectedIdx]
 		isMounted := false
 		if m.mountManager != nil {
 			isMounted, _ = m.mountManager.IsMounted(host.ID)
@@ -767,8 +1007,7 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if key == "j" && !m.cfg.UI.VimMode {
 			return m, nil
 		}
-		filtered := m.getFilteredHosts()
-		if m.selectedIdx < len(filtered)-1 {
+		if len(m.listItems) > 0 && m.selectedIdx < len(m.listItems)-1 {
 			m.selectedIdx++
 		}
 
@@ -776,8 +1015,9 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selectedIdx = max(0, m.selectedIdx-10)
 
 	case "ctrl+d": // Page down
-		filtered := m.getFilteredHosts()
-		m.selectedIdx = min(len(filtered)-1, m.selectedIdx+10)
+		if len(m.listItems) > 0 {
+			m.selectedIdx = min(len(m.listItems)-1, m.selectedIdx+10)
+		}
 
 	case "home", "g":
 		if key == "g" && !m.cfg.UI.VimMode {
@@ -789,23 +1029,48 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if key == "G" && !m.cfg.UI.VimMode {
 			return m, nil
 		}
-		filtered := m.getFilteredHosts()
-		m.selectedIdx = len(filtered) - 1
+		if len(m.listItems) > 0 {
+			m.selectedIdx = len(m.listItems) - 1
+		}
 
 	case "/", "ctrl+f":
 		m.viewMode = ViewModeSpotlight
 		m.isSearching = true
 		m.searchInput.Focus()
+		m.spotlightItems = m.buildSpotlightItems(m.searchInput.Value())
 		m.selectedIdx = 0 // Reset selection for search
 
 	case "a", "ctrl+n":
+		if item, ok := m.selectedListItem(); ok && item.Kind == ListItemNewGroup {
+			m.groupInput.SetValue("")
+			m.groupFocus = groupFocusInput
+			m.groupInput.Focus()
+			m.viewMode = ViewModeCreateGroup
+			return m, textinput.Blink
+		}
+		groupPrefill := ""
+		if g, ok := m.selectedGroup(); ok {
+			groupPrefill = g
+		}
 		m.viewMode = ViewModeAddHost
-		m.modalForm = m.newModalForm("", "", "", "22", "", "")
+		m.modalForm = m.newModalForm("", groupPrefill, "", "", "22", "", "")
 
 	case "e":
-		filtered := m.getFilteredHosts()
-		if len(filtered) > 0 && m.selectedIdx < len(filtered) {
-			host := filtered[m.selectedIdx]
+		if item, ok := m.selectedListItem(); ok && item.Kind == ListItemGroup {
+			if item.GroupName == "Ungrouped" {
+				m.err = fmt.Errorf("cannot rename Ungrouped")
+				return m, nil
+			}
+			m.groupOldName = item.GroupName
+			m.groupInput.SetValue(item.GroupName)
+			m.groupInput.CursorEnd()
+			m.groupFocus = groupFocusInput
+			m.groupInput.Focus()
+			m.viewMode = ViewModeRenameGroup
+			return m, textinput.Blink
+		}
+		host, ok := m.selectedHost()
+		if ok {
 			m.viewMode = ViewModeEditHost
 			var existingKey string
 			if m.store != nil && host.HasKey && host.KeyType != "password" {
@@ -814,27 +1079,58 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					existingKey = key
 				}
 			}
-			m.modalForm = m.newModalForm(host.Label, host.Hostname, host.Username, fmt.Sprintf("%d", host.Port), host.KeyType, existingKey)
+			m.modalForm = m.newModalForm(host.Label, host.GroupName, host.Hostname, host.Username, fmt.Sprintf("%d", host.Port), host.KeyType, existingKey)
 		}
 
 	case "d", "delete":
-		m.viewMode = ViewModeDeleteHost
-		m.deleteConfirmFocus = false // Default to Cancel
+		if item, ok := m.selectedListItem(); ok && item.Kind == ListItemGroup {
+			if item.GroupName == "Ungrouped" {
+				m.err = fmt.Errorf("cannot delete Ungrouped")
+				return m, nil
+			}
+			m.groupOldName = item.GroupName
+			m.groupDeleteFocus = false
+			m.viewMode = ViewModeDeleteGroup
+			return m, nil
+		}
+		if _, ok := m.selectedHost(); ok {
+			m.viewMode = ViewModeDeleteHost
+			m.deleteConfirmFocus = false // Default to Cancel
+		}
+
+	case "ctrl+g":
+		m.groupInput.SetValue("")
+		m.groupFocus = groupFocusInput
+		m.groupInput.Focus()
+		m.viewMode = ViewModeCreateGroup
+		return m, textinput.Blink
 
 	case "enter":
-		// Connect to selected host
-		filtered := m.getFilteredHosts()
-		if len(filtered) > 0 && m.selectedIdx < len(filtered) {
-			host := filtered[m.selectedIdx]
-			if m.armedMount || m.armedUnmount {
-				return m.handleMountEnter(host)
-			}
-			if m.armedSFTP {
-				m.armedSFTP = false
-				return m.connectToHostSFTP(host)
-			}
-			return m.connectToHost(host)
+		item, ok := m.selectedListItem()
+		if !ok {
+			return m, nil
 		}
+		if item.Kind == ListItemGroup {
+			m.collapsed[item.GroupName] = !m.collapsed[item.GroupName]
+			m.rebuildListItems()
+			return m, nil
+		}
+		if item.Kind == ListItemNewGroup {
+			m.groupInput.SetValue("")
+			m.groupFocus = groupFocusInput
+			m.groupInput.Focus()
+			m.viewMode = ViewModeCreateGroup
+			return m, textinput.Blink
+		}
+		host := item.Host
+		if m.armedMount || m.armedUnmount {
+			return m.handleMountEnter(host)
+		}
+		if m.armedSFTP {
+			m.armedSFTP = false
+			return m.connectToHostSFTP(host)
+		}
+		return m.connectToHost(host)
 
 	case "?":
 		m.viewMode = ViewModeHelp
@@ -862,6 +1158,8 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		result := m.syncManager.Sync()
 		if result.Success {
 			m.loadHosts() // Reload hosts after sync
+			m.loadGroups()
+			m.rebuildListItems()
 			m.err = fmt.Errorf("✓ Sync: +%d ↑%d", result.HostsAdded, result.HostsUpdated)
 		} else {
 			m.err = fmt.Errorf("⚠ %s", result.Message)
@@ -873,7 +1171,7 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // Helper to create new modal form with initialized text inputs
-func (m Model) newModalForm(label, hostname, username, port, keyType, existingKey string) *ModalForm {
+func (m Model) newModalForm(label, groupName, hostname, username, port, keyType, existingKey string) *ModalForm {
 	authMethod := ui.AuthPassword
 	switch keyType {
 	case "password":
@@ -896,8 +1194,20 @@ func (m Model) newModalForm(label, hostname, username, port, keyType, existingKe
 		initialKeyType = keyType
 	}
 
+	groupOptions := m.modalGroupOptions(groupName)
+	groupSelected := 0
+	for i, opt := range groupOptions {
+		if strings.EqualFold(strings.TrimSpace(opt), strings.TrimSpace(groupName)) {
+			groupSelected = i
+			break
+		}
+	}
+
 	f := &ModalForm{
 		labelInput:     textinput.New(),
+		groupInput:     textinput.New(),
+		groupOptions:   groupOptions,
+		groupSelected:  groupSelected,
 		hostnameInput:  textinput.New(),
 		usernameInput:  textinput.New(),
 		portInput:      textinput.New(),
@@ -912,6 +1222,10 @@ func (m Model) newModalForm(label, hostname, username, port, keyType, existingKe
 	f.labelInput.SetValue(label)
 	f.labelInput.Focus()
 	f.labelInput.Prompt = ""
+
+	f.groupInput.Placeholder = "Work, VMs, Personal..."
+	f.groupInput.SetValue(groupOptions[groupSelected])
+	f.groupInput.Prompt = ""
 
 	f.hostnameInput.Placeholder = "example.com"
 	f.hostnameInput.SetValue(hostname)
@@ -936,6 +1250,49 @@ func (m Model) newModalForm(label, hostname, username, port, keyType, existingKe
 	f.pastedKeyInput.SetValue(existingKey)
 
 	return f
+}
+
+func (m Model) modalGroupOptions(current string) []string {
+	options := []string{"Ungrouped"}
+	seen := map[string]bool{"ungrouped": true}
+
+	for _, g := range m.groups {
+		name := strings.TrimSpace(g)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		options = append(options, name)
+	}
+
+	current = strings.TrimSpace(current)
+	if current != "" {
+		key := strings.ToLower(current)
+		if !seen[key] {
+			options = append(options, current)
+		}
+	}
+
+	return options
+}
+
+func (m Model) modalSelectedGroupName() string {
+	if m.modalForm == nil || len(m.modalForm.groupOptions) == 0 {
+		return ""
+	}
+	idx := m.modalForm.groupSelected
+	if idx < 0 || idx >= len(m.modalForm.groupOptions) {
+		idx = 0
+	}
+	name := strings.TrimSpace(m.modalForm.groupOptions[idx])
+	if strings.EqualFold(name, "Ungrouped") {
+		return ""
+	}
+	return name
 }
 
 // handleModalKeys handles keyboard input in modal views
@@ -977,13 +1334,21 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		// Save to DB
+		groupName := m.modalSelectedGroupName()
+		if groupName != "" {
+			if err := m.store.UpsertGroup(groupName); err != nil {
+				m.err = err
+				return m, nil
+			}
+		}
 		if m.viewMode == ViewModeAddHost {
 			host := &db.HostModel{
-				Label:    strings.TrimSpace(m.modalForm.labelInput.Value()),
-				Hostname: m.modalForm.hostnameInput.Value(),
-				Username: m.modalForm.usernameInput.Value(),
-				Port:     portInt,
-				KeyType:  keyType,
+				Label:     strings.TrimSpace(m.modalForm.labelInput.Value()),
+				GroupName: groupName,
+				Hostname:  m.modalForm.hostnameInput.Value(),
+				Username:  m.modalForm.usernameInput.Value(),
+				Port:      portInt,
+				KeyType:   keyType,
 			}
 			if err := m.store.CreateHost(host, plainKey); err != nil {
 				m.err = err
@@ -992,16 +1357,17 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("✓ Host '%s' added", host.Hostname)
 		} else {
 			// Edit - update host with key data if provided, otherwise just metadata
-			filtered := m.getFilteredHosts()
-			if m.selectedIdx < len(filtered) {
-				originalID := filtered[m.selectedIdx].ID
+			selectedHost, ok := m.selectedHost()
+			if ok {
+				originalID := selectedHost.ID
 				host := &db.HostModel{
-					ID:       originalID,
-					Label:    strings.TrimSpace(m.modalForm.labelInput.Value()),
-					Hostname: m.modalForm.hostnameInput.Value(),
-					Username: m.modalForm.usernameInput.Value(),
-					Port:     portInt,
-					KeyType:  keyType,
+					ID:        originalID,
+					Label:     strings.TrimSpace(m.modalForm.labelInput.Value()),
+					GroupName: groupName,
+					Hostname:  m.modalForm.hostnameInput.Value(),
+					Username:  m.modalForm.usernameInput.Value(),
+					Port:      portInt,
+					KeyType:   keyType,
 				}
 				// Update with key data if provided, otherwise just metadata
 				if m.modalForm.authMethod == ui.AuthPassword || plainKey != "" {
@@ -1020,6 +1386,8 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		m.loadHosts() // Refresh list
+		m.loadGroups()
+		m.rebuildListItems()
 		m.viewMode = ViewModeList
 		m.modalForm = nil
 		return m, nil
@@ -1028,6 +1396,7 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Helper to blur all inputs
 	blurAll := func() {
 		m.modalForm.labelInput.Blur()
+		m.modalForm.groupInput.Blur()
 		m.modalForm.hostnameInput.Blur()
 		m.modalForm.usernameInput.Blur()
 		m.modalForm.portInput.Blur()
@@ -1041,6 +1410,8 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch idx {
 		case ui.FieldLabel:
 			m.modalForm.labelInput.Focus()
+		case ui.FieldGroup:
+			m.modalForm.groupInput.Focus()
 		case ui.FieldHostname:
 			m.modalForm.hostnameInput.Focus()
 		case ui.FieldUsername:
@@ -1054,12 +1425,26 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	totalFields := 8
+	totalFields := 9
 	var cmd tea.Cmd
+
+	// Save from anywhere in the modal.
+	if s := msg.String(); s == "shift+enter" || s == "shift+return" || s == "ctrl+s" {
+		return submitAndClose()
+	}
 
 	// Navigation Helpers
 	cycleAuth := func(dir int) {
 		m.modalForm.authMethod = (m.modalForm.authMethod + dir + 3) % 3
+	}
+
+	cycleGroup := func(dir int) {
+		if len(m.modalForm.groupOptions) == 0 {
+			return
+		}
+		n := len(m.modalForm.groupOptions)
+		m.modalForm.groupSelected = (m.modalForm.groupSelected + dir + n) % n
+		m.modalForm.groupInput.SetValue(m.modalForm.groupOptions[m.modalForm.groupSelected])
 	}
 
 	cycleButtons := func() {
@@ -1085,7 +1470,9 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		focusField(m.modalForm.focusedField)
 
 	case tea.KeyLeft:
-		if m.modalForm.focusedField == ui.FieldAuthMethod {
+		if m.modalForm.focusedField == ui.FieldGroup {
+			cycleGroup(-1)
+		} else if m.modalForm.focusedField == ui.FieldAuthMethod {
 			cycleAuth(-1)
 		} else if m.modalForm.focusedField == ui.FieldSubmit || m.modalForm.focusedField == ui.FieldCancel {
 			cycleButtons()
@@ -1094,7 +1481,9 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyRight:
-		if m.modalForm.focusedField == ui.FieldAuthMethod {
+		if m.modalForm.focusedField == ui.FieldGroup {
+			cycleGroup(1)
+		} else if m.modalForm.focusedField == ui.FieldAuthMethod {
 			cycleAuth(1)
 		} else if m.modalForm.focusedField == ui.FieldSubmit || m.modalForm.focusedField == ui.FieldCancel {
 			cycleButtons()
@@ -1103,9 +1492,7 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyEnter:
-		if m.modalForm.focusedField == ui.FieldSubmit {
-			return submitAndClose()
-		} else if m.modalForm.focusedField == ui.FieldCancel {
+		if m.modalForm.focusedField == ui.FieldCancel {
 			// Cancel - close the modal
 			m.viewMode = ViewModeList
 			m.modalForm = nil
@@ -1116,15 +1503,13 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd = m.handleInputUpdate(msg)
 			return m, cmd
 		}
+		// Save from any non-textarea field for terminal compatibility.
+		// (Many terminals cannot reliably distinguish Shift+Enter.)
+		return submitAndClose()
 
 	default:
 		// Handle runes and string-based keys
 		str := msg.String()
-
-		// Quick-save from anywhere
-		if str == "shift+enter" || str == "shift+return" {
-			return submitAndClose()
-		}
 
 		// Spacebar for Key Gen Type (keep specific inner toggle)
 		if str == " " && m.modalForm.focusedField == ui.FieldAuthDetails && m.modalForm.authMethod == ui.AuthKeyGen {
@@ -1139,7 +1524,13 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		// Vim navigation h/l
-		if str == "h" && m.modalForm.focusedField == ui.FieldAuthMethod {
+		if str == "h" && m.modalForm.focusedField == ui.FieldGroup {
+			cycleGroup(-1)
+			return m, cmd
+		} else if str == "l" && m.modalForm.focusedField == ui.FieldGroup {
+			cycleGroup(1)
+			return m, cmd
+		} else if str == "h" && m.modalForm.focusedField == ui.FieldAuthMethod {
 			cycleAuth(-1)
 			return m, cmd
 		} else if str == "l" && m.modalForm.focusedField == ui.FieldAuthMethod {
@@ -1176,6 +1567,9 @@ func (m *Model) handleInputUpdate(msg tea.Msg) tea.Cmd {
 	switch m.modalForm.focusedField {
 	case ui.FieldLabel:
 		m.modalForm.labelInput, cmd = m.modalForm.labelInput.Update(msg)
+	case ui.FieldGroup:
+		// Group selection is a spinner; use left/right (or h/l) to cycle.
+		return nil
 	case ui.FieldHostname:
 		m.modalForm.hostnameInput, cmd = m.modalForm.hostnameInput.Update(msg)
 	case ui.FieldUsername:
@@ -1194,16 +1588,16 @@ func (m *Model) handleInputUpdate(msg tea.Msg) tea.Cmd {
 func (m Model) handleDeleteKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	doDelete := func() Model {
-		filtered := m.getFilteredHosts()
-		if m.selectedIdx < len(filtered) {
-			host := filtered[m.selectedIdx]
+		if host, ok := m.selectedHost(); ok {
 			if err := m.store.DeleteHost(host.ID); err != nil {
 				m.err = err
 			} else {
 				m.err = fmt.Errorf("✓ Host '%s' deleted", host.Hostname)
 				m.loadHosts()
-				if m.selectedIdx >= len(m.hosts) && len(m.hosts) > 0 {
-					m.selectedIdx = len(m.hosts) - 1
+				m.loadGroups()
+				m.rebuildListItems()
+				if m.selectedIdx >= len(m.listItems) && len(m.listItems) > 0 {
+					m.selectedIdx = len(m.listItems) - 1
 				}
 			}
 		}
@@ -1237,6 +1631,276 @@ func (m Model) handleDeleteKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m Model) handleGroupInputKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	setFocus := func(focus int) {
+		m.groupFocus = focus
+		if focus == groupFocusInput {
+			m.groupInput.Focus()
+		} else {
+			m.groupInput.Blur()
+		}
+	}
+
+	submit := func() (tea.Model, tea.Cmd) {
+		name := strings.TrimSpace(m.groupInput.Value())
+		if name == "" {
+			m.err = fmt.Errorf("group name cannot be empty")
+			return m, nil
+		}
+		if strings.EqualFold(name, "Ungrouped") {
+			m.err = fmt.Errorf("'Ungrouped' is reserved")
+			return m, nil
+		}
+		if m.viewMode == ViewModeCreateGroup {
+			if err := m.store.UpsertGroup(name); err != nil {
+				m.err = err
+				return m, nil
+			}
+			m.err = fmt.Errorf("✓ Group '%s' created", name)
+		} else {
+			if err := m.store.RenameGroup(m.groupOldName, name); err != nil {
+				m.err = err
+				return m, nil
+			}
+			m.err = fmt.Errorf("✓ Group '%s' renamed", name)
+		}
+		m.loadHosts()
+		m.loadGroups()
+		m.rebuildListItems()
+		m.selectGroupInList(name)
+		m.groupInput.SetValue("")
+		m.groupInput.Blur()
+		m.groupFocus = groupFocusInput
+		m.viewMode = ViewModeList
+		return m, nil
+	}
+
+	cancel := func() (tea.Model, tea.Cmd) {
+		m.groupInput.SetValue("")
+		m.groupInput.Blur()
+		m.groupFocus = groupFocusInput
+		m.viewMode = ViewModeList
+		m.err = nil
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "esc":
+		return cancel()
+	case "tab":
+		setFocus((m.groupFocus + 1) % 3)
+		return m, nil
+	case "shift+tab":
+		setFocus((m.groupFocus + 2) % 3)
+		return m, nil
+	case "left", "h":
+		if m.groupFocus == groupFocusSubmit {
+			setFocus(groupFocusCancel)
+		} else if m.groupFocus == groupFocusCancel {
+			setFocus(groupFocusSubmit)
+		}
+		return m, nil
+	case "right", "l":
+		if m.groupFocus == groupFocusSubmit {
+			setFocus(groupFocusCancel)
+		} else if m.groupFocus == groupFocusCancel {
+			setFocus(groupFocusSubmit)
+		}
+		return m, nil
+	case "enter":
+		if m.groupFocus == groupFocusCancel {
+			return cancel()
+		}
+		if m.groupFocus == groupFocusSubmit {
+			return submit()
+		}
+		// Input focus: Enter submits as convenience.
+		return submit()
+	}
+
+	if m.groupFocus == groupFocusInput {
+		var cmd tea.Cmd
+		m.groupInput, cmd = m.groupInput.Update(msg)
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m Model) handleDeleteGroupKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "n", "N":
+		m.viewMode = ViewModeList
+		m.groupDeleteFocus = false
+		return m, nil
+	case "left", "right", "h", "l", "tab", "shift+tab":
+		m.groupDeleteFocus = !m.groupDeleteFocus
+		return m, nil
+	case "y", "Y":
+		m.groupDeleteFocus = true
+	}
+
+	if msg.String() == "enter" && m.groupDeleteFocus {
+		if err := m.store.DeleteGroup(m.groupOldName); err != nil {
+			m.err = err
+			return m, nil
+		}
+		m.err = fmt.Errorf("✓ Group '%s' deleted", m.groupOldName)
+		m.loadHosts()
+		m.loadGroups()
+		m.rebuildListItems()
+		m.viewMode = ViewModeList
+		m.groupDeleteFocus = false
+		return m, nil
+	}
+
+	if msg.String() == "enter" {
+		m.viewMode = ViewModeList
+		m.groupDeleteFocus = false
+	}
+
+	return m, nil
+}
+
+func (m Model) selectedSpotlightItem() (SpotlightItem, bool) {
+	if m.selectedIdx < 0 || m.selectedIdx >= len(m.spotlightItems) {
+		return SpotlightItem{}, false
+	}
+	return m.spotlightItems[m.selectedIdx], true
+}
+
+func (m *Model) selectGroupInList(groupName string) {
+	m.rebuildListItems()
+	for i, it := range m.listItems {
+		if it.Kind != ListItemGroup {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(it.GroupName), strings.TrimSpace(groupName)) {
+			m.selectedIdx = i
+			return
+		}
+	}
+}
+
+func fuzzyScore(query, candidate string) (int, bool) {
+	q := strings.ToLower(strings.TrimSpace(query))
+	c := strings.ToLower(candidate)
+	if q == "" {
+		return 0, true
+	}
+	if strings.Contains(c, q) {
+		return 100 + len(q)*4, true
+	}
+	qi := 0
+	score := 0
+	streak := 0
+	lastMatch := -2
+	for i := 0; i < len(c) && qi < len(q); i++ {
+		if c[i] != q[qi] {
+			continue
+		}
+		if i == 0 || c[i-1] == ' ' || c[i-1] == '-' || c[i-1] == '_' || c[i-1] == '.' || c[i-1] == '/' {
+			score += 8
+		}
+		if i == lastMatch+1 {
+			streak++
+			score += 4 + streak
+		} else {
+			streak = 0
+			score += 2
+		}
+		lastMatch = i
+		qi++
+	}
+	if qi != len(q) {
+		return 0, false
+	}
+	score += max(0, 20-(len(c)-len(q)))
+	return score, true
+}
+
+func (m Model) buildSpotlightItems(query string) []SpotlightItem {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		out := make([]SpotlightItem, 0, min(8, len(m.hosts)))
+		for _, h := range m.hosts {
+			out = append(out, SpotlightItem{Kind: SpotlightItemHost, Host: h, GroupName: h.GroupName})
+			if len(out) >= 8 {
+				break
+			}
+		}
+		return out
+	}
+
+	type scoredGroup struct {
+		name  string
+		score int
+	}
+	var groupScores []scoredGroup
+	for _, it := range m.listItems {
+		if it.Kind != ListItemGroup {
+			continue
+		}
+		name := it.GroupName
+		if name == "Ungrouped" {
+			name = "Ungrouped"
+		}
+		if score, ok := fuzzyScore(query, name); ok {
+			groupScores = append(groupScores, scoredGroup{name: it.GroupName, score: score})
+		}
+	}
+	sort.Slice(groupScores, func(i, j int) bool { return groupScores[i].score > groupScores[j].score })
+
+	seenHost := map[int]bool{}
+	out := make([]SpotlightItem, 0, 12)
+	for i, g := range groupScores {
+		if i >= 3 {
+			break
+		}
+		out = append(out, SpotlightItem{Kind: SpotlightItemGroup, GroupName: g.name, Score: g.score})
+		groupHosts := make([]SpotlightItem, 0, 4)
+		for _, h := range m.hosts {
+			hg := strings.TrimSpace(h.GroupName)
+			if g.name == "Ungrouped" {
+				if hg != "" {
+					continue
+				}
+			} else if !strings.EqualFold(hg, g.name) {
+				continue
+			}
+			score, ok := fuzzyScore(query, hostDisplayName(h)+" "+h.Hostname+" "+h.Username)
+			if !ok {
+				score = 1
+			}
+			groupHosts = append(groupHosts, SpotlightItem{Kind: SpotlightItemHost, Host: h, GroupName: h.GroupName, Score: score, Indent: 1})
+		}
+		sort.Slice(groupHosts, func(i, j int) bool { return groupHosts[i].Score > groupHosts[j].Score })
+		for i := 0; i < len(groupHosts) && i < 3; i++ {
+			if seenHost[groupHosts[i].Host.ID] {
+				continue
+			}
+			seenHost[groupHosts[i].Host.ID] = true
+			out = append(out, groupHosts[i])
+		}
+	}
+
+	var direct []SpotlightItem
+	for _, h := range m.hosts {
+		if seenHost[h.ID] {
+			continue
+		}
+		score, ok := fuzzyScore(query, hostDisplayName(h)+" "+h.Hostname+" "+h.Username+" "+h.GroupName)
+		if !ok {
+			continue
+		}
+		direct = append(direct, SpotlightItem{Kind: SpotlightItemHost, Host: h, GroupName: h.GroupName, Score: score})
+	}
+	sort.Slice(direct, func(i, j int) bool { return direct[i].Score > direct[j].Score })
+	for i := 0; i < len(direct) && len(out) < 16; i++ {
+		out = append(out, direct[i])
+	}
+	return out
 }
 
 // handleHelpKeys handles keyboard input in help view
@@ -1649,40 +2313,14 @@ func (m Model) getFilteredHosts() []Host {
 func (m Model) View() string {
 	const hideCursorAndMoveAway = "\x1b[?25l\x1b[999;999H"
 
-	// Convert hosts to interface{} for rendering
-	filtered := m.getFilteredHosts()
-	hostsInterface := make([]interface{}, len(filtered))
-	for i, host := range filtered {
-		mounted := false
-		mountPath := ""
-		if m.mountManager != nil {
-			if ok, mt := m.mountManager.IsMounted(host.ID); ok && mt != nil {
-				mounted = true
-				mountPath = mt.LocalPath
-			}
-		}
-		hostsInterface[i] = map[string]interface{}{
-			"ID":            host.ID,
-			"Label":         host.Label,
-			"Hostname":      host.Hostname,
-			"Username":      host.Username,
-			"Port":          host.Port,
-			"HasKey":        host.HasKey,
-			"KeyType":       host.KeyType,
-			"Mounted":       mounted,
-			"MountPath":     mountPath,
-			"ShowIcons":     m.cfg.UI.ShowIcons,
-			"CreatedAt":     host.CreatedAt,
-			"LastConnected": host.LastConnected,
-		}
-	}
-
 	switch m.viewMode {
 	case ViewModeSetup:
 		return m.styles.RenderSetupView(m.width, m.height, m.loginInput, m.confirmInput, m.setupFocus, m.err) + hideCursorAndMoveAway
 	case ViewModeLogin:
 		return m.styles.RenderLoginView(m.width, m.height, m.loginInput, m.err) + hideCursorAndMoveAway
 	case ViewModeList:
+		m.rebuildListItems()
+		hostsInterface := m.listItemsToRenderData()
 		syncStatus := ""
 		if m.syncManager != nil && m.syncManager.IsEnabled() {
 			syncStatus = m.syncManager.StatusString()
@@ -1694,6 +2332,10 @@ func (m Model) View() string {
 		return m.renderModalView() + hideCursorAndMoveAway
 	case ViewModeDeleteHost:
 		return m.renderDeleteView() + hideCursorAndMoveAway
+	case ViewModeCreateGroup, ViewModeRenameGroup:
+		return m.renderGroupInputView() + hideCursorAndMoveAway
+	case ViewModeDeleteGroup:
+		return m.renderDeleteGroupView() + hideCursorAndMoveAway
 	case ViewModeSpotlight:
 		return m.renderSpotlightView() + hideCursorAndMoveAway
 	case ViewModeQuitConfirm:
@@ -1707,6 +2349,68 @@ func (m Model) View() string {
 
 func (m Model) renderSettingsView() string {
 	return m.styles.RenderSettingsView(m.width, m.height, m.cfg, m.settingsIdx, m.settingsEditing, m.settingsInput, m.err)
+}
+
+func (m Model) listItemsToRenderData() []interface{} {
+	hostsInterface := make([]interface{}, 0, len(m.listItems))
+	for _, item := range m.listItems {
+		switch item.Kind {
+		case ListItemGroup:
+			hostsInterface = append(hostsInterface, map[string]interface{}{
+				"Kind":      "group",
+				"GroupName": item.GroupName,
+				"Count":     item.Count,
+				"Collapsed": m.collapsed[item.GroupName],
+			})
+		case ListItemNewGroup:
+			hostsInterface = append(hostsInterface, map[string]interface{}{
+				"Kind": "new_group",
+			})
+		case ListItemHost:
+			host := item.Host
+			mounted := false
+			mountPath := ""
+			if m.mountManager != nil {
+				if ok, mt := m.mountManager.IsMounted(host.ID); ok && mt != nil {
+					mounted = true
+					mountPath = mt.LocalPath
+				}
+			}
+			hostsInterface = append(hostsInterface, map[string]interface{}{
+				"Kind":          "host",
+				"ID":            host.ID,
+				"Label":         host.Label,
+				"GroupName":     host.GroupName,
+				"Hostname":      host.Hostname,
+				"Username":      host.Username,
+				"Port":          host.Port,
+				"HasKey":        host.HasKey,
+				"KeyType":       host.KeyType,
+				"Mounted":       mounted,
+				"MountPath":     mountPath,
+				"ShowIcons":     m.cfg.UI.ShowIcons,
+				"CreatedAt":     host.CreatedAt,
+				"LastConnected": host.LastConnected,
+				"Indent":        1,
+			})
+		}
+	}
+	return hostsInterface
+}
+
+func (m Model) renderGroupInputView() string {
+	title := "Create Group"
+	submit := "Create"
+	if m.viewMode == ViewModeRenameGroup {
+		title = "Rename Group"
+		submit = "Rename"
+	}
+	return m.styles.RenderGroupInputModal(m.width, m.height, title, m.groupInput, submit, m.groupFocus)
+}
+
+func (m Model) renderDeleteGroupView() string {
+	count := m.hostCountForGroup(m.groupOldName)
+	return m.styles.RenderDeleteGroupModal(m.width, m.height, m.groupOldName, count, m.groupDeleteFocus)
 }
 
 func (m Model) renderQuitConfirmView() string {
@@ -1725,23 +2429,37 @@ func (m Model) renderQuitConfirmView() string {
 
 // renderSpotlightView renders the spotlight overlay
 func (m Model) renderSpotlightView() string {
-	// Convert filtered hosts to interface{} for rendering
-	filtered := m.getFilteredHosts()
-	hostsInterface := make([]interface{}, len(filtered))
-	for i, host := range filtered {
+	items := m.spotlightItems
+	if items == nil {
+		m.rebuildListItems()
+		items = m.buildSpotlightItems(m.searchInput.Value())
+	}
+	out := make([]interface{}, 0, len(items))
+	for _, it := range items {
+		if it.Kind == SpotlightItemGroup {
+			out = append(out, map[string]interface{}{
+				"Kind":      "group",
+				"GroupName": it.GroupName,
+				"Count":     m.hostCountForGroup(it.GroupName),
+			})
+			continue
+		}
 		mounted := false
 		if m.mountManager != nil {
-			mounted, _ = m.mountManager.IsMounted(host.ID)
+			mounted, _ = m.mountManager.IsMounted(it.Host.ID)
 		}
-		hostsInterface[i] = map[string]interface{}{
-			"Label":    host.Label,
-			"Hostname": host.Hostname,
-			"Username": host.Username,
-			"Mounted":  mounted,
-		}
+		out = append(out, map[string]interface{}{
+			"Kind":      "host",
+			"Label":     it.Host.Label,
+			"GroupName": it.Host.GroupName,
+			"Hostname":  it.Host.Hostname,
+			"Username":  it.Host.Username,
+			"Mounted":   mounted,
+			"Indent":    it.Indent,
+		})
 	}
 
-	return m.styles.RenderSpotlight(m.width, m.height, m.searchInput, hostsInterface, m.selectedIdx, m.armedSFTP, m.armedMount, m.armedUnmount)
+	return m.styles.RenderSpotlight(m.width, m.height, m.searchInput, out, m.selectedIdx, m.armedSFTP, m.armedMount, m.armedUnmount)
 }
 
 // renderModalView renders the add/edit modal
@@ -1754,6 +2472,9 @@ func (m Model) renderModalView() string {
 	// Note: We are passing copies of the models, which is fine for rendering
 	formData := &ui.ModalFormData{
 		Label:        m.modalForm.labelInput,
+		Group:        m.modalForm.groupInput,
+		GroupOptions: m.modalForm.groupOptions,
+		GroupIndex:   m.modalForm.groupSelected,
 		Hostname:     m.modalForm.hostnameInput,
 		Username:     m.modalForm.usernameInput,
 		Port:         m.modalForm.portInput,
@@ -1772,12 +2493,10 @@ func (m Model) renderModalView() string {
 
 // renderDeleteView renders the delete confirmation modal
 func (m Model) renderDeleteView() string {
-	filtered := m.getFilteredHosts()
-	if len(filtered) == 0 || m.selectedIdx >= len(filtered) {
+	host, ok := m.selectedHost()
+	if !ok {
 		return m.styles.Error.Render("No host selected")
 	}
-
-	host := filtered[m.selectedIdx]
 	return m.styles.RenderDeleteModal(m.width, m.height, host.Hostname, host.Username, m.deleteConfirmFocus)
 }
 
@@ -1999,6 +2718,10 @@ type mountFinishedMsg struct {
 }
 
 type quitFinishedMsg struct{}
+
+type clearErrMsg struct {
+	seq int
+}
 
 // Helper functions
 func min(a, b int) int {

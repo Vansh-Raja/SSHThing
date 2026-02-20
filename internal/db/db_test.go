@@ -16,10 +16,10 @@ func TestDatabaseOperations(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	// Override the HOME env var so the DB is created in our temp dir
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", originalHome)
+	// Force DB into our temp directory (cross-platform)
+	originalDataDir := os.Getenv("SSHTHING_DATA_DIR")
+	os.Setenv("SSHTHING_DATA_DIR", tempDir)
+	defer os.Setenv("SSHTHING_DATA_DIR", originalDataDir)
 
 	// Test 1: First run - setup should work
 	t.Run("FirstRunSetup", func(t *testing.T) {
@@ -113,6 +113,88 @@ func TestDatabaseOperations(t *testing.T) {
 		}
 
 		fmt.Printf("✓ GetHosts works: %+v\n", hosts[0])
+	})
+
+	// Test 6: Groups (create, assign, rename, delete)
+	t.Run("Groups", func(t *testing.T) {
+		store, err := db.Init("testpassword123")
+		if err != nil {
+			t.Fatalf("Init failed: %v", err)
+		}
+		defer store.Close()
+
+		// Create group
+		if err := store.UpsertGroup("Work"); err != nil {
+			t.Fatalf("UpsertGroup failed: %v", err)
+		}
+
+		// Add a host in that group
+		host := &db.HostModel{
+			Label:     "prod",
+			GroupName: "Work",
+			Hostname:  "prod.example.com",
+			Username:  "ubuntu",
+			Port:      22,
+			KeyType:   "password",
+		}
+		if err := store.CreateHost(host, ""); err != nil {
+			t.Fatalf("CreateHost failed: %v", err)
+		}
+
+		hosts, err := store.GetHosts()
+		if err != nil {
+			t.Fatalf("GetHosts failed: %v", err)
+		}
+		found := false
+		for _, h := range hosts {
+			if h.Hostname == "prod.example.com" {
+				found = true
+				if h.GroupName != "Work" {
+					t.Fatalf("expected group 'Work', got %q", h.GroupName)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("expected to find inserted host")
+		}
+
+		// Rename group and ensure host follows
+		if err := store.RenameGroup("Work", "Work2"); err != nil {
+			t.Fatalf("RenameGroup failed: %v", err)
+		}
+		hosts, err = store.GetHosts()
+		if err != nil {
+			t.Fatalf("GetHosts failed: %v", err)
+		}
+		for _, h := range hosts {
+			if h.Hostname == "prod.example.com" && h.GroupName != "Work2" {
+				t.Fatalf("expected group 'Work2' after rename, got %q", h.GroupName)
+			}
+		}
+
+		// Delete group and ensure host is ungrouped
+		if err := store.DeleteGroup("Work2"); err != nil {
+			t.Fatalf("DeleteGroup failed: %v", err)
+		}
+		hosts, err = store.GetHosts()
+		if err != nil {
+			t.Fatalf("GetHosts failed: %v", err)
+		}
+		for _, h := range hosts {
+			if h.Hostname == "prod.example.com" && h.GroupName != "" {
+				t.Fatalf("expected host to be ungrouped, got %q", h.GroupName)
+			}
+		}
+
+		groups, err := store.GetGroups()
+		if err != nil {
+			t.Fatalf("GetGroups failed: %v", err)
+		}
+		for _, g := range groups {
+			if g == "Work2" {
+				t.Fatalf("expected deleted group to be hidden")
+			}
+		}
 	})
 
 	fmt.Println("\n✓ All tests passed!")

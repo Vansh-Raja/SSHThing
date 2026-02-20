@@ -8,10 +8,20 @@ import (
 // The KeyData field in each host remains encrypted - we never export decrypted keys.
 // The Salt field is required to re-encrypt keys when importing to a different database.
 type SyncData struct {
-	Version   int        `json:"version"`
-	Salt      string     `json:"salt"` // Hex-encoded encryption salt from source database
+	Version   int         `json:"version"`
+	Salt      string      `json:"salt"` // Hex-encoded encryption salt from source database
+	UpdatedAt time.Time   `json:"updated_at"`
+	Groups    []SyncGroup `json:"groups,omitempty"`
+	Hosts     []SyncHost  `json:"hosts"`
+}
+
+// SyncGroup represents a named group entry in the sync file.
+// Deleted groups are tombstoned via DeletedAt.
+type SyncGroup struct {
+	Name      string     `json:"name"`
+	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
-	Hosts     []SyncHost `json:"hosts"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
 // SyncHost represents a host entry in the sync file.
@@ -19,6 +29,7 @@ type SyncData struct {
 type SyncHost struct {
 	ID            int        `json:"id"`
 	Label         string     `json:"label"`
+	GroupName     string     `json:"group_name,omitempty"`
 	Hostname      string     `json:"hostname"`
 	Username      string     `json:"username"`
 	Port          int        `json:"port"`
@@ -62,7 +73,11 @@ type SyncConflict struct {
 }
 
 // CurrentSyncVersion is the version of the sync data format
-const CurrentSyncVersion = 1
+const CurrentSyncVersion = 2
+
+// GroupTombstoneRetention is how long we retain deleted group tombstones for sync.
+// After this window, tombstones may be garbage collected, and very stale devices may resurrect old groups.
+const GroupTombstoneRetention = 90 * 24 * time.Hour
 
 // SyncFileName is the name of the sync data file in the repository
 const SyncFileName = "sshthing-hosts.json"

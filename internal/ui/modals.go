@@ -12,6 +12,9 @@ import (
 // ModalFormData holds the form state for add/edit modals
 type ModalFormData struct {
 	Label        textinput.Model
+	Group        textinput.Model
+	GroupOptions []string
+	GroupIndex   int
 	Hostname     textinput.Model
 	Username     textinput.Model
 	Port         textinput.Model
@@ -27,6 +30,7 @@ type ModalFormData struct {
 // FormField represents individual form fields
 const (
 	FieldLabel = iota
+	FieldGroup
 	FieldHostname
 	FieldPort // Moved Port up
 	FieldUsername
@@ -79,6 +83,7 @@ func (s *Styles) RenderAddHostModal(width, height int, form *ModalFormData, isEd
 
 	// Row 1: Label
 	modal.WriteString(s.renderFormFieldResponsive("Label:", form.Label, rowWidth))
+	modal.WriteString(s.renderGroupSelector(form, rowWidth))
 
 	// Row 2: Hostname + Port
 	// Host Label (13) + Host Input (flex) + Spacer (2) + Port Label (7) + Port Input (10)
@@ -182,7 +187,7 @@ func (s *Styles) RenderAddHostModal(width, height int, form *ModalFormData, isEd
 	modal.WriteString("\n")
 
 	// Help text
-	helpText := s.HelpValue.Foreground(ColorTextDim).Render("[Tab] Next • [Shift+Enter] Save • [Esc] Cancel")
+	helpText := s.HelpValue.Foreground(ColorTextDim).Render("[Tab] Next • [◄/►] Cycle selectors • [Enter] Save • [Esc] Cancel")
 	modal.WriteString(helpText)
 
 	modalContent := modal.String()
@@ -288,6 +293,45 @@ func (s *Styles) renderAuthSelector(form *ModalFormData) string {
 	labelView := s.FormLabel.Width(12).Align(lipgloss.Right).MarginRight(1).Render("Auth:")
 
 	return lipgloss.JoinHorizontal(lipgloss.Center, labelView, spinner)
+}
+
+func (s *Styles) renderGroupSelector(form *ModalFormData, rowWidth int) string {
+	label := "Ungrouped"
+	idx := 0
+	if len(form.GroupOptions) > 0 {
+		idx = form.GroupIndex
+		if idx < 0 || idx >= len(form.GroupOptions) {
+			idx = 0
+		}
+		if strings.TrimSpace(form.GroupOptions[idx]) != "" {
+			label = form.GroupOptions[idx]
+		}
+	}
+
+	spinnerWidth := rowWidth - 14
+	if spinnerWidth < 20 {
+		spinnerWidth = 20
+	}
+
+	var style lipgloss.Style
+	var arrowColor lipgloss.Style
+	if form.FocusedField == FieldGroup {
+		style = s.FormInputFocused.Width(spinnerWidth).Align(lipgloss.Center)
+		arrowColor = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
+	} else {
+		style = s.FormInput.Width(spinnerWidth).Align(lipgloss.Center)
+		arrowColor = lipgloss.NewStyle().Foreground(ColorTextDim)
+	}
+
+	cue := ""
+	if len(form.GroupOptions) > 0 {
+		cue = fmt.Sprintf(" [%d/%d]", idx+1, len(form.GroupOptions))
+	}
+	content := fmt.Sprintf("%s  %s%s  %s", arrowColor.Render("◄"), label, cue, arrowColor.Render("►"))
+	spinner := style.Render(content)
+	labelView := s.FormLabel.Width(12).Align(lipgloss.Right).MarginRight(1).Render("Group:")
+
+	return lipgloss.JoinHorizontal(lipgloss.Center, labelView, spinner) + "\n"
 }
 
 // renderFormFieldResponsive renders a form field with responsive width
@@ -717,19 +761,33 @@ func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, resul
 			if !ok {
 				continue
 			}
-			label, _ := hostMap["Label"].(string)
-			hostname, _ := hostMap["Hostname"].(string)
-			username, _ := hostMap["Username"].(string)
-			mounted, _ := hostMap["Mounted"].(bool)
+			kind, _ := hostMap["Kind"].(string)
+			itemText := ""
+			if kind == "group" {
+				groupName, _ := hostMap["GroupName"].(string)
+				count, _ := hostMap["Count"].(int)
+				itemText = fmt.Sprintf("# %s (%d)", groupName, count)
+			} else {
+				label, _ := hostMap["Label"].(string)
+				hostname, _ := hostMap["Hostname"].(string)
+				username, _ := hostMap["Username"].(string)
+				mounted, _ := hostMap["Mounted"].(bool)
+				groupName, _ := hostMap["GroupName"].(string)
 
-			// Build item string
-			itemText := fmt.Sprintf("%s @ %s", username, hostname)
-			displayLabel := strings.TrimSpace(label)
-			if displayLabel != "" && displayLabel != strings.TrimSpace(hostname) {
-				itemText = fmt.Sprintf("%s — %s", displayLabel, itemText)
-			}
-			if mounted {
-				itemText = "📁 " + itemText
+				itemText = fmt.Sprintf("%s @ %s", username, hostname)
+				displayLabel := strings.TrimSpace(label)
+				if displayLabel != "" && displayLabel != strings.TrimSpace(hostname) {
+					itemText = fmt.Sprintf("%s — %s", displayLabel, itemText)
+				}
+				if strings.TrimSpace(groupName) != "" {
+					itemText = fmt.Sprintf("[%s] %s", groupName, itemText)
+				}
+				if mounted {
+					itemText = "📁 " + itemText
+				}
+				if indent, ok := hostMap["Indent"].(int); ok && indent > 0 {
+					itemText = strings.Repeat("  ", indent) + itemText
+				}
 			}
 
 			// Truncate if too long
@@ -763,7 +821,7 @@ func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, resul
 	} else if armedSFTP {
 		modal.WriteString(s.HelpValue.Foreground(ColorTextDim).Padding(0, 2).Render("[Esc] Close • [S] Cancel • [Enter] SFTP • [M] Mount"))
 	} else {
-		modal.WriteString(s.HelpValue.Foreground(ColorTextDim).Padding(0, 2).Render("[Esc] Close • [Enter] SSH • [S] Arm SFTP • [M] Mount"))
+		modal.WriteString(s.HelpValue.Foreground(ColorTextDim).Padding(0, 2).Render("[Esc] Close • [Enter] SSH/Jump Group • [S] Arm SFTP • [M] Mount"))
 	}
 
 	modalContent := modal.String()
@@ -781,4 +839,92 @@ func (s *Styles) RenderSpotlight(width, height int, input textinput.Model, resul
 	)
 
 	return centeredModal
+}
+
+// RenderGroupInputModal renders a simple text-input modal for creating/renaming groups.
+// focus: 0=input, 1=submit, 2=cancel
+func (s *Styles) RenderGroupInputModal(width, height int, title string, input textinput.Model, submitLabel string, focus int) string {
+	modalWidth := (width * 70) / 100
+	if modalWidth > 64 {
+		modalWidth = 64
+	}
+	if modalWidth < 36 {
+		modalWidth = 36
+	}
+	if modalWidth > width-2 {
+		modalWidth = width - 2
+	}
+	if modalWidth < 24 {
+		modalWidth = 24
+	}
+
+	rowWidth := modalWidth - 6
+	if rowWidth < 18 {
+		rowWidth = 18
+	}
+
+	var b strings.Builder
+	b.WriteString(s.ModalTitle.Render(title))
+	b.WriteString("\n\n")
+	b.WriteString(s.renderFormFieldResponsive("Name*:", input, rowWidth))
+	b.WriteString("\n")
+
+	submitStyle := s.FormButton
+	cancelStyle := s.FormButton
+	if focus == 1 {
+		submitStyle = s.FormButtonFocused
+	} else if focus == 2 {
+		cancelStyle = s.FormButtonFocused
+	}
+	buttons := lipgloss.JoinHorizontal(lipgloss.Top, submitStyle.Render(submitLabel), cancelStyle.Render("Cancel"))
+	b.WriteString(lipgloss.PlaceHorizontal(rowWidth, lipgloss.Center, buttons))
+	b.WriteString("\n\n")
+	help := "[Tab] Next • [Shift+Tab] Prev • [Enter] Confirm • [Esc] Cancel"
+	b.WriteString(s.HelpValue.Foreground(ColorTextDim).Width(rowWidth).Align(lipgloss.Center).Render(help))
+
+	modalBox := s.Modal.Width(modalWidth).Render(b.String())
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modalBox)
+}
+
+// RenderDeleteGroupModal renders group delete confirmation.
+func (s *Styles) RenderDeleteGroupModal(width, height int, groupName string, hostCount int, deleteFocused bool) string {
+	modalWidth := 54
+	if modalWidth > width-4 {
+		modalWidth = width - 4
+	}
+	if modalWidth < 40 {
+		modalWidth = 40
+	}
+
+	var b strings.Builder
+	b.WriteString(s.ModalTitle.Foreground(ColorDanger).Render("⚠️  Delete Group"))
+	b.WriteString("\n\n")
+	b.WriteString("Delete this group? Hosts will be ungrouped.\n\n")
+	b.WriteString(s.DetailLabel.Render("Group:"))
+	b.WriteString(" ")
+	b.WriteString(s.DetailValue.Render(groupName))
+	b.WriteString("\n")
+	b.WriteString(s.DetailLabel.Render("Hosts:"))
+	b.WriteString(" ")
+	b.WriteString(s.DetailValue.Render(fmt.Sprintf("%d", hostCount)))
+	b.WriteString("\n\n")
+
+	deleteStyle := s.FormButton
+	cancelStyle := s.FormButton
+	if deleteFocused {
+		deleteStyle = s.FormButtonFocused.Background(ColorDanger)
+	} else {
+		cancelStyle = s.FormButtonFocused
+	}
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, deleteStyle.Render("Delete"), cancelStyle.Render("Cancel")))
+	b.WriteString("\n")
+	b.WriteString(s.HelpValue.Foreground(ColorTextDim).Render("[◄/►] Select • [Enter] Confirm • [Esc] Cancel"))
+
+	modalBox := s.Modal.BorderForeground(ColorDanger).Width(modalWidth - 4).Render(b.String())
+	topPadding := (height - lipgloss.Height(modalBox)) / 2
+	if topPadding < 0 {
+		topPadding = 0
+	}
+	centeredHorizontal := lipgloss.PlaceHorizontal(width, lipgloss.Center, modalBox)
+	return lipgloss.NewStyle().PaddingTop(topPadding).Render(centeredHorizontal)
 }

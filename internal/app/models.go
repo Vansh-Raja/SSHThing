@@ -6,6 +6,7 @@ import "time"
 type Host struct {
 	ID            int        `json:"id"`
 	Label         string     `json:"label,omitempty"`
+	GroupName     string     `json:"group_name,omitempty"`
 	Hostname      string     `json:"hostname"`
 	Username      string     `json:"username"`
 	Port          int        `json:"port"`
@@ -23,6 +24,9 @@ const (
 	ViewModeAddHost
 	ViewModeEditHost
 	ViewModeDeleteHost
+	ViewModeCreateGroup
+	ViewModeRenameGroup
+	ViewModeDeleteGroup
 	ViewModeHelp
 	ViewModeSpotlight
 	ViewModeSettings
@@ -42,6 +46,12 @@ func (v ViewMode) String() string {
 		return "edit"
 	case ViewModeDeleteHost:
 		return "delete"
+	case ViewModeCreateGroup:
+		return "create_group"
+	case ViewModeRenameGroup:
+		return "rename_group"
+	case ViewModeDeleteGroup:
+		return "delete_group"
 	case ViewModeHelp:
 		return "help"
 	case ViewModeSpotlight:
@@ -57,4 +67,36 @@ func (v ViewMode) String() string {
 	default:
 		return "unknown"
 	}
+}
+
+type ListItemKind int
+
+const (
+	ListItemGroup ListItemKind = iota
+	ListItemHost
+	ListItemNewGroup
+)
+
+// ListItem represents a selectable item in the grouped list view.
+type ListItem struct {
+	Kind      ListItemKind
+	GroupName string // for groups and host membership (empty means ungrouped)
+	Host      Host   // valid for Kind==ListItemHost
+	Count     int    // host count for group header
+}
+
+type SpotlightItemKind int
+
+const (
+	SpotlightItemGroup SpotlightItemKind = iota
+	SpotlightItemHost
+)
+
+// SpotlightItem represents one row in spotlight results.
+type SpotlightItem struct {
+	Kind      SpotlightItemKind
+	GroupName string
+	Host      Host
+	Score     int
+	Indent    int
 }

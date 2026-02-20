@@ -2,6 +2,7 @@ package sync
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Vansh-Raja/SSHThing/internal/db"
@@ -22,6 +23,35 @@ type ImportResult struct {
 func Import(store *db.Store, remote *SyncData, password string) (*ImportResult, error) {
 	if remote == nil {
 		return &ImportResult{}, nil
+	}
+
+	// Merge/apply groups first (so tombstoned groups ungroup hosts promptly).
+	if len(remote.Groups) > 0 {
+		localGroups, err := store.GetGroupsForSync(GroupTombstoneRetention)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get local groups: %w", err)
+		}
+		localByName := make(map[string]db.GroupModel, len(localGroups))
+		for _, g := range localGroups {
+			localByName[strings.ToLower(g.Name)] = g
+		}
+
+		for _, rg := range remote.Groups {
+			name := strings.TrimSpace(rg.Name)
+			if name == "" {
+				continue
+			}
+			lg, exists := localByName[strings.ToLower(name)]
+			if exists {
+				// If local is newer, keep it.
+				if lg.UpdatedAt.After(rg.UpdatedAt) {
+					continue
+				}
+			}
+			if err := store.UpsertGroupFromSync(name, rg.CreatedAt, rg.UpdatedAt, rg.DeletedAt); err != nil {
+				return nil, fmt.Errorf("failed to apply group %q: %w", name, err)
+			}
+		}
 	}
 
 	// Check if we need to re-encrypt keys (different salt)
@@ -109,15 +139,25 @@ func Import(store *db.Store, remote *SyncData, password string) (*ImportResult, 
 	// Remaining hosts in localByID exist only locally - they will be pushed on next sync
 	// We don't delete them as they might be new local additions
 
+	// Best-effort garbage collection of old group tombstones.
+	_ = store.PurgeDeletedGroups(GroupTombstoneRetention)
+
 	return result, nil
 }
 
 // addHostFromSync creates a new host from sync data.
 // Note: We insert with the original ID to maintain consistency across devices.
 func addHostFromSync(store *db.Store, h SyncHost, keyData string) error {
+	if h.GroupName != "" {
+		if err := store.UpsertGroup(h.GroupName); err != nil {
+			return err
+		}
+	}
+
 	host := &db.HostModel{
 		ID:            h.ID,
 		Label:         h.Label,
+		GroupName:     h.GroupName,
 		Hostname:      h.Hostname,
 		Username:      h.Username,
 		Port:          h.Port,
@@ -133,9 +173,16 @@ func addHostFromSync(store *db.Store, h SyncHost, keyData string) error {
 
 // updateHostFromSync updates an existing host with sync data.
 func updateHostFromSync(store *db.Store, h SyncHost, keyData string) error {
+	if h.GroupName != "" {
+		if err := store.UpsertGroup(h.GroupName); err != nil {
+			return err
+		}
+	}
+
 	host := &db.HostModel{
 		ID:            h.ID,
 		Label:         h.Label,
+		GroupName:     h.GroupName,
 		Hostname:      h.Hostname,
 		Username:      h.Username,
 		Port:          h.Port,
@@ -156,6 +203,7 @@ func Merge(local, remote *SyncData) *SyncData {
 		return &SyncData{
 			Version:   CurrentSyncVersion,
 			UpdatedAt: time.Now(),
+			Groups:    []SyncGroup{},
 			Hosts:     []SyncHost{},
 		}
 	}
@@ -166,6 +214,29 @@ func Merge(local, remote *SyncData) *SyncData {
 
 	if remote == nil {
 		return local
+	}
+
+	// Merge groups (prefer newer UpdatedAt by name)
+	mergedGroups := make(map[string]SyncGroup)
+	for _, g := range remote.Groups {
+		k := strings.ToLower(strings.TrimSpace(g.Name))
+		if k == "" {
+			continue
+		}
+		mergedGroups[k] = g
+	}
+	for _, g := range local.Groups {
+		k := strings.ToLower(strings.TrimSpace(g.Name))
+		if k == "" {
+			continue
+		}
+		if existing, ok := mergedGroups[k]; !ok || g.UpdatedAt.After(existing.UpdatedAt) {
+			mergedGroups[k] = g
+		}
+	}
+	groups := make([]SyncGroup, 0, len(mergedGroups))
+	for _, g := range mergedGroups {
+		groups = append(groups, g)
 	}
 
 	// Build map of all hosts, preferring the newer version
@@ -191,6 +262,7 @@ func Merge(local, remote *SyncData) *SyncData {
 	return &SyncData{
 		Version:   CurrentSyncVersion,
 		UpdatedAt: time.Now(),
+		Groups:    groups,
 		Hosts:     hosts,
 	}
 }

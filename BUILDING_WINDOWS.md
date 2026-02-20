@@ -75,12 +75,21 @@ First, add MinGW to your PATH:
 $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
 $env:CGO_ENABLED = "1"
 $env:CC = "gcc"
+$env:CGO_CFLAGS = "-Wno-return-local-addr"
 
 # Build
 go build -o sshthing.exe ./cmd/sshthing
 
 # Run
 .\sshthing.exe
+```
+
+### Option 4: Project Build Script
+
+Use the included script (sets MinGW path, enables CGO, and suppresses a known sqlite warning):
+
+```powershell
+.\scripts\build-windows.ps1 -OutFile sshthing.exe
 ```
 
 ### Option 3: Persistent Environment Variables
@@ -112,6 +121,23 @@ pacman -S mingw-w64-x86_64-sqlcipher
 ### "undefined reference to sqlite3..."
 
 This usually means the SQLCipher library wasn't linked. Ensure you're using the MINGW64 environment, not MSYS or UCRT64.
+
+### Warning: `-Wreturn-local-addr` from sqlite3.c
+
+You may see this during build:
+
+```
+sqlite3.c: warning: function may return address of local variable [-Wreturn-local-addr]
+```
+
+This is a known warning in some SQLite/SQLCipher amalgamation/toolchain combinations and is usually non-fatal.
+To suppress it for local builds:
+
+```powershell
+$env:CGO_CFLAGS = "-Wno-return-local-addr"
+```
+
+or use `scripts/build-windows.ps1` above.
 
 ### CGO_ENABLED errors
 

@@ -130,10 +130,41 @@ func (s *Styles) RenderHostList(hostsInterface []interface{}, selectedIdx int, w
 			if !ok {
 				continue
 			}
+			kind, _ := host["Kind"].(string)
+			if kind == "group" {
+				groupName, _ := host["GroupName"].(string)
+				count, _ := host["Count"].(int)
+				collapsed, _ := host["Collapsed"].(bool)
+				isSelected := i == selectedIdx
+				prefix := "▾ "
+				if collapsed {
+					prefix = "▸ "
+				}
+				line := truncateString(prefix+groupName+fmt.Sprintf(" (%d)", count), textWidth)
+				style := s.ListItem
+				if isSelected {
+					style = s.ListItemSelected
+				}
+				list.WriteString(style.Width(itemBoxWidth).Render(line))
+				list.WriteString("\n")
+				continue
+			}
+			if kind == "new_group" {
+				isSelected := i == selectedIdx
+				line := truncateString("+ New Group", textWidth)
+				style := s.ListItem
+				if isSelected {
+					style = s.ListItemSelected
+				}
+				list.WriteString(style.Width(itemBoxWidth).Render(line))
+				list.WriteString("\n")
+				continue
+			}
 
 			label, _ := host["Label"].(string)
 			hostname, _ := host["Hostname"].(string)
 			hasKey, _ := host["HasKey"].(bool)
+			indent, _ := host["Indent"].(int)
 			showIcons := true
 			if v, ok := host["ShowIcons"].(bool); ok {
 				showIcons = v
@@ -154,7 +185,7 @@ func (s *Styles) RenderHostList(hostsInterface []interface{}, selectedIdx int, w
 				icon = "⚡ "
 			}
 
-			line := truncateString(icon+display, textWidth)
+			line := truncateString(strings.Repeat(" ", indent)+icon+display, textWidth)
 			if isSelected {
 				item := s.ListItemSelected.Width(itemBoxWidth).Render(line)
 				list.WriteString(item)
@@ -216,8 +247,26 @@ func (s *Styles) RenderHostDetails(hostsInterface []interface{}, selectedIdx int
 		if !ok {
 			details.WriteString("Error: Invalid host data")
 		} else {
+			kind, _ := host["Kind"].(string)
+			if kind == "group" {
+				groupName, _ := host["GroupName"].(string)
+				count, _ := host["Count"].(int)
+				details.WriteString(s.renderDetailRow("Group:", groupName))
+				details.WriteString(s.renderDetailRow("Hosts:", fmt.Sprintf("%d", count)))
+				details.WriteString("\n")
+				details.WriteString(s.HelpValue.Foreground(ColorTextDim).Render("Enter: collapse/expand • a: add host • e: rename • d: delete"))
+				goto padDetails
+			}
+			if kind == "new_group" {
+				details.WriteString(s.renderDetailRow("Action:", "Create a new group"))
+				details.WriteString("\n")
+				details.WriteString(s.HelpValue.Foreground(ColorTextDim).Render("Press Enter or a"))
+				goto padDetails
+			}
+
 			// Extract host fields
 			label, _ := host["Label"].(string)
+			groupName, _ := host["GroupName"].(string)
 			hostname, _ := host["Hostname"].(string)
 			username, _ := host["Username"].(string)
 			port, _ := host["Port"].(int)
@@ -230,6 +279,9 @@ func (s *Styles) RenderHostDetails(hostsInterface []interface{}, selectedIdx int
 			// Render details
 			if strings.TrimSpace(label) != "" {
 				details.WriteString(s.renderDetailRow("Label:", label))
+			}
+			if strings.TrimSpace(groupName) != "" {
+				details.WriteString(s.renderDetailRow("Group:", groupName))
 			}
 			details.WriteString(s.renderDetailRow("Host:", hostname))
 			details.WriteString(s.renderDetailRow("Username:", username))
@@ -268,6 +320,8 @@ func (s *Styles) RenderHostDetails(hostsInterface []interface{}, selectedIdx int
 			}
 		}
 	}
+
+padDetails:
 
 	// Pad remaining space
 	currentHeight := lipgloss.Height(details.String())
@@ -318,6 +372,7 @@ func (s *Styles) RenderFooterWithSync(width int, err error, syncStatus string) s
 		s.HelpKey.Render("[a]") + " " + s.HelpValue.Render("Add"),
 		s.HelpKey.Render("[e]") + " " + s.HelpValue.Render("Edit"),
 		s.HelpKey.Render("[d]") + " " + s.HelpValue.Render("Delete"),
+		s.HelpKey.Render("[Ctrl+G]") + " " + s.HelpValue.Render("New Group"),
 		s.HelpKey.Render("[/]") + " " + s.HelpValue.Render("Search"),
 		s.HelpKey.Render("[q]") + " " + s.HelpValue.Render("Quit"),
 	}
@@ -411,10 +466,11 @@ func (s *Styles) RenderHelpView(width, height int) string {
 		{"↑/↓ or j/k", "Navigate up/down"},
 		{"Ctrl+U/D", "Page up/down"},
 		{"Home/End or g/G", "Jump to top/bottom"},
-		{"Enter", "Connect to selected host"},
+		{"Enter", "Connect host or toggle group"},
 		{"S then Enter", "Connect via SFTP"},
 		{"M then Enter", "Mount/unmount in Finder (beta)"},
 		{",", "Open settings"},
+		{"Ctrl+G", "Create group"},
 		{"a or Ctrl+N", "Add new host"},
 		{"e", "Edit selected host"},
 		{"d or Delete", "Delete selected host"},

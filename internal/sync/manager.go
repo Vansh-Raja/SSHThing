@@ -122,6 +122,10 @@ func (m *Manager) Sync() *SyncResult {
 	}
 
 	// Step 4: Export local data
+	// Best-effort: garbage collect old group tombstones before exporting.
+	if m.store != nil {
+		_ = m.store.PurgeDeletedGroups(GroupTombstoneRetention)
+	}
 	if err := ExportToFile(m.store, m.git.GetSyncFilePath()); err != nil {
 		m.status = SyncStatusError
 		result.Error = err

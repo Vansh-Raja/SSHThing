@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Vansh-Raja/SSHThing/internal/db"
@@ -25,11 +26,37 @@ func Export(store *db.Store) (*SyncData, error) {
 		return nil, fmt.Errorf("failed to get hosts: %w", err)
 	}
 
+	groups, err := store.GetGroupsForSync(GroupTombstoneRetention)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get groups: %w", err)
+	}
+
+	syncGroups := make([]SyncGroup, 0, len(groups))
+	seenGroups := make(map[string]bool, len(groups))
+	for _, g := range groups {
+		seenGroups[strings.ToLower(strings.TrimSpace(g.Name))] = true
+		syncGroups = append(syncGroups, SyncGroup{
+			Name:      g.Name,
+			CreatedAt: g.CreatedAt,
+			UpdatedAt: g.UpdatedAt,
+			DeletedAt: g.DeletedAt,
+		})
+	}
+
 	syncHosts := make([]SyncHost, len(hosts))
 	for i, h := range hosts {
+		if gn := strings.TrimSpace(h.GroupName); gn != "" {
+			k := strings.ToLower(gn)
+			if !seenGroups[k] {
+				now := time.Now()
+				syncGroups = append(syncGroups, SyncGroup{Name: gn, CreatedAt: now, UpdatedAt: now})
+				seenGroups[k] = true
+			}
+		}
 		syncHosts[i] = SyncHost{
 			ID:            h.ID,
 			Label:         h.Label,
+			GroupName:     h.GroupName,
 			Hostname:      h.Hostname,
 			Username:      h.Username,
 			Port:          h.Port,
@@ -45,6 +72,7 @@ func Export(store *db.Store) (*SyncData, error) {
 		Version:   CurrentSyncVersion,
 		Salt:      salt,
 		UpdatedAt: time.Now(),
+		Groups:    syncGroups,
 		Hosts:     syncHosts,
 	}, nil
 }

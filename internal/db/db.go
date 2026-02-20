@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/Vansh-Raja/SSHThing/internal/crypto"
@@ -23,6 +24,7 @@ type Store struct {
 type HostModel struct {
 	ID            int
 	Label         string
+	GroupName     string
 	Hostname      string
 	Username      string
 	Port          int
@@ -31,6 +33,16 @@ type HostModel struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	LastConnected *time.Time
+}
+
+// GroupModel represents a named group used to organize hosts.
+// Groups are identified by Name (case-insensitive uniqueness in DB).
+// Deleted groups are tombstoned via DeletedAt and may be garbage collected later.
+type GroupModel struct {
+	Name      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt *time.Time
 }
 
 type MountState struct {
@@ -157,7 +169,7 @@ func Init(password string) (*Store, error) {
 		}
 		if err := verifyUnlocked(ro); err != nil {
 			ro.Close()
-			return nil, fmt.Errorf("invalid password")
+			return nil, classifyUnlockError(err, dbPath)
 		}
 		_ = ro.Close()
 	}
@@ -236,6 +248,33 @@ func verifyUnlocked(db *sql.DB) error {
 	return fmt.Errorf("locked or uninitialized")
 }
 
+func classifyUnlockError(err error, dbPath string) error {
+	if err == nil {
+		return nil
+	}
+	msg := strings.ToLower(err.Error())
+
+	switch {
+	case strings.Contains(msg, "requires cgo"),
+		strings.Contains(msg, "compiled with 'cgo_enabled=0'"):
+		return fmt.Errorf("this binary was built without CGO support; rebuild with CGO_ENABLED=1")
+	case strings.Contains(msg, "database is locked"),
+		strings.Contains(msg, "database table is locked"),
+		strings.Contains(msg, "database is busy"):
+		return fmt.Errorf("database is in use by another process: %s", dbPath)
+	case strings.Contains(msg, "access is denied"),
+		strings.Contains(msg, "permission denied"):
+		return fmt.Errorf("cannot access database file: %s", dbPath)
+	case strings.Contains(msg, "file is encrypted"),
+		strings.Contains(msg, "file is not a database"),
+		strings.Contains(msg, "locked or uninitialized"),
+		strings.Contains(msg, "missing salt"):
+		return fmt.Errorf("invalid password for database: %s", dbPath)
+	default:
+		return fmt.Errorf("failed to unlock database: %w", err)
+	}
+}
+
 func hasTable(db *sql.DB, name string) (bool, error) {
 	var count int
 	err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", name).Scan(&count)
@@ -251,6 +290,7 @@ func createSchema(db *sql.DB) error {
 	CREATE TABLE IF NOT EXISTS hosts (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		label TEXT,
+		group_name TEXT,
 		hostname TEXT NOT NULL,
 		username TEXT NOT NULL,
 		port INTEGER DEFAULT 22,
@@ -276,6 +316,11 @@ func createSchema(db *sql.DB) error {
 		return err
 	}
 
+	// Add group_name column for host grouping
+	if err := ensureColumn(db, "hosts", "group_name", "TEXT"); err != nil {
+		return err
+	}
+
 	// If the legacy `notes` column exists, migrate it away entirely by rebuilding
 	// the table without the column and copying values into `label` (when label empty).
 	hasNotes, err := hasColumn(db, "hosts", "notes")
@@ -286,6 +331,19 @@ func createSchema(db *sql.DB) error {
 		if err := migrateHostsDropNotes(db); err != nil {
 			return err
 		}
+	}
+
+	// Groups table (for organizing hosts)
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS groups (
+			name TEXT PRIMARY KEY COLLATE NOCASE,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			deleted_at TIMESTAMP
+		);
+	`)
+	if err != nil {
+		return err
 	}
 
 	// Metadata table (for Salt)
@@ -348,6 +406,7 @@ func migrateHostsDropNotes(db *sql.DB) error {
 		CREATE TABLE IF NOT EXISTS hosts_new (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			label TEXT,
+			group_name TEXT,
 			hostname TEXT NOT NULL,
 			username TEXT NOT NULL,
 			port INTEGER DEFAULT 22,
@@ -363,10 +422,11 @@ func migrateHostsDropNotes(db *sql.DB) error {
 	}
 
 	_, err = tx.Exec(`
-		INSERT INTO hosts_new (id, label, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
+		INSERT INTO hosts_new (id, label, group_name, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
 		SELECT
 			id,
 			CASE WHEN COALESCE(label, '') != '' THEN label ELSE COALESCE(notes, '') END,
+			'',
 			hostname, username, port, key_data, key_type, created_at, created_at, last_connected
 		FROM hosts;
 	`)
@@ -551,9 +611,9 @@ func (s *Store) CreateHost(h *HostModel, plainKey string) error {
 
 	now := time.Now()
 	_, err = s.db.Exec(`
-		INSERT INTO hosts (label, hostname, username, port, key_data, key_type, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, h.Label, h.Hostname, h.Username, h.Port, encryptedKey, h.KeyType, now, now)
+		INSERT INTO hosts (label, group_name, hostname, username, port, key_data, key_type, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, h.Label, normalizeGroupName(h.GroupName), h.Hostname, h.Username, h.Port, encryptedKey, h.KeyType, now, now)
 
 	return err
 }
@@ -569,7 +629,7 @@ func (s *Store) GetHosts() ([]HostModel, error) {
 	var query string
 	if hasUpdatedAt {
 		query = `
-			SELECT id, COALESCE(label, ''), hostname, username, port,
+			SELECT id, COALESCE(label, ''), COALESCE(group_name, ''), hostname, username, port,
 			       COALESCE(key_type, ''), COALESCE(key_data, ''),
 			       created_at, COALESCE(updated_at, created_at), last_connected
 			FROM hosts
@@ -577,7 +637,7 @@ func (s *Store) GetHosts() ([]HostModel, error) {
 		`
 	} else {
 		query = `
-			SELECT id, COALESCE(label, ''), hostname, username, port,
+			SELECT id, COALESCE(label, ''), COALESCE(group_name, ''), hostname, username, port,
 			       COALESCE(key_type, ''), COALESCE(key_data, ''),
 			       created_at, created_at, last_connected
 			FROM hosts
@@ -596,9 +656,10 @@ func (s *Store) GetHosts() ([]HostModel, error) {
 		var h HostModel
 		var createdAtStr, updatedAtStr string
 		var lastConnStr sql.NullString
-		if err := rows.Scan(&h.ID, &h.Label, &h.Hostname, &h.Username, &h.Port, &h.KeyType, &h.KeyData, &createdAtStr, &updatedAtStr, &lastConnStr); err != nil {
+		if err := rows.Scan(&h.ID, &h.Label, &h.GroupName, &h.Hostname, &h.Username, &h.Port, &h.KeyType, &h.KeyData, &createdAtStr, &updatedAtStr, &lastConnStr); err != nil {
 			return nil, err
 		}
+		h.GroupName = normalizeGroupName(h.GroupName)
 		h.CreatedAt = parseTimestamp(createdAtStr)
 		h.UpdatedAt = parseTimestamp(updatedAtStr)
 		if h.UpdatedAt.IsZero() {
@@ -661,9 +722,9 @@ func (s *Store) GetHostKey(id int) (string, error) {
 // UpdateHost updates a host's metadata (without changing the key)
 func (s *Store) UpdateHost(h *HostModel) error {
 	_, err := s.db.Exec(`
-		UPDATE hosts SET label=?, hostname=?, username=?, port=?, key_type=?, updated_at=?
+		UPDATE hosts SET label=?, group_name=?, hostname=?, username=?, port=?, key_type=?, updated_at=?
 		WHERE id=?
-	`, h.Label, h.Hostname, h.Username, h.Port, h.KeyType, time.Now(), h.ID)
+	`, h.Label, normalizeGroupName(h.GroupName), h.Hostname, h.Username, h.Port, h.KeyType, time.Now(), h.ID)
 	return err
 }
 
@@ -679,9 +740,9 @@ func (s *Store) UpdateHostWithKey(h *HostModel, plainKey string) error {
 	}
 
 	_, err = s.db.Exec(`
-		UPDATE hosts SET label=?, hostname=?, username=?, port=?, key_type=?, key_data=?, updated_at=?
+		UPDATE hosts SET label=?, group_name=?, hostname=?, username=?, port=?, key_type=?, key_data=?, updated_at=?
 		WHERE id=?
-	`, h.Label, h.Hostname, h.Username, h.Port, h.KeyType, encryptedKey, time.Now(), h.ID)
+	`, h.Label, normalizeGroupName(h.GroupName), h.Hostname, h.Username, h.Port, h.KeyType, encryptedKey, time.Now(), h.ID)
 	return err
 }
 
@@ -701,9 +762,9 @@ func (s *Store) DeleteHost(id int) error {
 // The keyData should already be encrypted.
 func (s *Store) CreateHostWithID(h *HostModel, encryptedKeyData string) error {
 	_, err := s.db.Exec(`
-		INSERT INTO hosts (id, label, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, h.ID, h.Label, h.Hostname, h.Username, h.Port, encryptedKeyData, h.KeyType, h.CreatedAt, h.UpdatedAt, h.LastConnected)
+		INSERT INTO hosts (id, label, group_name, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, h.ID, h.Label, normalizeGroupName(h.GroupName), h.Hostname, h.Username, h.Port, encryptedKeyData, h.KeyType, h.CreatedAt, h.UpdatedAt, h.LastConnected)
 	return err
 }
 
@@ -711,8 +772,245 @@ func (s *Store) CreateHostWithID(h *HostModel, encryptedKeyData string) error {
 // The keyData should already be encrypted.
 func (s *Store) UpdateHostFromSync(h *HostModel, encryptedKeyData string, updatedAt time.Time) error {
 	_, err := s.db.Exec(`
-		UPDATE hosts SET label=?, hostname=?, username=?, port=?, key_type=?, key_data=?, updated_at=?, last_connected=?
+		UPDATE hosts SET label=?, group_name=?, hostname=?, username=?, port=?, key_type=?, key_data=?, updated_at=?, last_connected=?
 		WHERE id=?
-	`, h.Label, h.Hostname, h.Username, h.Port, h.KeyType, encryptedKeyData, updatedAt, h.LastConnected, h.ID)
+	`, h.Label, normalizeGroupName(h.GroupName), h.Hostname, h.Username, h.Port, h.KeyType, encryptedKeyData, updatedAt, h.LastConnected, h.ID)
 	return err
+}
+
+func normalizeGroupName(name string) string {
+	name = strings.TrimSpace(name)
+	return name
+}
+
+// GetGroups returns all non-deleted groups (names only), ordered alphabetically.
+func (s *Store) GetGroups() ([]string, error) {
+	rows, err := s.db.Query(`
+		SELECT name
+		FROM groups
+		WHERE deleted_at IS NULL
+		ORDER BY LOWER(name)
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		name = normalizeGroupName(name)
+		if name == "" {
+			continue
+		}
+		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetGroupsForSync returns groups including recent tombstones.
+// Tombstones older than retention are excluded (they should be garbage-collected separately).
+func (s *Store) GetGroupsForSync(retention time.Duration) ([]GroupModel, error) {
+	cutoff := time.Now().Add(-retention)
+	rows, err := s.db.Query(`
+		SELECT name,
+		       created_at,
+		       COALESCE(updated_at, created_at),
+		       deleted_at
+		FROM groups
+		WHERE deleted_at IS NULL OR deleted_at >= ?
+		ORDER BY LOWER(name)
+	`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []GroupModel
+	for rows.Next() {
+		var gm GroupModel
+		var createdStr, updatedStr string
+		var deletedStr sql.NullString
+		if err := rows.Scan(&gm.Name, &createdStr, &updatedStr, &deletedStr); err != nil {
+			return nil, err
+		}
+		gm.Name = normalizeGroupName(gm.Name)
+		gm.CreatedAt = parseTimestamp(createdStr)
+		gm.UpdatedAt = parseTimestamp(updatedStr)
+		if deletedStr.Valid && strings.TrimSpace(deletedStr.String) != "" {
+			t := parseTimestamp(deletedStr.String)
+			if !t.IsZero() {
+				gm.DeletedAt = &t
+			}
+		}
+		if gm.Name == "" {
+			continue
+		}
+		out = append(out, gm)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// UpsertGroup creates or revives a group, updating timestamps.
+func (s *Store) UpsertGroup(name string) error {
+	name = normalizeGroupName(name)
+	if name == "" {
+		return nil
+	}
+	now := time.Now()
+	_, err := s.db.Exec(`
+		INSERT INTO groups (name, created_at, updated_at, deleted_at)
+		VALUES (?, ?, ?, NULL)
+		ON CONFLICT(name) DO UPDATE SET
+			updated_at=excluded.updated_at,
+			deleted_at=NULL
+	`, name, now, now)
+	return err
+}
+
+// RenameGroup renames a group and moves any hosts assigned to it.
+// The old name is tombstoned so the deletion propagates via sync.
+func (s *Store) RenameGroup(oldName, newName string) error {
+	oldName = normalizeGroupName(oldName)
+	newName = normalizeGroupName(newName)
+	if oldName == "" || newName == "" {
+		return fmt.Errorf("group name cannot be empty")
+	}
+	if strings.EqualFold(oldName, newName) {
+		// Treat as a touch/update.
+		return s.UpsertGroup(newName)
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now()
+	// Ensure new group exists and is active.
+	if _, err := tx.Exec(`
+		INSERT INTO groups (name, created_at, updated_at, deleted_at)
+		VALUES (?, ?, ?, NULL)
+		ON CONFLICT(name) DO UPDATE SET
+			updated_at=excluded.updated_at,
+			deleted_at=NULL
+	`, newName, now, now); err != nil {
+		return err
+	}
+
+	// Move hosts (case-insensitive match).
+	if _, err := tx.Exec(`
+		UPDATE hosts
+		SET group_name=?, updated_at=?
+		WHERE LOWER(COALESCE(group_name, '')) = LOWER(?)
+	`, newName, now, oldName); err != nil {
+		return err
+	}
+
+	// Tombstone old group.
+	if _, err := tx.Exec(`
+		INSERT INTO groups (name, created_at, updated_at, deleted_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(name) DO UPDATE SET
+			updated_at=excluded.updated_at,
+			deleted_at=excluded.deleted_at
+	`, oldName, now, now, now); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// DeleteGroup tombstones a group and ungroups all hosts assigned to it.
+func (s *Store) DeleteGroup(name string) error {
+	name = normalizeGroupName(name)
+	if name == "" {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now()
+	if _, err := tx.Exec(`
+		UPDATE hosts
+		SET group_name=NULL, updated_at=?
+		WHERE LOWER(COALESCE(group_name, '')) = LOWER(?)
+	`, now, name); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO groups (name, created_at, updated_at, deleted_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(name) DO UPDATE SET
+			updated_at=excluded.updated_at,
+			deleted_at=excluded.deleted_at
+	`, name, now, now, now); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// PurgeDeletedGroups permanently removes tombstoned groups older than the given age.
+func (s *Store) PurgeDeletedGroups(olderThan time.Duration) error {
+	cutoff := time.Now().Add(-olderThan)
+	_, err := s.db.Exec(`
+		DELETE FROM groups
+		WHERE deleted_at IS NOT NULL AND deleted_at < ?
+	`, cutoff)
+	return err
+}
+
+// UpsertGroupFromSync applies group state from a sync payload, preserving timestamps.
+// If deletedAt is non-nil, hosts assigned to the group are ungrouped (hosts updated_at is set to now).
+func (s *Store) UpsertGroupFromSync(name string, createdAt, updatedAt time.Time, deletedAt *time.Time) error {
+	name = normalizeGroupName(name)
+	if name == "" {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.Exec(`
+		INSERT INTO groups (name, created_at, updated_at, deleted_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(name) DO UPDATE SET
+			updated_at=excluded.updated_at,
+			deleted_at=excluded.deleted_at
+	`, name, createdAt, updatedAt, deletedAt)
+	if err != nil {
+		return err
+	}
+
+	if deletedAt != nil {
+		// Ungroup any hosts pointing at this group.
+		if _, err := tx.Exec(`
+			UPDATE hosts
+			SET group_name=NULL, updated_at=?
+			WHERE LOWER(COALESCE(group_name, '')) = LOWER(?)
+		`, time.Now(), name); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
