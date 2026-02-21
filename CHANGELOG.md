@@ -10,7 +10,7 @@ Entries below are written as an “engineering history” of the major problems 
   type: code-change
   summary: Fix release workflow versioning by deriving Windows installer VersionInfoVersion from semver core (supporting RC tags) and update the macOS amd64 runner label to a supported Intel runner.
   files: .github/workflows/release.yml, installer/sshthing.iss
-  commit: pending
+  commit: 456041750c838aa25deb74ca51f8d40436a4dc38 @ 2026-02-21T05:51:54Z
 
 - id: 2026-02-21T05:39:27Z-c29f
   time: 2026-02-21T05:39:27Z
