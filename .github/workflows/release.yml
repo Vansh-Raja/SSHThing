@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build-windows:
@@ -37,7 +39,13 @@ jobs:
           export PATH="/mingw64/bin:$PATH"
           export CGO_ENABLED=1
           export CC=gcc
-          go build -o sshthing.exe ./cmd/sshthing
+          go build -trimpath -buildvcs=false -o sshthing.exe ./cmd/sshthing
+
+      - name: Smoke test binary
+        shell: msys2 {0}
+        run: |
+          ./sshthing.exe --version
+          ./sshthing.exe --help >/dev/null
 
       - name: Install Inno Setup
         shell: pwsh
@@ -59,6 +67,33 @@ jobs:
           if (-not $iscc) { throw "ISCC.exe not found after install" }
           & $iscc "installer\sshthing.iss" "/DMyAppVersion=$v" "/DMyAppVersionInfoVersion=$v.0"
 
+      - name: Smoke test installer install/uninstall
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP "sshthing-install"
+          $installLog = Join-Path $env:RUNNER_TEMP "sshthing-install.log"
+          $uninstallLog = Join-Path $env:RUNNER_TEMP "sshthing-uninstall.log"
+          if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
+          New-Item -ItemType Directory -Path $installDir | Out-Null
+
+          $setup = Join-Path $PWD "sshthing-setup-windows-amd64.exe"
+          if (-not (Test-Path $setup)) { throw "Installer not found: $setup" }
+
+          & $setup /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- "/DIR=$installDir" "/LOG=$installLog"
+          if ($LASTEXITCODE -ne 0) { throw "Installer exited with code $LASTEXITCODE" }
+
+          $installedExe = Join-Path $installDir "sshthing.exe"
+          if (-not (Test-Path $installedExe)) { throw "Installed exe not found: $installedExe" }
+          & $installedExe --version
+          if ($LASTEXITCODE -ne 0) { throw "Installed binary exited with code $LASTEXITCODE" }
+
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          if (-not (Test-Path $uninstaller)) { throw "Uninstaller not found: $uninstaller" }
+          & $uninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$uninstallLog"
+          if ($LASTEXITCODE -ne 0) { throw "Uninstaller exited with code $LASTEXITCODE" }
+
+          if (Test-Path $installedExe) { throw "Uninstall did not remove executable: $installedExe" }
+
       - name: Create archive
         shell: pwsh
         run: |
@@ -73,7 +108,7 @@ jobs:
             sshthing-setup-windows-amd64.exe
 
   build-macos:
-    runs-on: macos-latest
+    runs-on: macos-13
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -89,9 +124,24 @@ jobs:
       - name: Build
         run: |
           export CGO_ENABLED=1
+          export GOARCH=amd64
           export CGO_CFLAGS="-I$(brew --prefix sqlcipher)/include"
           export CGO_LDFLAGS="-L$(brew --prefix sqlcipher)/lib"
-          go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o sshthing ./cmd/sshthing
+          go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o sshthing ./cmd/sshthing
+
+      - name: Smoke test amd64 binary
+        run: |
+          ./sshthing --version
+          ./sshthing --help >/dev/null
+          arch_info="$(file sshthing)"
+          echo "$arch_info"
+          case "$arch_info" in
+            *x86_64*) ;;
+            *)
+              echo "Expected x86_64 binary"
+              exit 1
+              ;;
+          esac
 
       - name: Create archive
         run: |
@@ -104,7 +154,7 @@ jobs:
           path: sshthing-macos-amd64.zip
 
   build-macos-arm64:
-    runs-on: macos-latest
+    runs-on: macos-14
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -123,7 +173,21 @@ jobs:
           export GOARCH=arm64
           export CGO_CFLAGS="-I$(brew --prefix sqlcipher)/include"
           export CGO_LDFLAGS="-L$(brew --prefix sqlcipher)/lib"
-          go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o sshthing ./cmd/sshthing
+          go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o sshthing ./cmd/sshthing
+
+      - name: Smoke test arm64 binary
+        run: |
+          ./sshthing --version
+          ./sshthing --help >/dev/null
+          arch_info="$(file sshthing)"
+          echo "$arch_info"
+          case "$arch_info" in
+            *arm64*) ;;
+            *)
+              echo "Expected arm64 binary"
+              exit 1
+              ;;
+          esac
 
       - name: Create archive
         run: |
@@ -138,25 +202,104 @@ jobs:
   release:
     needs: [build-windows, build-macos, build-macos-arm64]
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Delete existing release (if any)
+      - name: Prepare release assets and checksums
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete "${{ github.ref_name }}" --repo "${{ github.repository }}" -y || true
+          set -euo pipefail
+          mkdir -p dist
+          cp artifacts/sshthing-windows-amd64/sshthing-windows-amd64.zip dist/
+          cp artifacts/sshthing-windows-amd64/sshthing-setup-windows-amd64.exe dist/
+          cp artifacts/sshthing-macos-amd64/sshthing-macos-amd64.zip dist/
+          cp artifacts/sshthing-macos-arm64/sshthing-macos-arm64.zip dist/
+          (cd dist && sha256sum sshthing-setup-windows-amd64.exe sshthing-windows-amd64.zip sshthing-macos-amd64.zip sshthing-macos-arm64.zip > SHA256SUMS)
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
         with:
-          files: |
-            artifacts/sshthing-windows-amd64/sshthing-windows-amd64.zip
-            artifacts/sshthing-windows-amd64/sshthing-setup-windows-amd64.exe
-            artifacts/sshthing-macos-amd64/sshthing-macos-amd64.zip
-            artifacts/sshthing-macos-arm64/sshthing-macos-arm64.zip
-          generate_release_notes: true
+          subject-path: |
+            dist/sshthing-setup-windows-amd64.exe
+            dist/sshthing-windows-amd64.zip
+            dist/sshthing-macos-amd64.zip
+            dist/sshthing-macos-arm64.zip
+            dist/SHA256SUMS
+
+      - name: Create or validate draft release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          repo="${{ github.repository }}"
+
+          if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$tag" --repo "$repo" --json isDraft -q .isDraft)"
+            if [ "$is_draft" != "true" ]; then
+              echo "Release $tag already exists and is published; refusing overwrite."
+              exit 1
+            fi
+            echo "Reusing existing draft release: $tag"
+          else
+            gh release create "$tag" --repo "$repo" --draft --verify-tag --generate-notes --title "$tag"
+          fi
+
+      - name: Upload release assets to draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          repo="${{ github.repository }}"
+          gh release upload "$tag" \
+            dist/sshthing-setup-windows-amd64.exe \
+            dist/sshthing-windows-amd64.zip \
+            dist/sshthing-macos-amd64.zip \
+            dist/sshthing-macos-arm64.zip \
+            dist/SHA256SUMS \
+            --repo "$repo" \
+            --clobber
+
+      - name: Verify expected assets exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          repo="${{ github.repository }}"
+
+          declare -A seen
+          while IFS= read -r asset; do
+            if [ -n "$asset" ]; then
+              seen["$asset"]=1
+            fi
+          done < <(gh release view "$tag" --repo "$repo" --json assets -q '.assets[].name')
+
+          expected=(
+            "sshthing-setup-windows-amd64.exe"
+            "sshthing-windows-amd64.zip"
+            "sshthing-macos-amd64.zip"
+            "sshthing-macos-arm64.zip"
+            "SHA256SUMS"
+          )
+
+          for asset in "${expected[@]}"; do
+            if [ -z "${seen[$asset]:-}" ]; then
+              echo "Missing release asset: $asset"
+              exit 1
+            fi
+          done
+
+      - name: Publish release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          repo="${{ github.repository }}"
+          is_draft="$(gh release view "$tag" --repo "$repo" --json isDraft -q .isDraft)"
+          if [ "$is_draft" = "true" ]; then
+            gh release edit "$tag" --repo "$repo" --draft=false
+          fi

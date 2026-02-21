@@ -92,6 +92,29 @@ xattr -dr com.apple.quarantine sshthing
 
 **Note:** The Mount feature is not available on Windows.
 
+### Verify Downloads (Recommended)
+
+Each release includes a `SHA256SUMS` file.
+
+1. Download your asset and `SHA256SUMS` from [Releases](https://github.com/Vansh-Raja/SSHThing/releases)
+2. Verify checksum:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+On PowerShell (Windows):
+
+```powershell
+Get-FileHash .\sshthing-setup-windows-amd64.exe -Algorithm SHA256
+```
+
+Optional provenance verification (requires `gh`):
+
+```bash
+gh attestation verify sshthing-windows-amd64.zip --repo Vansh-Raja/SSHThing
+```
+
 ### From source
 
 ```bash

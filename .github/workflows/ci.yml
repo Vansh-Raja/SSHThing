@@ -35,7 +35,13 @@ jobs:
           export PATH="/mingw64/bin:$PATH"
           export CGO_ENABLED=1
           export CC=gcc
-          go build -o sshthing.exe ./cmd/sshthing
+          go build -trimpath -buildvcs=false -o sshthing.exe ./cmd/sshthing
+
+      - name: Smoke test binary
+        shell: msys2 {0}
+        run: |
+          ./sshthing.exe --version
+          ./sshthing.exe --help >/dev/null
 
       - name: Test
         shell: msys2 {0}
@@ -64,7 +70,12 @@ jobs:
           export CGO_ENABLED=1
           export CGO_CFLAGS="-I$(brew --prefix sqlcipher)/include"
           export CGO_LDFLAGS="-L$(brew --prefix sqlcipher)/lib"
-          go build -o sshthing ./cmd/sshthing
+          go build -trimpath -buildvcs=false -o sshthing ./cmd/sshthing
+
+      - name: Smoke test binary
+        run: |
+          ./sshthing --version
+          ./sshthing --help >/dev/null
 
       - name: Test
         run: |
