@@ -83,8 +83,8 @@ jobs:
           $setup = Join-Path $PWD "sshthing-setup-windows-amd64.exe"
           if (-not (Test-Path $setup)) { throw "Installer not found: $setup" }
 
-          & $setup /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- "/DIR=$installDir" "/LOG=$installLog"
-          if ($LASTEXITCODE -ne 0) { throw "Installer exited with code $LASTEXITCODE" }
+          $installProc = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=$installDir", "/LOG=$installLog") -Wait -PassThru
+          if ($installProc.ExitCode -ne 0) { throw "Installer exited with code $($installProc.ExitCode)" }
 
           $installedExe = Join-Path $installDir "sshthing.exe"
           if (-not (Test-Path $installedExe)) { throw "Installed exe not found: $installedExe" }
@@ -93,8 +93,8 @@ jobs:
 
           $uninstaller = Join-Path $installDir "unins000.exe"
           if (-not (Test-Path $uninstaller)) { throw "Uninstaller not found: $uninstaller" }
-          & $uninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$uninstallLog"
-          if ($LASTEXITCODE -ne 0) { throw "Uninstaller exited with code $LASTEXITCODE" }
+          $uninstallProc = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$uninstallLog") -Wait -PassThru
+          if ($uninstallProc.ExitCode -ne 0) { throw "Uninstaller exited with code $($uninstallProc.ExitCode)" }
 
           if (Test-Path $installedExe) { throw "Uninstall did not remove executable: $installedExe" }
 

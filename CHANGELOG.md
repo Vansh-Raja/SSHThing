@@ -5,6 +5,13 @@ Entries below are written as an “engineering history” of the major problems 
 
 ## Running Log
 
+- id: 2026-02-21T06:09:07Z-e5dc
+  time: 2026-02-21T06:09:07Z
+  type: code-change
+  summary: Stabilize Windows installer smoke tests by using Start-Process -Wait -PassThru and checking ExitCode for GUI installer/uninstaller runs.
+  files: .github/workflows/release.yml
+  commit: pending
+
 - id: 2026-02-21T06:03:29Z-f0c9
   time: 2026-02-21T06:03:29Z
   type: code-change
