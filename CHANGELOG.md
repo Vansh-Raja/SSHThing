@@ -10,21 +10,21 @@ Entries below are written as an “engineering history” of the major problems 
   type: code-change
   summary: Harden the release workflow with Windows/macOS smoke tests, explicit macOS amd64/arm64 runners, SHA256SUMS generation, artifact attestations, and draft-first publishing via gh with idempotency checks.
   files: .github/workflows/
-  commit: pending
+  commit: 71391418edf37389735443d8973e0f2d12187414 @ 2026-02-21T05:37:39Z
 
 - id: 2026-02-21T16:04:40Z-a1b7
   time: 2026-02-21T16:04:40Z
   type: code-change
   summary: Extend CI with binary smoke tests to catch broken builds early.
   files: .github/workflows/
-  commit: pending
+  commit: 71391418edf37389735443d8973e0f2d12187414 @ 2026-02-21T05:37:39Z
 
 - id: 2026-02-21T16:04:10Z-3d0e
   time: 2026-02-21T16:04:10Z
   type: code-change
   summary: Document release download verification steps in the README.
   files: README.md
-  commit: pending
+  commit: 71391418edf37389735443d8973e0f2d12187414 @ 2026-02-21T05:37:39Z
 
 - id: 2026-02-20T11:44:38Z-8192
   time: 2026-02-20T11:44:38Z
