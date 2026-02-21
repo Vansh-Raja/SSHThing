@@ -10,7 +10,7 @@ Entries below are written as an “engineering history” of the major problems 
   type: code-change
   summary: Pass semver core as Inno Setup MyAppVersion (keeping MyAppVersionInfoVersion numeric) so -rc1 tags don't fail VersionInfoProductVersion validation in Windows installer builds.
   files: .github/workflows/release.yml
-  commit: pending
+  commit: 011ad206e8598fc543d28f1df532b17b01c5fe6e @ 2026-02-21T06:04:00Z
 
 - id: 2026-02-21T05:51:13Z-754d
   time: 2026-02-21T05:51:13Z
