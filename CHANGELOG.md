@@ -10,7 +10,7 @@ Entries below are written as an “engineering history” of the major problems 
   type: code-change
   summary: Stabilize Windows installer smoke tests by using Start-Process -Wait -PassThru and checking ExitCode for GUI installer/uninstaller runs.
   files: .github/workflows/release.yml
-  commit: pending
+  commit: 23775a7b55e44e5d0f17257b8c0f12bf7906d6f9 @ 2026-02-21T06:09:29Z
 
 - id: 2026-02-21T06:03:29Z-f0c9
   time: 2026-02-21T06:03:29Z
