@@ -69,7 +69,7 @@ jobs:
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) { throw "ISCC.exe not found after install" }
-          & $iscc "installer\sshthing.iss" "/DMyAppVersion=$versionLabel" "/DMyAppVersionInfoVersion=$versionInfo"
+          & $iscc "installer\sshthing.iss" "/DMyAppVersion=$versionCore" "/DMyAppVersionInfoVersion=$versionInfo"
 
       - name: Smoke test installer install/uninstall
         shell: pwsh

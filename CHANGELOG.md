@@ -5,6 +5,13 @@ Entries below are written as an “engineering history” of the major problems 
 
 ## Running Log
 
+- id: 2026-02-21T06:03:29Z-f0c9
+  time: 2026-02-21T06:03:29Z
+  type: code-change
+  summary: Pass semver core as Inno Setup MyAppVersion (keeping MyAppVersionInfoVersion numeric) so -rc1 tags don't fail VersionInfoProductVersion validation in Windows installer builds.
+  files: .github/workflows/release.yml
+  commit: pending
+
 - id: 2026-02-21T05:51:13Z-754d
   time: 2026-02-21T05:51:13Z
   type: code-change
