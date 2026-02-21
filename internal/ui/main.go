@@ -8,6 +8,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+type SyncActivity struct {
+	Active   bool
+	Frame    int
+	Progress float64
+	Stage    string
+}
+
 // RenderView renders the main view based on the current view mode
 func (s *Styles) RenderView(viewMode string, width, height int, hosts interface{}, selectedIdx int, searchQuery string, isSearching bool, err error) string {
 	switch viewMode {
@@ -22,11 +29,11 @@ func (s *Styles) RenderView(viewMode string, width, height int, hosts interface{
 
 // RenderListView renders the main two-panel layout
 func (s *Styles) RenderListView(width, height int, hostsInterface interface{}, selectedIdx int, searchQuery string, isSearching bool, err error) string {
-	return s.RenderListViewWithSync(width, height, hostsInterface, selectedIdx, searchQuery, isSearching, err, "")
+	return s.RenderListViewWithSync(width, height, hostsInterface, selectedIdx, searchQuery, isSearching, err, "", nil)
 }
 
 // RenderListViewWithSync renders the main two-panel layout with sync status
-func (s *Styles) RenderListViewWithSync(width, height int, hostsInterface interface{}, selectedIdx int, searchQuery string, isSearching bool, err error, syncStatus string) string {
+func (s *Styles) RenderListViewWithSync(width, height int, hostsInterface interface{}, selectedIdx int, searchQuery string, isSearching bool, err error, syncStatus string, syncActivity *SyncActivity) string {
 	// Type assertion for hosts
 	hosts, ok := hostsInterface.([]interface{})
 	if !ok {
@@ -43,6 +50,12 @@ func (s *Styles) RenderListViewWithSync(width, height int, hostsInterface interf
 	// Calculate available space
 	headerHeight := lipgloss.Height(header)
 	footerHeight := 3
+	if err != nil {
+		footerHeight++
+	}
+	if syncActivity != nil && syncActivity.Active {
+		footerHeight++
+	}
 	availableHeight := height - headerHeight - footerHeight - 2
 
 	// Two-panel layout
@@ -62,7 +75,7 @@ func (s *Styles) RenderListViewWithSync(width, height int, hostsInterface interf
 	view.WriteString("\n")
 
 	// Footer
-	footer := s.RenderFooterWithSync(width, err, syncStatus)
+	footer := s.RenderFooterWithSync(width, err, syncStatus, syncActivity)
 	view.WriteString(footer)
 
 	return view.String()
@@ -348,16 +361,21 @@ func (s *Styles) renderDetailRow(label, value string) string {
 
 // RenderFooter renders the footer with keybindings
 func (s *Styles) RenderFooter(width int, err error) string {
-	return s.RenderFooterWithSync(width, err, "")
+	return s.RenderFooterWithSync(width, err, "", nil)
 }
 
 // RenderFooterWithSync renders the footer with keybindings and optional sync status
-func (s *Styles) RenderFooterWithSync(width int, err error, syncStatus string) string {
+func (s *Styles) RenderFooterWithSync(width int, err error, syncStatus string, syncActivity *SyncActivity) string {
 	var footer strings.Builder
 
 	// Show notice if present
 	if err != nil {
 		footer.WriteString(s.renderFooterNotice(err.Error()))
+		footer.WriteString("\n")
+	}
+
+	if syncActivity != nil && syncActivity.Active {
+		footer.WriteString(s.renderSyncActivityLine(width-4, syncActivity))
 		footer.WriteString("\n")
 	}
 
@@ -380,13 +398,82 @@ func (s *Styles) RenderFooterWithSync(width int, err error, syncStatus string) s
 	footerText := strings.Join(bindings, s.HelpSep.String())
 
 	// Add sync status if provided
-	if syncStatus != "" {
+	if syncStatus != "" && (syncActivity == nil || !syncActivity.Active) {
 		footerText += s.HelpSep.String() + s.HelpValue.Foreground(ColorTextDim).Render("Sync: "+syncStatus)
 	}
 
 	footer.WriteString(footerText)
 
 	return s.Footer.Width(width - 2).Render(footer.String())
+}
+
+func (s *Styles) renderSyncActivityLine(width int, activity *SyncActivity) string {
+	if width < 16 {
+		return s.HelpValue.Render("Syncing...")
+	}
+
+	frames := []string{"|", "/", "-", "\\"}
+	icon := frames[activity.Frame%len(frames)]
+	stage := strings.TrimSpace(activity.Stage)
+	label := icon + " Syncing"
+	if stage != "" {
+		label += " (" + stage + ")"
+	}
+
+	labelStyled := s.HelpValue.Foreground(ColorSecondary).Render(label)
+	barWidth := width - lipgloss.Width(label) - 1
+	if barWidth < 10 {
+		return labelStyled
+	}
+
+	return lipgloss.JoinHorizontal(
+		lipgloss.Center,
+		labelStyled,
+		" ",
+		s.HelpValue.Foreground(ColorPrimary).Render(renderSyncBar(barWidth, activity.Frame, activity.Progress)),
+	)
+}
+
+func renderSyncBar(width int, frame int, progress float64) string {
+	if width <= 2 {
+		return "[]"
+	}
+	inner := width - 2
+	if inner < 1 {
+		inner = 1
+	}
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 1 {
+		progress = 1
+	}
+
+	filled := int(progress * float64(inner))
+	if filled > inner {
+		filled = inner
+	}
+
+	bar := make([]rune, inner)
+	for i := range bar {
+		bar[i] = '-'
+	}
+	for i := 0; i < filled; i++ {
+		bar[i] = '='
+	}
+
+	if filled < inner {
+		head := frame % inner
+		if head < filled {
+			head = filled
+		}
+		if head >= inner {
+			head = inner - 1
+		}
+		bar[head] = '>'
+	}
+
+	return "[" + string(bar) + "]"
 }
 
 type footerNoticeKind int
@@ -434,9 +521,13 @@ func classifyFooterNotice(message string) footerNoticeKind {
 	if strings.HasPrefix(msg, "✓") || strings.HasPrefix(msg, "✔") {
 		return footerNoticeSuccess
 	}
+	if strings.HasPrefix(msg, "ℹ") || strings.HasPrefix(lower, "info") {
+		return footerNoticeInfo
+	}
 	if strings.Contains(lower, "disconnected") ||
 		strings.Contains(lower, "connected") ||
 		strings.Contains(lower, "armed") ||
+		strings.Contains(lower, "syncing") ||
 		strings.Contains(lower, "database deleted") ||
 		strings.Contains(lower, "db deleted") {
 		return footerNoticeInfo

@@ -12,6 +12,14 @@ import (
 var version = "dev"
 
 func main() {
+	if ssh.IsAskpassInvocation() {
+		if err := ssh.RunAskpassHelper(); err != nil {
+			fmt.Fprintf(os.Stderr, "askpass error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--version", "version":

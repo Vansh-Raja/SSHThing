@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -79,6 +80,10 @@ type Model struct {
 	// Sync state
 	syncManager    *sync.Manager
 	masterPassword string // Stored for sync re-encryption (cleared on quit)
+	syncing        bool
+	syncRunID      int
+	syncAnimFrame  int
+	syncProgress   float64
 }
 
 // ModalForm holds form state for add/edit modals
@@ -201,6 +206,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return nextModel, nextCmd
 		}
 		return nm, tea.Batch(nextCmd, nm.errorAutoClearCmd(prevErr))
+
+	case syncAnimTickMsg:
+		if !m.syncing || msg.runID != m.syncRunID {
+			return m, nil
+		}
+		m.syncAnimFrame++
+		target := 0.92
+		m.syncProgress += (target - m.syncProgress) * 0.12
+		if m.syncProgress < 0 {
+			m.syncProgress = 0
+		}
+		if m.syncProgress > target {
+			m.syncProgress = target
+		}
+		return m, syncAnimTickCmd(msg.runID)
+
+	case syncFinishedMsg:
+		if msg.runID != m.syncRunID {
+			return m, nil
+		}
+		m.syncing = false
+		m.syncProgress = 1
+		if msg.result == nil {
+			m.err = fmt.Errorf("⚠ sync failed: empty result")
+			return m, m.errorAutoClearCmd(prevErr)
+		}
+		if msg.result.Success {
+			m.loadHosts()
+			m.loadGroups()
+			m.rebuildListItems()
+			m.err = fmt.Errorf("✓ Sync: ↓%d ↑%d", msg.result.HostsPulled, msg.result.HostsPushed)
+		} else {
+			m.err = fmt.Errorf("⚠ %s", msg.result.Message)
+		}
+		return m, m.errorAutoClearCmd(prevErr)
 
 	case clearErrMsg:
 		if msg.seq == m.errSeq {
@@ -1074,7 +1114,7 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.viewMode = ViewModeEditHost
 			var existingKey string
 			if m.store != nil && host.HasKey && host.KeyType != "password" {
-				key, err := m.store.GetHostKey(host.ID)
+				key, err := m.store.GetHostSecret(host.ID)
 				if err == nil {
 					existingKey = key
 				}
@@ -1146,6 +1186,11 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.err = nil
 
 	case "Y":
+		if m.syncing {
+			m.err = fmt.Errorf("ℹ sync already in progress")
+			return m, nil
+		}
+
 		// Manual sync trigger - always show feedback
 		if m.syncManager == nil {
 			m.err = fmt.Errorf("⚠ sync manager is nil")
@@ -1155,16 +1200,14 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("⚠ sync is disabled — enable in settings")
 			return m, nil
 		}
-		result := m.syncManager.Sync()
-		if result.Success {
-			m.loadHosts() // Reload hosts after sync
-			m.loadGroups()
-			m.rebuildListItems()
-			m.err = fmt.Errorf("✓ Sync: +%d ↑%d", result.HostsAdded, result.HostsUpdated)
-		} else {
-			m.err = fmt.Errorf("⚠ %s", result.Message)
-		}
-		return m, nil
+
+		m.syncing = true
+		m.syncRunID++
+		m.syncAnimFrame = 0
+		m.syncProgress = 0.02
+		runID := m.syncRunID
+		m.err = fmt.Errorf("ℹ Syncing...")
+		return m, tea.Batch(runSyncCmd(runID, m.syncManager), syncAnimTickCmd(runID))
 	}
 
 	return m, nil
@@ -1316,8 +1359,7 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch m.modalForm.authMethod {
 		case ui.AuthPassword:
 			keyType = "password"
-			// Don't store SSH passwords. SSH will prompt at connect-time.
-			plainKey = ""
+			plainKey = m.modalForm.passwordInput.Value()
 		case ui.AuthKeyPaste:
 			keyType = "pasted"
 			plainKey = normalizePrivateKey(m.modalForm.pastedKeyInput.Value())
@@ -1360,6 +1402,9 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			selectedHost, ok := m.selectedHost()
 			if ok {
 				originalID := selectedHost.ID
+				keepExistingSecret := m.modalForm.authMethod == ui.AuthPassword &&
+					selectedHost.KeyType == "password" &&
+					plainKey == ""
 				host := &db.HostModel{
 					ID:        originalID,
 					Label:     strings.TrimSpace(m.modalForm.labelInput.Value()),
@@ -1369,8 +1414,13 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					Port:      portInt,
 					KeyType:   keyType,
 				}
-				// Update with key data if provided, otherwise just metadata
-				if m.modalForm.authMethod == ui.AuthPassword || plainKey != "" {
+				// Update with key data when auth mode changed or secret provided.
+				if keepExistingSecret {
+					if err := m.store.UpdateHost(host); err != nil {
+						m.err = err
+						return m, nil
+					}
+				} else if m.modalForm.authMethod == ui.AuthPassword || plainKey != "" {
 					if err := m.store.UpdateHostWithKey(host, plainKey); err != nil {
 						m.err = err
 						return m, nil
@@ -1421,6 +1471,8 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case ui.FieldAuthDetails:
 			if m.modalForm.authMethod == ui.AuthKeyPaste {
 				m.modalForm.pastedKeyInput.Focus()
+			} else if m.modalForm.authMethod == ui.AuthPassword {
+				m.modalForm.passwordInput.Focus()
 			}
 		}
 	}
@@ -1579,6 +1631,8 @@ func (m *Model) handleInputUpdate(msg tea.Msg) tea.Cmd {
 	case ui.FieldAuthDetails:
 		if m.modalForm.authMethod == ui.AuthKeyPaste {
 			m.modalForm.pastedKeyInput, cmd = m.modalForm.pastedKeyInput.Update(msg)
+		} else if m.modalForm.authMethod == ui.AuthPassword {
+			m.modalForm.passwordInput, cmd = m.modalForm.passwordInput.Update(msg)
 		}
 	}
 	return cmd
@@ -1913,7 +1967,7 @@ func (m Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	const maxIdx = 13
+	const maxIdx = 15
 
 	key := msg.String()
 
@@ -1937,22 +1991,22 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case 5:
 			m.cfg.SSH.TermCustom = val
 			return true
-		case 7:
+		case 9:
 			m.cfg.Mount.DefaultRemotePath = val
 			return true
-		case 10:
+		case 12:
 			m.cfg.Sync.RepoURL = val
 			return true
-		case 11:
+		case 13:
 			m.cfg.Sync.SSHKeyPath = val
 			return true
-		case 12:
+		case 14:
 			if val == "" {
 				val = "main"
 			}
 			m.cfg.Sync.Branch = val
 			return true
-		case 13:
+		case 15:
 			m.cfg.Sync.LocalPath = val
 			return true
 		}
@@ -2060,7 +2114,17 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			default:
 				m.cfg.SSH.TermMode = config.TermCustom
 			}
-		case 8:
+		case 7:
+			// Unix password backend order
+			if runtime.GOOS != "windows" && m.cfg.SSH.PasswordAutoLogin {
+				switch m.cfg.SSH.PasswordBackendUnix {
+				case config.PasswordBackendAskpassFirst:
+					m.cfg.SSH.PasswordBackendUnix = config.PasswordBackendSSHPassFirst
+				default:
+					m.cfg.SSH.PasswordBackendUnix = config.PasswordBackendAskpassFirst
+				}
+			}
+		case 10:
 			// Mount quit behavior
 			switch m.cfg.Mount.QuitBehavior {
 			case config.MountQuitAlwaysUnmount:
@@ -2099,7 +2163,16 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			default:
 				m.cfg.SSH.TermMode = config.TermAuto
 			}
-		case 8:
+		case 7:
+			if runtime.GOOS != "windows" && m.cfg.SSH.PasswordAutoLogin {
+				switch m.cfg.SSH.PasswordBackendUnix {
+				case config.PasswordBackendSSHPassFirst:
+					m.cfg.SSH.PasswordBackendUnix = config.PasswordBackendAskpassFirst
+				default:
+					m.cfg.SSH.PasswordBackendUnix = config.PasswordBackendSSHPassFirst
+				}
+			}
+		case 10:
 			switch m.cfg.Mount.QuitBehavior {
 			case config.MountQuitPrompt:
 				m.cfg.Mount.QuitBehavior = config.MountQuitAlwaysUnmount
@@ -2169,11 +2242,35 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return startEdit(m.cfg.SSH.TermCustom, "e.g. xterm-256color")
 			case 6:
-				m.cfg.Mount.Enabled = !m.cfg.Mount.Enabled
+				m.cfg.SSH.PasswordAutoLogin = !m.cfg.SSH.PasswordAutoLogin
+				if m.cfg.SSH.PasswordAutoLogin && (runtime.GOOS == "linux" || runtime.GOOS == "darwin") {
+					if err := ssh.CheckSSHPass(); err != nil {
+						m.err = fmt.Errorf("Tip: install sshpass for best password auto-login on %s", runtime.GOOS)
+					}
+				}
 				return m, nil
 			case 7:
-				return startEdit(m.cfg.Mount.DefaultRemotePath, "empty = remote home (recommended)")
+				if runtime.GOOS == "windows" {
+					m.err = fmt.Errorf("unix backend is only used on Linux/macOS")
+					return m, nil
+				}
+				if !m.cfg.SSH.PasswordAutoLogin {
+					m.err = fmt.Errorf("enable password auto-login first")
+					return m, nil
+				}
+				switch m.cfg.SSH.PasswordBackendUnix {
+				case config.PasswordBackendSSHPassFirst:
+					m.cfg.SSH.PasswordBackendUnix = config.PasswordBackendAskpassFirst
+				default:
+					m.cfg.SSH.PasswordBackendUnix = config.PasswordBackendSSHPassFirst
+				}
+				return m, nil
 			case 8:
+				m.cfg.Mount.Enabled = !m.cfg.Mount.Enabled
+				return m, nil
+			case 9:
+				return startEdit(m.cfg.Mount.DefaultRemotePath, "empty = remote home (recommended)")
+			case 10:
 				// Cycle quit behavior forward
 				switch m.cfg.Mount.QuitBehavior {
 				case config.MountQuitPrompt:
@@ -2184,7 +2281,7 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.cfg.Mount.QuitBehavior = config.MountQuitPrompt
 				}
 				return m, nil
-			case 9:
+			case 11:
 				// Toggle sync enabled
 				m.cfg.Sync.Enabled = !m.cfg.Sync.Enabled
 				// Reinitialize sync manager when enabled/disabled
@@ -2195,28 +2292,28 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case 10:
+			case 12:
 				// Sync repo URL
 				if !m.cfg.Sync.Enabled {
 					m.err = fmt.Errorf("enable sync first")
 					return m, nil
 				}
 				return startEdit(m.cfg.Sync.RepoURL, "git@github.com:user/hosts.git")
-			case 11:
+			case 13:
 				// Sync SSH key path
 				if !m.cfg.Sync.Enabled {
 					m.err = fmt.Errorf("enable sync first")
 					return m, nil
 				}
 				return startEdit(m.cfg.Sync.SSHKeyPath, "~/.ssh/id_ed25519 (empty = auto)")
-			case 12:
+			case 14:
 				// Sync branch
 				if !m.cfg.Sync.Enabled {
 					m.err = fmt.Errorf("enable sync first")
 					return m, nil
 				}
 				return startEdit(m.cfg.Sync.Branch, "main")
-			case 13:
+			case 15:
 				// Sync local path
 				if !m.cfg.Sync.Enabled {
 					m.err = fmt.Errorf("enable sync first")
@@ -2268,7 +2365,8 @@ func (m Model) validateForm() error {
 	// Validate auth details
 	switch m.modalForm.authMethod {
 	case ui.AuthPassword:
-		// No extra validation: SSH will prompt for password at connect-time.
+		// Password is optional. Blank keeps existing password on edit or falls back
+		// to connect-time prompt when no stored secret exists.
 	case ui.AuthKeyPaste:
 		pastedKey := strings.TrimSpace(m.modalForm.pastedKeyInput.Value())
 		if pastedKey == "" {
@@ -2322,10 +2420,13 @@ func (m Model) View() string {
 		m.rebuildListItems()
 		hostsInterface := m.listItemsToRenderData()
 		syncStatus := ""
+		syncStage := ""
 		if m.syncManager != nil && m.syncManager.IsEnabled() {
 			syncStatus = m.syncManager.StatusString()
+			syncStage = m.syncManager.StageString()
 		}
-		return m.styles.RenderListViewWithSync(m.width, m.height, hostsInterface, m.selectedIdx, m.searchInput.Value(), m.isSearching, m.err, syncStatus) + hideCursorAndMoveAway
+		syncActivity := &ui.SyncActivity{Active: m.syncing, Frame: m.syncAnimFrame, Progress: m.syncProgress, Stage: syncStage}
+		return m.styles.RenderListViewWithSync(m.width, m.height, hostsInterface, m.selectedIdx, m.searchInput.Value(), m.isSearching, m.err, syncStatus, syncActivity) + hideCursorAndMoveAway
 	case ViewModeHelp:
 		return m.styles.RenderHelpView(m.width, m.height) + hideCursorAndMoveAway
 	case ViewModeAddHost, ViewModeEditHost:
@@ -2508,8 +2609,9 @@ func (m Model) connectToHost(host Host) (tea.Model, tea.Cmd) {
 
 	// Get the decrypted key if available
 	var privateKey string
+	var password string
 	if host.HasKey && host.KeyType != "password" {
-		key, err := m.store.GetHostKey(host.ID)
+		key, err := m.store.GetHostSecret(host.ID)
 		if err != nil {
 			m.err = fmt.Errorf("failed to decrypt key: %v", err)
 			return m, nil
@@ -2519,6 +2621,14 @@ func (m Model) connectToHost(host Host) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		privateKey = key
+	}
+	if host.KeyType == "password" && m.cfg.SSH.PasswordAutoLogin {
+		secret, err := m.store.GetHostSecret(host.ID)
+		if err != nil {
+			m.err = fmt.Errorf("failed to decrypt password: %v", err)
+			return m, nil
+		}
+		password = secret
 	}
 
 	// Build the SSH connection
@@ -2530,16 +2640,17 @@ func (m Model) connectToHost(host Host) (tea.Model, tea.Cmd) {
 		term = strings.TrimSpace(m.cfg.SSH.TermCustom)
 	}
 	conn := ssh.Connection{
-		Hostname:         host.Hostname,
-		Username:         host.Username,
-		Port:             host.Port,
-		PrivateKey:       privateKey,
-		HostKeyPolicy:    string(m.cfg.SSH.HostKeyPolicy),
-		KeepAliveSeconds: m.cfg.SSH.KeepAliveSeconds,
-		Term:             term,
+		Hostname:            host.Hostname,
+		Username:            host.Username,
+		Port:                host.Port,
+		PrivateKey:          privateKey,
+		Password:            password,
+		PasswordBackendUnix: string(m.cfg.SSH.PasswordBackendUnix),
+		HostKeyPolicy:       string(m.cfg.SSH.HostKeyPolicy),
+		KeepAliveSeconds:    m.cfg.SSH.KeepAliveSeconds,
+		Term:                term,
 	}
 
-	// For password auth, we don't pass a password - SSH will prompt
 	cmd, tempKey, err := ssh.Connect(conn)
 	if err != nil {
 		m.err = fmt.Errorf("failed to prepare SSH connection: %v", err)
@@ -2571,8 +2682,9 @@ func (m Model) connectToHostSFTP(host Host) (tea.Model, tea.Cmd) {
 
 	// Get the decrypted key if available
 	var privateKey string
+	var password string
 	if host.HasKey && host.KeyType != "password" {
-		key, err := m.store.GetHostKey(host.ID)
+		key, err := m.store.GetHostSecret(host.ID)
 		if err != nil {
 			m.err = fmt.Errorf("failed to decrypt key: %v", err)
 			return m, nil
@@ -2583,6 +2695,14 @@ func (m Model) connectToHostSFTP(host Host) (tea.Model, tea.Cmd) {
 		}
 		privateKey = key
 	}
+	if host.KeyType == "password" && m.cfg.SSH.PasswordAutoLogin {
+		secret, err := m.store.GetHostSecret(host.ID)
+		if err != nil {
+			m.err = fmt.Errorf("failed to decrypt password: %v", err)
+			return m, nil
+		}
+		password = secret
+	}
 
 	term := ""
 	switch m.cfg.SSH.TermMode {
@@ -2592,13 +2712,15 @@ func (m Model) connectToHostSFTP(host Host) (tea.Model, tea.Cmd) {
 		term = strings.TrimSpace(m.cfg.SSH.TermCustom)
 	}
 	conn := ssh.Connection{
-		Hostname:         host.Hostname,
-		Username:         host.Username,
-		Port:             host.Port,
-		PrivateKey:       privateKey,
-		HostKeyPolicy:    string(m.cfg.SSH.HostKeyPolicy),
-		KeepAliveSeconds: m.cfg.SSH.KeepAliveSeconds,
-		Term:             term,
+		Hostname:            host.Hostname,
+		Username:            host.Username,
+		Port:                host.Port,
+		PrivateKey:          privateKey,
+		Password:            password,
+		PasswordBackendUnix: string(m.cfg.SSH.PasswordBackendUnix),
+		HostKeyPolicy:       string(m.cfg.SSH.HostKeyPolicy),
+		KeepAliveSeconds:    m.cfg.SSH.KeepAliveSeconds,
+		Term:                term,
 	}
 
 	cmd, tempKey, err := ssh.ConnectSFTP(conn)
@@ -2655,7 +2777,7 @@ func (m Model) handleMountEnter(host Host) (tea.Model, tea.Cmd) {
 	// Get the decrypted key if available (optional; sshfs can also use default agent keys).
 	var privateKey string
 	if host.HasKey && host.KeyType != "password" {
-		key, err := m.store.GetHostKey(host.ID)
+		key, err := m.store.GetHostSecret(host.ID)
 		if err != nil {
 			m.err = fmt.Errorf("failed to decrypt key: %v", err)
 			return m, nil
@@ -2717,10 +2839,34 @@ type mountFinishedMsg struct {
 	err    error
 }
 
+type syncFinishedMsg struct {
+	runID  int
+	result *sync.SyncResult
+}
+
+type syncAnimTickMsg struct {
+	runID int
+}
+
 type quitFinishedMsg struct{}
 
 type clearErrMsg struct {
 	seq int
+}
+
+func runSyncCmd(runID int, mgr *sync.Manager) tea.Cmd {
+	return func() tea.Msg {
+		if mgr == nil {
+			return syncFinishedMsg{runID: runID, result: &sync.SyncResult{Success: false, Message: "sync manager is nil", Timestamp: time.Now()}}
+		}
+		return syncFinishedMsg{runID: runID, result: mgr.Sync()}
+	}
+}
+
+func syncAnimTickCmd(runID int) tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg {
+		return syncAnimTickMsg{runID: runID}
+	})
 }
 
 // Helper functions

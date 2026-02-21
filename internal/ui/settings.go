@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/Vansh-Raja/SSHThing/internal/config"
@@ -132,6 +133,7 @@ func (s *Styles) RenderSettingsView(width, height int, cfg config.Config, select
 
 func buildSettingsRows(cfg config.Config) []settingsRow {
 	termCustomDisabled := cfg.SSH.TermMode != config.TermCustom
+	unixBackendDisabled := runtime.GOOS == "windows" || !cfg.SSH.PasswordAutoLogin
 	syncDisabled := !cfg.Sync.Enabled
 
 	return []settingsRow{
@@ -165,6 +167,17 @@ func buildSettingsRows(cfg config.Config) []settingsRow {
 			value:       cfg.SSH.TermCustom,
 			description: "Editable only when TERM mode is 'custom'.",
 			disabled:    termCustomDisabled,
+		},
+		{
+			label:       "SSH: Password auto-login",
+			value:       onOff(cfg.SSH.PasswordAutoLogin),
+			description: "Stores encrypted SSH passwords and auto-fills for password-auth hosts.",
+		},
+		{
+			label:       "SSH: Unix password backend",
+			value:       string(cfg.SSH.PasswordBackendUnix),
+			description: "Linux/macOS backend order for password auto-login (sshpass_first or askpass_first).",
+			disabled:    unixBackendDisabled,
 		},
 		{
 			label:       "Mounts: Enabled (beta)",

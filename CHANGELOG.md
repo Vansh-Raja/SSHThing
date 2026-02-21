@@ -5,6 +5,83 @@ Entries below are written as an “engineering history” of the major problems 
 
 ## Running Log
 
+- id: 2026-02-21T10:45:29Z-2659
+  time: 2026-02-21T10:45:29Z
+  type: code-change
+  summary: Fix sync completion notice counts by storing HostsPulled from import results and computing HostsPushed from local-vs-remote snapshots, with the footer showing ↓ pulled and ↑ pushed correctly.
+  files: internal/sync/manager.go, internal/sync/data.go, internal/app/app.go
+  commit: pending
+
+- id: 2026-02-21T10:36:02Z-1c2d
+  time: 2026-02-21T10:36:02Z
+  type: code-change
+  summary: Add tests for async sync UI message handling, askpass prompt filtering, and sync manager stage/status helpers.
+  files: internal/app/app_test.go, internal/ssh/askpass_test.go, internal/sync/manager_test.go
+  commit: pending
+
+- id: 2026-02-21T10:36:01Z-7e9a
+  time: 2026-02-21T10:36:01Z
+  type: code-change
+  summary: Harden askpass with stricter prompt filtering and a Windows askpass server timeout close behavior.
+  files: internal/ssh/
+  commit: pending
+
+- id: 2026-02-21T10:36:00Z-4b10
+  time: 2026-02-21T10:36:00Z
+  type: code-change
+  summary: Make the sync manager thread-safe for concurrent status reads and track sync stage strings.
+  files: internal/sync/
+  commit: pending
+
+- id: 2026-02-21T10:35:59Z-d0f3
+  time: 2026-02-21T10:35:59Z
+  type: code-change
+  summary: Add an animated footer sync activity line/loading bar with stage display while sync is in progress.
+  files: internal/ui/
+  commit: pending
+
+- id: 2026-02-21T10:35:58Z-a6e1
+  time: 2026-02-21T10:35:58Z
+  type: code-change
+  summary: Switch the sync trigger to async/non-blocking with message-driven completion handling in the app update loop.
+  files: internal/app/, internal/sync/
+  commit: pending
+
+- id: 2026-02-21T09:08:31Z-73a5
+  time: 2026-02-21T09:08:31Z
+  type: code-change
+  summary: Harden sync format with encrypted payload support (v3), legacy plaintext load compatibility, auto-migration via export on sync, and new sync load tests.
+  files: internal/sync/
+  commit: pending
+
+- id: 2026-02-21T09:08:30Z-a821
+  time: 2026-02-21T09:08:30Z
+  type: code-change
+  summary: Add askpass helper invocation path in the CLI entrypoint.
+  files: cmd/sshthing/main.go
+  commit: pending
+
+- id: 2026-02-21T09:08:29Z-3b41
+  time: 2026-02-21T09:08:29Z
+  type: code-change
+  summary: Extend SSH/SFTP connection pipeline with password automation backends: Windows askpass default (one-time secure IPC handoff) and Unix sshpass-first with askpass/manual fallback.
+  files: internal/ssh/
+  commit: pending
+
+- id: 2026-02-21T09:08:28Z-071c
+  time: 2026-02-21T09:08:28Z
+  type: code-change
+  summary: Support encrypted stored password secrets for password auth, keep existing secret when editing with a blank password, and update password modal/UI behavior.
+  files: internal/db/, internal/crypto/, internal/app/, internal/ui/
+  commit: pending
+
+- id: 2026-02-21T09:08:27Z-7b13
+  time: 2026-02-21T09:08:27Z
+  type: code-change
+  summary: Add password auto-login settings (default off), Unix backend selection, and update settings UI behavior.
+  files: internal/config/, internal/app/, internal/ui/
+  commit: pending
+
 - id: 2026-02-21T06:09:07Z-e5dc
   time: 2026-02-21T06:09:07Z
   type: code-change

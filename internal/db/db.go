@@ -700,8 +700,9 @@ func parseTimestamp(s string) time.Time {
 	return time.Time{}
 }
 
-// GetHostKey retrieves the decrypted private key for a host
-func (s *Store) GetHostKey(id int) (string, error) {
+// GetHostSecret retrieves decrypted key_data for a host.
+// For key auth this is the private key; for password auth this is the stored password.
+func (s *Store) GetHostSecret(id int) (string, error) {
 	var encryptedKey string
 	err := s.db.QueryRow("SELECT key_data FROM hosts WHERE id = ?", id).Scan(&encryptedKey)
 	if err != nil {
@@ -717,6 +718,12 @@ func (s *Store) GetHostKey(id int) (string, error) {
 		return "", err
 	}
 	return string(decrypted), nil
+}
+
+// GetHostKey retrieves the decrypted private key for a host.
+// Deprecated: use GetHostSecret when reading host auth secrets.
+func (s *Store) GetHostKey(id int) (string, error) {
+	return s.GetHostSecret(id)
 }
 
 // UpdateHost updates a host's metadata (without changing the key)

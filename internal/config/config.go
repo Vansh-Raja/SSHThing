@@ -23,6 +23,13 @@ const (
 	TermCustom TermMode = "custom"
 )
 
+type PasswordBackendUnix string
+
+const (
+	PasswordBackendSSHPassFirst PasswordBackendUnix = "sshpass_first"
+	PasswordBackendAskpassFirst PasswordBackendUnix = "askpass_first"
+)
+
 type MountQuitBehavior string
 
 const (
@@ -48,10 +55,12 @@ type Config struct {
 	} `json:"ui"`
 
 	SSH struct {
-		HostKeyPolicy    HostKeyPolicy `json:"host_key_policy"`
-		KeepAliveSeconds int           `json:"keepalive_seconds"`
-		TermMode         TermMode      `json:"term_mode"`
-		TermCustom       string        `json:"term_custom"`
+		HostKeyPolicy       HostKeyPolicy       `json:"host_key_policy"`
+		KeepAliveSeconds    int                 `json:"keepalive_seconds"`
+		TermMode            TermMode            `json:"term_mode"`
+		TermCustom          string              `json:"term_custom"`
+		PasswordAutoLogin   bool                `json:"password_auto_login"`
+		PasswordBackendUnix PasswordBackendUnix `json:"password_backend_unix"`
 	} `json:"ssh"`
 
 	Mount struct {
@@ -80,6 +89,8 @@ func Default() Config {
 	c.SSH.KeepAliveSeconds = 60
 	c.SSH.TermMode = TermAuto
 	c.SSH.TermCustom = ""
+	c.SSH.PasswordAutoLogin = false
+	c.SSH.PasswordBackendUnix = PasswordBackendSSHPassFirst
 
 	c.Mount.Enabled = true
 	c.Mount.DefaultRemotePath = "" // empty means remote home
@@ -190,6 +201,11 @@ func withDefaults(c Config) Config {
 	case TermAuto, TermXterm, TermCustom:
 	default:
 		c.SSH.TermMode = def.SSH.TermMode
+	}
+	switch c.SSH.PasswordBackendUnix {
+	case PasswordBackendSSHPassFirst, PasswordBackendAskpassFirst:
+	default:
+		c.SSH.PasswordBackendUnix = def.SSH.PasswordBackendUnix
 	}
 
 	switch c.Mount.QuitBehavior {

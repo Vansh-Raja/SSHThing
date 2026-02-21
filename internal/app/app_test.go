@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	ssync "github.com/Vansh-Raja/SSHThing/internal/sync"
 	"github.com/charmbracelet/bubbles/textinput"
 )
 
@@ -185,6 +186,62 @@ func TestAutoClearDuration(t *testing.T) {
 	}
 	if got := autoClearDuration("⚠ mount failed"); got != 10*time.Second {
 		t.Fatalf("expected error duration 10s, got %v", got)
+	}
+}
+
+func TestSyncAnimTickAdvancesProgress(t *testing.T) {
+	m := NewModel()
+	m.syncing = true
+	m.syncRunID = 7
+	m.syncProgress = 0.10
+
+	updated, cmd := m.Update(syncAnimTickMsg{runID: 7})
+	m1 := updated.(Model)
+
+	if !m1.syncing {
+		t.Fatalf("expected syncing to remain true")
+	}
+	if m1.syncAnimFrame == 0 {
+		t.Fatalf("expected sync animation frame to advance")
+	}
+	if m1.syncProgress <= 0.10 {
+		t.Fatalf("expected sync progress to increase, got %f", m1.syncProgress)
+	}
+	if cmd == nil {
+		t.Fatalf("expected follow-up tick command")
+	}
+}
+
+func TestSyncFinishedMsgSuccessSetsNotice(t *testing.T) {
+	m := NewModel()
+	m.syncing = true
+	m.syncRunID = 3
+
+	updated, _ := m.Update(syncFinishedMsg{runID: 3, result: &ssync.SyncResult{Success: true, HostsPulled: 2, HostsPushed: 1}})
+	m1 := updated.(Model)
+
+	if m1.syncing {
+		t.Fatalf("expected syncing to stop")
+	}
+	if m1.err == nil || m1.err.Error() != "✓ Sync: ↓2 ↑1" {
+		t.Fatalf("expected success sync notice, got %v", m1.err)
+	}
+}
+
+func TestSyncFinishedMsgStaleIgnored(t *testing.T) {
+	m := NewModel()
+	m.syncing = true
+	m.syncRunID = 4
+	m.err = assertErr("existing")
+
+	updated, _ := m.Update(syncFinishedMsg{runID: 3, result: &ssync.SyncResult{Success: true}})
+	m1 := updated.(Model)
+
+	if !m1.syncing {
+		t.Fatalf("expected stale sync completion to be ignored")
+	}
+	if m1.err == nil || m1.err.Error() != "existing" {
+		t.Fatalf("expected existing error to remain, got %v", m1.err)
 	}
 }
 

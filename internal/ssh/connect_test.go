@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -54,5 +55,63 @@ func TestConnectSFTP_DefaultPort_NoKey(t *testing.T) {
 	}
 	if !strings.HasSuffix(args, " ubuntu@example.com") {
 		t.Fatalf("expected target at end, got: %q", args)
+	}
+}
+
+func TestConnect_WithPassword_UsesAskpassEnv(t *testing.T) {
+	cmd, tempKey, err := Connect(Connection{
+		Hostname:            "example.com",
+		Username:            "ubuntu",
+		Password:            "super-secret",
+		PasswordBackendUnix: "askpass_first",
+	})
+	if err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+	if tempKey == nil {
+		t.Fatalf("expected cleanup handle for askpass session")
+	}
+	defer tempKey.Cleanup()
+
+	if got := cmd.Args[0]; got != "ssh" {
+		t.Fatalf("expected ssh command, got %q", got)
+	}
+	env := strings.Join(cmd.Env, "\n")
+	if !strings.Contains(env, "SSH_ASKPASS=") {
+		t.Fatalf("expected SSH_ASKPASS env, got: %q", env)
+	}
+	if !strings.Contains(env, "SSH_ASKPASS_REQUIRE=force") {
+		t.Fatalf("expected SSH_ASKPASS_REQUIRE=force, got: %q", env)
+	}
+	if !strings.Contains(env, "SSHTHING_ASKPASS_MODE=1") {
+		t.Fatalf("expected SSHTHING_ASKPASS_MODE=1, got: %q", env)
+	}
+}
+
+func TestConnectSFTP_WithPassword_SSHPassFirstWhenAvailable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sshpass backend not used on windows")
+	}
+	if !HasTool("sshpass") {
+		t.Skip("sshpass not installed in test environment")
+	}
+
+	cmd, tempKey, err := ConnectSFTP(Connection{
+		Hostname:            "example.com",
+		Username:            "ubuntu",
+		Password:            "super-secret",
+		PasswordBackendUnix: "sshpass_first",
+	})
+	if err != nil {
+		t.Fatalf("ConnectSFTP returned error: %v", err)
+	}
+	if tempKey == nil {
+		t.Fatalf("expected cleanup handle for sshpass session")
+	}
+	defer tempKey.Cleanup()
+
+	args := strings.Join(cmd.Args, " ")
+	if !strings.HasPrefix(args, "sshpass -d 3 sftp ") {
+		t.Fatalf("expected sshpass command prefix, got: %q", args)
 	}
 }

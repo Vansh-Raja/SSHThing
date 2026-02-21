@@ -71,3 +71,17 @@ func CheckSSHKeygen() error {
 	}
 	return nil
 }
+
+// CheckSSHPass verifies that sshpass is available.
+func CheckSSHPass() error {
+	if _, err := exec.LookPath("sshpass"); err != nil {
+		return fmt.Errorf("sshpass not found in PATH")
+	}
+	return nil
+}
+
+// HasTool returns true when a binary is present in PATH.
+func HasTool(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}

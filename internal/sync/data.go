@@ -15,6 +15,21 @@ type SyncData struct {
 	Hosts     []SyncHost  `json:"hosts"`
 }
 
+// SyncFile is the on-disk sync file format.
+// Version >= 3 stores encrypted payload in Data using EncSalt-derived key.
+// Legacy plaintext payload fields are retained for automatic migration.
+type SyncFile struct {
+	Version   int       `json:"version"`
+	UpdatedAt time.Time `json:"updated_at"`
+	EncSalt   string    `json:"enc_salt,omitempty"`
+	Data      string    `json:"data,omitempty"`
+
+	// Legacy plaintext payload fields (v2 and older)
+	Salt   string      `json:"salt,omitempty"`
+	Groups []SyncGroup `json:"groups,omitempty"`
+	Hosts  []SyncHost  `json:"hosts,omitempty"`
+}
+
 // SyncGroup represents a named group entry in the sync file.
 // Deleted groups are tombstoned via DeletedAt.
 type SyncGroup struct {
@@ -55,6 +70,8 @@ const (
 type SyncResult struct {
 	Success      bool
 	Message      string
+	HostsPulled  int
+	HostsPushed  int
 	HostsAdded   int
 	HostsUpdated int
 	HostsRemoved int
@@ -73,7 +90,7 @@ type SyncConflict struct {
 }
 
 // CurrentSyncVersion is the version of the sync data format
-const CurrentSyncVersion = 2
+const CurrentSyncVersion = 3
 
 // GroupTombstoneRetention is how long we retain deleted group tombstones for sync.
 // After this window, tombstones may be garbage collected, and very stale devices may resurrect old groups.

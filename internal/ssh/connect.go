@@ -2,9 +2,11 @@ package ssh
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/google/uuid"
@@ -16,7 +18,9 @@ type Connection struct {
 	Username   string
 	Port       int
 	PrivateKey string // Decrypted private key content
-	Password   string // For password auth (not recommended)
+	Password   string // Decrypted password secret for password auth
+
+	PasswordBackendUnix string // "sshpass_first" | "askpass_first"
 
 	// Options
 	HostKeyPolicy    string // "accept-new" | "strict" | "off"
@@ -26,7 +30,9 @@ type Connection struct {
 
 // TempKeyFile manages a temporary file for the SSH private key
 type TempKeyFile struct {
-	path string
+	path       string
+	closers    []io.Closer
+	cleanupFns []func() error
 }
 
 // NewTempKeyFile creates a secure temporary file for the private key.
@@ -69,24 +75,59 @@ func (t *TempKeyFile) Path() string {
 	return t.path
 }
 
+func (t *TempKeyFile) addCloser(c io.Closer) {
+	if t == nil || c == nil {
+		return
+	}
+	t.closers = append(t.closers, c)
+}
+
+func (t *TempKeyFile) addCleanup(fn func() error) {
+	if t == nil || fn == nil {
+		return
+	}
+	t.cleanupFns = append(t.cleanupFns, fn)
+}
+
+func (t *TempKeyFile) merge(other *TempKeyFile) {
+	if t == nil || other == nil {
+		return
+	}
+	t.closers = append(t.closers, other.closers...)
+	t.cleanupFns = append(t.cleanupFns, other.cleanupFns...)
+}
+
 // Cleanup securely removes the temporary key file
 func (t *TempKeyFile) Cleanup() error {
-	if t.path == "" {
+	if t == nil {
 		return nil
 	}
-
-	// Overwrite the file content before deletion for extra security
-	file, err := os.OpenFile(t.path, os.O_WRONLY, 0600)
-	if err == nil {
-		info, _ := file.Stat()
-		if info != nil {
-			zeros := make([]byte, info.Size())
-			file.Write(zeros)
+	if t.path != "" {
+		// Overwrite the file content before deletion for extra security
+		file, err := os.OpenFile(t.path, os.O_WRONLY, 0600)
+		if err == nil {
+			info, _ := file.Stat()
+			if info != nil {
+				zeros := make([]byte, info.Size())
+				_, _ = file.Write(zeros)
+			}
+			_ = file.Close()
 		}
-		file.Close()
+
+		_ = os.Remove(t.path)
 	}
 
-	return os.Remove(t.path)
+	for _, c := range t.closers {
+		_ = c.Close()
+	}
+	for _, fn := range t.cleanupFns {
+		_ = fn()
+	}
+	t.closers = nil
+	t.cleanupFns = nil
+	t.path = ""
+
+	return nil
 }
 
 // Connect establishes an SSH connection.
@@ -116,13 +157,28 @@ func Connect(conn Connection) (*exec.Cmd, *TempKeyFile, error) {
 		args = append(args, "-i", tempKey.Path())
 	}
 
+	passwordAuth := conn.PrivateKey == "" && conn.Password != ""
+	if passwordAuth {
+		args = append(args, "-o", "PreferredAuthentications=password,keyboard-interactive")
+		args = append(args, "-o", "PubkeyAuthentication=no")
+	}
+
 	// Add target
 	target := conn.Username + "@" + conn.Hostname
 	args = append(args, target)
 
-	// Create the command
-	cmd := exec.Command("ssh", args...)
-	cmd.Env = sshEnv(conn.Term)
+	cmd, cleanupHolder, err := prepareClientCommand("ssh", args, conn, tempKey)
+	if err != nil {
+		if tempKey != nil {
+			_ = tempKey.Cleanup()
+		}
+		return nil, nil, err
+	}
+	if tempKey == nil {
+		tempKey = cleanupHolder
+	} else {
+		tempKey.merge(cleanupHolder)
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -156,17 +212,131 @@ func ConnectSFTP(conn Connection) (*exec.Cmd, *TempKeyFile, error) {
 		args = append(args, "-i", tempKey.Path())
 	}
 
+	passwordAuth := conn.PrivateKey == "" && conn.Password != ""
+	if passwordAuth {
+		args = append(args, "-o", "PreferredAuthentications=password,keyboard-interactive")
+		args = append(args, "-o", "PubkeyAuthentication=no")
+	}
+
 	// Add target
 	target := conn.Username + "@" + conn.Hostname
 	args = append(args, target)
 
-	cmd := exec.Command("sftp", args...)
-	cmd.Env = sshEnv(conn.Term)
+	cmd, cleanupHolder, err := prepareClientCommand("sftp", args, conn, tempKey)
+	if err != nil {
+		if tempKey != nil {
+			_ = tempKey.Cleanup()
+		}
+		return nil, nil, err
+	}
+	if tempKey == nil {
+		tempKey = cleanupHolder
+	} else {
+		tempKey.merge(cleanupHolder)
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	return cmd, tempKey, nil
+}
+
+func prepareClientCommand(binary string, args []string, conn Connection, holder *TempKeyFile) (*exec.Cmd, *TempKeyFile, error) {
+	password := conn.Password
+	if password == "" || conn.PrivateKey != "" {
+		cmd := exec.Command(binary, args...)
+		cmd.Env = sshEnv(conn.Term)
+		return cmd, holder, nil
+	}
+
+	if runtime.GOOS == "windows" {
+		return prepareAskpassCommand(binary, args, conn, holder)
+	}
+
+	backend := strings.TrimSpace(strings.ToLower(conn.PasswordBackendUnix))
+	if backend == "" {
+		backend = "sshpass_first"
+	}
+
+	if backend == "askpass_first" {
+		if cmd, h, err := prepareAskpassCommand(binary, args, conn, holder); err == nil {
+			return cmd, h, nil
+		}
+		if cmd, h, err, ok := prepareSSHPassCommand(binary, args, conn, holder); ok {
+			return cmd, h, err
+		}
+	} else {
+		if cmd, h, err, ok := prepareSSHPassCommand(binary, args, conn, holder); ok {
+			return cmd, h, err
+		}
+		if cmd, h, err := prepareAskpassCommand(binary, args, conn, holder); err == nil {
+			return cmd, h, nil
+		}
+	}
+
+	cmd := exec.Command(binary, args...)
+	cmd.Env = sshEnv(conn.Term)
+	return cmd, holder, nil
+}
+
+func ensureCleanupHolder(holder *TempKeyFile) *TempKeyFile {
+	if holder != nil {
+		return holder
+	}
+	return &TempKeyFile{}
+}
+
+func prepareSSHPassCommand(binary string, args []string, conn Connection, holder *TempKeyFile) (*exec.Cmd, *TempKeyFile, error, bool) {
+	if !HasTool("sshpass") {
+		return nil, holder, nil, false
+	}
+
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		return nil, holder, fmt.Errorf("failed to create sshpass pipe: %w", err), true
+	}
+	if _, err := writePipe.WriteString(conn.Password + "\n"); err != nil {
+		_ = writePipe.Close()
+		_ = readPipe.Close()
+		return nil, holder, fmt.Errorf("failed to write sshpass password: %w", err), true
+	}
+	_ = writePipe.Close()
+
+	allArgs := []string{"-d", "3", binary}
+	allArgs = append(allArgs, args...)
+	cmd := exec.Command("sshpass", allArgs...)
+	cmd.Env = sshEnv(conn.Term)
+	cmd.ExtraFiles = []*os.File{readPipe}
+
+	holder = ensureCleanupHolder(holder)
+	holder.addCloser(readPipe)
+	return cmd, holder, nil, true
+}
+
+func prepareAskpassCommand(binary string, args []string, conn Connection, holder *TempKeyFile) (*exec.Cmd, *TempKeyFile, error) {
+	server, err := startAskpassServer(conn.Password)
+	if err != nil {
+		return nil, holder, fmt.Errorf("failed to start askpass server: %w", err)
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		_ = server.Close()
+		return nil, holder, fmt.Errorf("failed to resolve executable path: %w", err)
+	}
+
+	cmd := exec.Command(binary, args...)
+	env := sshEnv(conn.Term)
+	env = setEnv(env, "SSH_ASKPASS", exePath)
+	env = setEnv(env, "SSH_ASKPASS_REQUIRE", "force")
+	env = setEnv(env, askpassModeEnv, "1")
+	env = setEnv(env, askpassEndpointEnv, server.Endpoint())
+	env = setEnv(env, askpassNonceEnv, server.Nonce())
+	cmd.Env = env
+
+	holder = ensureCleanupHolder(holder)
+	holder.addCleanup(server.Close)
+	return cmd, holder, nil
 }
 
 func sshEnv(termOverride string) []string {

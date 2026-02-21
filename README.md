@@ -19,7 +19,7 @@ A secure, modern SSH host manager TUI built with Go and Bubble Tea.
 - 🔑 **Auth options**:
   - Paste existing private key (multi-line)
   - Generate new key (Ed25519/RSA/ECDSA)
-  - Password auth (never stored; `ssh` prompts on connect)
+  - Password auth (optional encrypted storage + auto-login)
 - 🔌 **SSH connect**: connects using system `ssh`
 - 🔎 **Spotlight search**: `/` to search and connect quickly
 - 📁 **Mount in Finder (beta, macOS)**: mounts via FUSE-T + SSHFS and opens in Finder
@@ -33,6 +33,7 @@ A secure, modern SSH host manager TUI built with Go and Bubble Tea.
 
 - Go **1.25+** (matches `go.mod`)
 - OpenSSH tools available: `ssh`, `ssh-keygen`, `sftp`
+- Optional for best password auto-login on Linux/macOS: `sshpass`
 - A terminal with 256-color support
 - SQLCipher build support (this project uses `github.com/mutecomm/go-sqlcipher/v4`, which typically requires CGO and SQLCipher on your system)
 - Finder mounts (beta): macOS only + `sshfs` (FUSE-T)
@@ -182,10 +183,17 @@ Sync your hosts across multiple devices using a private Git repository.
 ### How It Works
 
 - Hosts are exported to a JSON file in a local Git repository
-- Private keys remain **encrypted** (AES-GCM) in the sync file
-- The encryption salt is included, allowing keys to be re-encrypted when imported to a different database
+- Sensitive host data in the sync file is encrypted with your master password before commit/push
+- Private key/password secrets remain encrypted and are re-encrypted as needed during import
 - Uses SSH key authentication for Git operations
 - **Important**: Use the **same master password** on all devices to decrypt synced keys
+
+### Password Auto-Login
+
+- Default is **Off** (enable in Settings: `SSH: Password auto-login`).
+- Windows uses OpenSSH askpass mode by default.
+- Linux/macOS uses `sshpass` first, then askpass fallback.
+- Tip: install `sshpass` on Linux/macOS for the most reliable password auto-login flow.
 
 ### Multi-Device Usage
 
@@ -195,6 +203,7 @@ Sync your hosts across multiple devices using a private Git repository.
 4. Press `Shift+Y` to pull hosts from the remote
 
 The sync status is displayed in the footer (e.g., "Sync: 2m ago", "Syncing...", or "Error: ...").
+When you press `Shift+Y`, SSHThing now runs sync asynchronously and shows a live syncing indicator + loading bar in the footer while work is in progress.
 
 ## Data & Safety Notes
 

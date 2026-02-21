@@ -143,15 +143,20 @@ func (s *Styles) RenderAddHostModal(width, height int, form *ModalFormData, isEd
 
 	// Row 6: Auth Details
 	if form.AuthMethod == AuthPassword {
-		// Passwords are not stored; SSH will prompt at connect-time.
 		label := s.FormLabel.Width(12).Align(lipgloss.Right).MarginRight(1).Render("Pass:")
-		note := "Prompt on connect"
 		fieldWidth := rowWidth - 14
+		if fieldWidth < 20 {
+			fieldWidth = 20
+		}
+		form.Password.Width = fieldWidth - 4
+		form.Password.Prompt = ""
 		fieldStyle := s.FormInput.Width(fieldWidth)
 		if form.FocusedField == FieldAuthDetails {
 			fieldStyle = s.FormInputFocused.Width(fieldWidth)
 		}
-		modal.WriteString(lipgloss.JoinHorizontal(lipgloss.Center, label, fieldStyle.Render(note)) + "\n")
+		modal.WriteString(lipgloss.JoinHorizontal(lipgloss.Center, label, fieldStyle.Render(form.Password.View())) + "\n")
+		modal.WriteString(s.HelpValue.Foreground(ColorTextDim).Render("             Leave blank to keep existing password during edit."))
+		modal.WriteString("\n")
 	} else if form.AuthMethod == AuthKeyPaste {
 		// Paste key area (multi-line)
 		labelView := s.FormLabel.Width(12).Align(lipgloss.Right).MarginRight(1).Render("Key:")
