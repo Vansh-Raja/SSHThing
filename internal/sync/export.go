@@ -59,6 +59,7 @@ func Export(store *db.Store) (*SyncData, error) {
 			ID:            h.ID,
 			Label:         h.Label,
 			GroupName:     h.GroupName,
+			Tags:          append([]string(nil), h.Tags...),
 			Hostname:      h.Hostname,
 			Username:      h.Username,
 			Port:          h.Port,

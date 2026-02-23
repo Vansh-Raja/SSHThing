@@ -13,6 +13,7 @@ import (
 type ModalFormData struct {
 	Label        textinput.Model
 	Group        textinput.Model
+	Tags         textinput.Model
 	GroupOptions []string
 	GroupIndex   int
 	Hostname     textinput.Model
@@ -31,6 +32,7 @@ type ModalFormData struct {
 const (
 	FieldLabel = iota
 	FieldGroup
+	FieldTags
 	FieldHostname
 	FieldPort // Moved Port up
 	FieldUsername
@@ -84,6 +86,9 @@ func (s *Styles) RenderAddHostModal(width, height int, form *ModalFormData, isEd
 	// Row 1: Label
 	modal.WriteString(s.renderFormFieldResponsive("Label:", form.Label, rowWidth))
 	modal.WriteString(s.renderGroupSelector(form, rowWidth))
+	modal.WriteString(s.renderFormFieldResponsive("Tags:", form.Tags, rowWidth))
+	modal.WriteString(s.HelpValue.Foreground(ColorTextDim).Render("             Comma-separated (example: cpu, gpu, ec2)"))
+	modal.WriteString("\n")
 
 	// Row 2: Hostname + Port
 	// Host Label (13) + Host Input (flex) + Spacer (2) + Port Label (7) + Port Input (10)

@@ -5,6 +5,104 @@ Entries below are written as an “engineering history” of the major problems 
 
 ## Running Log
 
+- id: 2026-02-23T18:25:33Z-8c4a
+  time: 2026-02-23T18:25:33Z
+  type: code-change
+  summary: Stamp the Windows release build version via ldflags so `--version` reports a meaningful value.
+  files: .github/workflows/release.yml
+  commit: pending
+
+- id: 2026-02-23T18:25:32Z-2f91
+  time: 2026-02-23T18:25:32Z
+  type: code-change
+  summary: Add Settings UI update controls (channel, current/latest, check/apply, PATH health/fix) with async message handling.
+  files: internal/ui/, internal/app/
+  commit: pending
+
+- id: 2026-02-23T18:25:31Z-0e6d
+  time: 2026-02-23T18:25:31Z
+  type: code-change
+  summary: Add hidden CLI update handoff mode (`--update-handoff`) to support installer/replace flows and relaunch.
+  files: cmd/sshthing/main.go
+  commit: pending
+
+- id: 2026-02-23T18:25:30Z-9b77
+  time: 2026-02-23T18:25:30Z
+  type: code-change
+  summary: Implement a channel-aware updater with GitHub checks, SHA256SUMS verification, apply modes, and Windows PATH health/repair support.
+  files: internal/update/
+  commit: pending
+
+- id: 2026-02-23T06:03:31Z-4913
+  time: 2026-02-23T06:03:31Z
+  type: code-change
+  summary: Treat Windows winget delegated update 'no package/no applicable update' output as non-applicable and fall back to choco, then installer/GitHub flows as needed.
+  files: internal/update/
+  commit: pending
+
+- id: 2026-02-21T16:05:00Z-9f2c
+  time: 2026-02-21T16:05:00Z
+  type: code-change
+  summary: Harden the release workflow with Windows/macOS smoke tests, explicit macOS amd64/arm64 runners, SHA256SUMS generation, artifact attestations, and draft-first publishing via gh with idempotency checks.
+  files: .github/workflows/
+  commit: 71391418edf37389735443d8973e0f2d12187414 @ 2026-02-21T05:37:39Z
+
+- id: 2026-02-21T16:04:40Z-a1b7
+  time: 2026-02-21T16:04:40Z
+  type: code-change
+  summary: Extend CI with binary smoke tests to catch broken builds early.
+  files: .github/workflows/
+  commit: 71391418edf37389735443d8973e0f2d12187414 @ 2026-02-21T05:37:39Z
+
+- id: 2026-02-21T16:04:10Z-3d0e
+  time: 2026-02-21T16:04:10Z
+  type: code-change
+  summary: Document release download verification steps in the README.
+  files: README.md
+  commit: 71391418edf37389735443d8973e0f2d12187414 @ 2026-02-21T05:37:39Z
+
+- id: 2026-02-21T11:48:57Z-d205
+  time: 2026-02-21T11:48:57Z
+  type: code-change
+  summary: Add custom host tags with DB schema/model support, modal parsing/normalization, persistence on create/edit, and a Tags row in the details panel.
+  files: internal/db/, internal/app/, internal/ui/
+  commit: pending
+
+- id: 2026-02-21T11:48:56Z-b287
+  time: 2026-02-21T11:48:56Z
+  type: code-change
+  summary: Extend Spotlight fuzzy matching to include custom tags and virtual group-derived tag tokens while keeping row rendering unchanged.
+  files: internal/app/
+  commit: pending
+
+- id: 2026-02-21T11:48:55Z-5d22
+  time: 2026-02-21T11:48:55Z
+  type: code-change
+  summary: Include tags in the sync data model and import/export paths with backward-compatible load behavior.
+  files: internal/sync/
+  commit: pending
+
+- id: 2026-02-21T11:48:54Z-d1ec
+  time: 2026-02-21T11:48:54Z
+  type: code-change
+  summary: Add a dedicated notifications section above keybindings that renders only when notices or sync activity exist.
+  files: internal/ui/, internal/app/
+  commit: pending
+
+- id: 2026-02-21T11:48:53Z-3c30
+  time: 2026-02-21T11:48:53Z
+  type: code-change
+  summary: Add/update tests for tag parsing, Spotlight tag search, and encrypted sync load tag handling.
+  files: internal/app/, internal/sync/
+  commit: pending
+
+- id: 2026-02-21T11:40:33Z-cd89
+  time: 2026-02-21T11:40:33Z
+  type: plan-updated
+  summary: Kick off implementation planning for host tags (custom tags + virtual group tag for Spotlight search) and a dedicated notifications section above keybindings.
+  files: n/a
+  commit: pending
+
 - id: 2026-02-21T10:45:29Z-2659
   time: 2026-02-21T10:45:29Z
   type: code-change
@@ -109,27 +207,6 @@ Entries below are written as an “engineering history” of the major problems 
   summary: Sync changelog commit metadata.
   files: CHANGELOG.md
   commit: 939afebd83b125d3366b8a478ac83ded0658fd3c @ 2026-02-21T05:38:40Z
-
-- id: 2026-02-21T16:05:00Z-9f2c
-  time: 2026-02-21T16:05:00Z
-  type: code-change
-  summary: Harden the release workflow with Windows/macOS smoke tests, explicit macOS amd64/arm64 runners, SHA256SUMS generation, artifact attestations, and draft-first publishing via gh with idempotency checks.
-  files: .github/workflows/
-  commit: 71391418edf37389735443d8973e0f2d12187414 @ 2026-02-21T05:37:39Z
-
-- id: 2026-02-21T16:04:40Z-a1b7
-  time: 2026-02-21T16:04:40Z
-  type: code-change
-  summary: Extend CI with binary smoke tests to catch broken builds early.
-  files: .github/workflows/
-  commit: 71391418edf37389735443d8973e0f2d12187414 @ 2026-02-21T05:37:39Z
-
-- id: 2026-02-21T16:04:10Z-3d0e
-  time: 2026-02-21T16:04:10Z
-  type: code-change
-  summary: Document release download verification steps in the README.
-  files: README.md
-  commit: 71391418edf37389735443d8973e0f2d12187414 @ 2026-02-21T05:37:39Z
 
 - id: 2026-02-20T11:44:38Z-8192
   time: 2026-02-20T11:44:38Z

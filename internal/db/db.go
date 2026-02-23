@@ -25,6 +25,7 @@ type HostModel struct {
 	ID            int
 	Label         string
 	GroupName     string
+	Tags          []string
 	Hostname      string
 	Username      string
 	Port          int
@@ -291,6 +292,7 @@ func createSchema(db *sql.DB) error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		label TEXT,
 		group_name TEXT,
+		tags TEXT,
 		hostname TEXT NOT NULL,
 		username TEXT NOT NULL,
 		port INTEGER DEFAULT 22,
@@ -318,6 +320,11 @@ func createSchema(db *sql.DB) error {
 
 	// Add group_name column for host grouping
 	if err := ensureColumn(db, "hosts", "group_name", "TEXT"); err != nil {
+		return err
+	}
+
+	// Add tags column for host tags used in Spotlight search.
+	if err := ensureColumn(db, "hosts", "tags", "TEXT"); err != nil {
 		return err
 	}
 
@@ -407,6 +414,7 @@ func migrateHostsDropNotes(db *sql.DB) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			label TEXT,
 			group_name TEXT,
+			tags TEXT,
 			hostname TEXT NOT NULL,
 			username TEXT NOT NULL,
 			port INTEGER DEFAULT 22,
@@ -422,10 +430,11 @@ func migrateHostsDropNotes(db *sql.DB) error {
 	}
 
 	_, err = tx.Exec(`
-		INSERT INTO hosts_new (id, label, group_name, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
+		INSERT INTO hosts_new (id, label, group_name, tags, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
 		SELECT
 			id,
 			CASE WHEN COALESCE(label, '') != '' THEN label ELSE COALESCE(notes, '') END,
+			'',
 			'',
 			hostname, username, port, key_data, key_type, created_at, created_at, last_connected
 		FROM hosts;
@@ -609,11 +618,16 @@ func (s *Store) CreateHost(h *HostModel, plainKey string) error {
 		}
 	}
 
+	tagsValue, err := EncodeTags(h.Tags)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
 	_, err = s.db.Exec(`
-		INSERT INTO hosts (label, group_name, hostname, username, port, key_data, key_type, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, h.Label, normalizeGroupName(h.GroupName), h.Hostname, h.Username, h.Port, encryptedKey, h.KeyType, now, now)
+		INSERT INTO hosts (label, group_name, tags, hostname, username, port, key_data, key_type, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, h.Label, normalizeGroupName(h.GroupName), tagsValue, h.Hostname, h.Username, h.Port, encryptedKey, h.KeyType, now, now)
 
 	return err
 }
@@ -629,7 +643,7 @@ func (s *Store) GetHosts() ([]HostModel, error) {
 	var query string
 	if hasUpdatedAt {
 		query = `
-			SELECT id, COALESCE(label, ''), COALESCE(group_name, ''), hostname, username, port,
+			SELECT id, COALESCE(label, ''), COALESCE(group_name, ''), COALESCE(tags, ''), hostname, username, port,
 			       COALESCE(key_type, ''), COALESCE(key_data, ''),
 			       created_at, COALESCE(updated_at, created_at), last_connected
 			FROM hosts
@@ -637,7 +651,7 @@ func (s *Store) GetHosts() ([]HostModel, error) {
 		`
 	} else {
 		query = `
-			SELECT id, COALESCE(label, ''), COALESCE(group_name, ''), hostname, username, port,
+			SELECT id, COALESCE(label, ''), COALESCE(group_name, ''), COALESCE(tags, ''), hostname, username, port,
 			       COALESCE(key_type, ''), COALESCE(key_data, ''),
 			       created_at, created_at, last_connected
 			FROM hosts
@@ -654,12 +668,14 @@ func (s *Store) GetHosts() ([]HostModel, error) {
 	var hosts []HostModel
 	for rows.Next() {
 		var h HostModel
+		var tagsRaw string
 		var createdAtStr, updatedAtStr string
 		var lastConnStr sql.NullString
-		if err := rows.Scan(&h.ID, &h.Label, &h.GroupName, &h.Hostname, &h.Username, &h.Port, &h.KeyType, &h.KeyData, &createdAtStr, &updatedAtStr, &lastConnStr); err != nil {
+		if err := rows.Scan(&h.ID, &h.Label, &h.GroupName, &tagsRaw, &h.Hostname, &h.Username, &h.Port, &h.KeyType, &h.KeyData, &createdAtStr, &updatedAtStr, &lastConnStr); err != nil {
 			return nil, err
 		}
 		h.GroupName = normalizeGroupName(h.GroupName)
+		h.Tags = DecodeTags(tagsRaw)
 		h.CreatedAt = parseTimestamp(createdAtStr)
 		h.UpdatedAt = parseTimestamp(updatedAtStr)
 		if h.UpdatedAt.IsZero() {
@@ -728,10 +744,14 @@ func (s *Store) GetHostKey(id int) (string, error) {
 
 // UpdateHost updates a host's metadata (without changing the key)
 func (s *Store) UpdateHost(h *HostModel) error {
-	_, err := s.db.Exec(`
-		UPDATE hosts SET label=?, group_name=?, hostname=?, username=?, port=?, key_type=?, updated_at=?
+	tagsValue, err := EncodeTags(h.Tags)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
+		UPDATE hosts SET label=?, group_name=?, tags=?, hostname=?, username=?, port=?, key_type=?, updated_at=?
 		WHERE id=?
-	`, h.Label, normalizeGroupName(h.GroupName), h.Hostname, h.Username, h.Port, h.KeyType, time.Now(), h.ID)
+	`, h.Label, normalizeGroupName(h.GroupName), tagsValue, h.Hostname, h.Username, h.Port, h.KeyType, time.Now(), h.ID)
 	return err
 }
 
@@ -745,11 +765,15 @@ func (s *Store) UpdateHostWithKey(h *HostModel, plainKey string) error {
 			return err
 		}
 	}
+	tagsValue, err := EncodeTags(h.Tags)
+	if err != nil {
+		return err
+	}
 
 	_, err = s.db.Exec(`
-		UPDATE hosts SET label=?, group_name=?, hostname=?, username=?, port=?, key_type=?, key_data=?, updated_at=?
+		UPDATE hosts SET label=?, group_name=?, tags=?, hostname=?, username=?, port=?, key_type=?, key_data=?, updated_at=?
 		WHERE id=?
-	`, h.Label, normalizeGroupName(h.GroupName), h.Hostname, h.Username, h.Port, h.KeyType, encryptedKey, time.Now(), h.ID)
+	`, h.Label, normalizeGroupName(h.GroupName), tagsValue, h.Hostname, h.Username, h.Port, h.KeyType, encryptedKey, time.Now(), h.ID)
 	return err
 }
 
@@ -768,20 +792,28 @@ func (s *Store) DeleteHost(id int) error {
 // CreateHostWithID creates a host with a specific ID (used for sync import).
 // The keyData should already be encrypted.
 func (s *Store) CreateHostWithID(h *HostModel, encryptedKeyData string) error {
-	_, err := s.db.Exec(`
-		INSERT INTO hosts (id, label, group_name, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, h.ID, h.Label, normalizeGroupName(h.GroupName), h.Hostname, h.Username, h.Port, encryptedKeyData, h.KeyType, h.CreatedAt, h.UpdatedAt, h.LastConnected)
+	tagsValue, err := EncodeTags(h.Tags)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO hosts (id, label, group_name, tags, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, h.ID, h.Label, normalizeGroupName(h.GroupName), tagsValue, h.Hostname, h.Username, h.Port, encryptedKeyData, h.KeyType, h.CreatedAt, h.UpdatedAt, h.LastConnected)
 	return err
 }
 
 // UpdateHostFromSync updates a host with sync data, preserving exact timestamps.
 // The keyData should already be encrypted.
 func (s *Store) UpdateHostFromSync(h *HostModel, encryptedKeyData string, updatedAt time.Time) error {
-	_, err := s.db.Exec(`
-		UPDATE hosts SET label=?, group_name=?, hostname=?, username=?, port=?, key_type=?, key_data=?, updated_at=?, last_connected=?
+	tagsValue, err := EncodeTags(h.Tags)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
+		UPDATE hosts SET label=?, group_name=?, tags=?, hostname=?, username=?, port=?, key_type=?, key_data=?, updated_at=?, last_connected=?
 		WHERE id=?
-	`, h.Label, normalizeGroupName(h.GroupName), h.Hostname, h.Username, h.Port, h.KeyType, encryptedKeyData, updatedAt, h.LastConnected, h.ID)
+	`, h.Label, normalizeGroupName(h.GroupName), tagsValue, h.Hostname, h.Username, h.Port, h.KeyType, encryptedKeyData, updatedAt, h.LastConnected, h.ID)
 	return err
 }
 

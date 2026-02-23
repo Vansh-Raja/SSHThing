@@ -1,7 +1,10 @@
 package app
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"runtime"
 	"sort"
 	"strconv"
@@ -14,6 +17,7 @@ import (
 	"github.com/Vansh-Raja/SSHThing/internal/ssh"
 	"github.com/Vansh-Raja/SSHThing/internal/sync"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
+	"github.com/Vansh-Raja/SSHThing/internal/update"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -84,12 +88,20 @@ type Model struct {
 	syncRunID      int
 	syncAnimFrame  int
 	syncProgress   float64
+
+	// Update state
+	currentVersion string
+	updateChecking bool
+	updateApplying bool
+	updateRunID    int
+	updateLast     *update.CheckResult
 }
 
 // ModalForm holds form state for add/edit modals
 type ModalForm struct {
 	labelInput    textinput.Model
 	groupInput    textinput.Model
+	tagsInput     textinput.Model
 	groupOptions  []string
 	groupSelected int
 	hostnameInput textinput.Model
@@ -115,6 +127,11 @@ const (
 
 // NewModel creates a new application model
 func NewModel() Model {
+	return NewModelWithVersion("dev")
+}
+
+// NewModelWithVersion creates a new application model with explicit binary version.
+func NewModelWithVersion(version string) Model {
 	cfg, _ := config.Load()
 
 	// Initialize search input
@@ -183,6 +200,7 @@ func NewModel() Model {
 		settingsInput:    settingsInput,
 		groupInput:       groupInput,
 		spotlightItems:   []SpotlightItem{},
+		currentVersion:   strings.TrimSpace(version),
 	}
 }
 
@@ -240,6 +258,70 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.err = fmt.Errorf("⚠ %s", msg.result.Message)
 		}
+		return m, m.errorAutoClearCmd(prevErr)
+
+	case updateCheckedMsg:
+		if msg.runID != m.updateRunID {
+			return m, nil
+		}
+		m.updateChecking = false
+		if msg.err != nil {
+			m.err = fmt.Errorf("⚠ update check failed: %v", msg.err)
+			return m, m.errorAutoClearCmd(prevErr)
+		}
+		if msg.result == nil {
+			m.err = fmt.Errorf("⚠ update check failed: empty result")
+			return m, m.errorAutoClearCmd(prevErr)
+		}
+		m.updateLast = msg.result
+		m.cfg.Updates.LastCheckedAt = msg.result.CheckedAt.Format(time.RFC3339)
+		m.cfg.Updates.LastSeenVersion = msg.result.LatestVersion
+		m.cfg.Updates.LastSeenTag = msg.result.LatestTag
+		m.cfg.Updates.ETagLatest = msg.result.ETag
+		if msg.result.UpdateAvailable {
+			m.err = fmt.Errorf("✓ Update available: %s", msg.result.LatestTag)
+		} else {
+			m.err = fmt.Errorf("✓ Already on latest stable release")
+		}
+		return m, m.errorAutoClearCmd(prevErr)
+
+	case updateAppliedMsg:
+		if msg.runID != m.updateRunID {
+			return m, nil
+		}
+		m.updateApplying = false
+		if msg.err != nil {
+			m.err = fmt.Errorf("⚠ update failed: %v", msg.err)
+			return m, m.errorAutoClearCmd(prevErr)
+		}
+		if msg.result == nil || !msg.result.Success {
+			m.err = fmt.Errorf("⚠ update failed")
+			return m, m.errorAutoClearCmd(prevErr)
+		}
+		if msg.handoffStarted {
+			return m, tea.Quit
+		}
+		if msg.result.NeedsRelaunch && msg.result.RelaunchPath != "" {
+			cmd := exec.Command(msg.result.RelaunchPath, msg.result.RelaunchArgs...)
+			_ = cmd.Start()
+			return m, tea.Quit
+		}
+		m.err = fmt.Errorf("✓ Update applied")
+		return m, m.errorAutoClearCmd(prevErr)
+
+	case updatePathFixedMsg:
+		if msg.runID != m.updateRunID {
+			return m, nil
+		}
+		m.updateApplying = false
+		if msg.err != nil {
+			m.err = fmt.Errorf("⚠ path fix failed: %v", msg.err)
+			return m, m.errorAutoClearCmd(prevErr)
+		}
+		if m.updateLast != nil {
+			m.updateLast.PathHealth = msg.pathHealth
+		}
+		m.err = fmt.Errorf("✓ PATH updated. Open a new terminal for changes.")
 		return m, m.errorAutoClearCmd(prevErr)
 
 	case clearErrMsg:
@@ -640,6 +722,7 @@ func (m *Model) loadHosts() {
 			ID:            h.ID,
 			Label:         label,
 			GroupName:     strings.TrimSpace(h.GroupName),
+			Tags:          append([]string(nil), h.Tags...),
 			Hostname:      h.Hostname,
 			Username:      h.Username,
 			Port:          h.Port,
@@ -672,6 +755,36 @@ func hostDisplayName(h Host) string {
 		d = strings.TrimSpace(h.Hostname)
 	}
 	return d
+}
+
+func hostVirtualGroupTag(h Host) string {
+	if strings.TrimSpace(h.GroupName) == "" {
+		return ""
+	}
+	return db.NormalizeTagToken(h.GroupName)
+}
+
+func hostSearchTags(h Host) []string {
+	tags := db.NormalizeTags(h.Tags)
+	if gt := hostVirtualGroupTag(h); gt != "" {
+		tags = db.NormalizeTags(append(tags, gt))
+	}
+	return tags
+}
+
+func hostSearchCorpus(h Host) string {
+	parts := []string{
+		hostDisplayName(h),
+		h.Hostname,
+		h.Username,
+		h.GroupName,
+	}
+
+	for _, tag := range hostSearchTags(h) {
+		parts = append(parts, tag, "#"+tag)
+	}
+
+	return strings.Join(parts, " ")
 }
 
 func (m *Model) rebuildListItems() {
@@ -1093,7 +1206,7 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			groupPrefill = g
 		}
 		m.viewMode = ViewModeAddHost
-		m.modalForm = m.newModalForm("", groupPrefill, "", "", "22", "", "")
+		m.modalForm = m.newModalForm("", groupPrefill, "", "", "", "22", "", "")
 
 	case "e":
 		if item, ok := m.selectedListItem(); ok && item.Kind == ListItemGroup {
@@ -1119,7 +1232,8 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					existingKey = key
 				}
 			}
-			m.modalForm = m.newModalForm(host.Label, host.GroupName, host.Hostname, host.Username, fmt.Sprintf("%d", host.Port), host.KeyType, existingKey)
+			tagInput := strings.Join(host.Tags, ", ")
+			m.modalForm = m.newModalForm(host.Label, host.GroupName, tagInput, host.Hostname, host.Username, fmt.Sprintf("%d", host.Port), host.KeyType, existingKey)
 		}
 
 	case "d", "delete":
@@ -1214,7 +1328,7 @@ func (m Model) handleListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // Helper to create new modal form with initialized text inputs
-func (m Model) newModalForm(label, groupName, hostname, username, port, keyType, existingKey string) *ModalForm {
+func (m Model) newModalForm(label, groupName, tags, hostname, username, port, keyType, existingKey string) *ModalForm {
 	authMethod := ui.AuthPassword
 	switch keyType {
 	case "password":
@@ -1249,6 +1363,7 @@ func (m Model) newModalForm(label, groupName, hostname, username, port, keyType,
 	f := &ModalForm{
 		labelInput:     textinput.New(),
 		groupInput:     textinput.New(),
+		tagsInput:      textinput.New(),
 		groupOptions:   groupOptions,
 		groupSelected:  groupSelected,
 		hostnameInput:  textinput.New(),
@@ -1269,6 +1384,10 @@ func (m Model) newModalForm(label, groupName, hostname, username, port, keyType,
 	f.groupInput.Placeholder = "Work, VMs, Personal..."
 	f.groupInput.SetValue(groupOptions[groupSelected])
 	f.groupInput.Prompt = ""
+
+	f.tagsInput.Placeholder = "cpu, gpu, ec2"
+	f.tagsInput.SetValue(tags)
+	f.tagsInput.Prompt = ""
 
 	f.hostnameInput.Placeholder = "example.com"
 	f.hostnameInput.SetValue(hostname)
@@ -1377,6 +1496,7 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		// Save to DB
 		groupName := m.modalSelectedGroupName()
+		tags := db.ParseTagInput(m.modalForm.tagsInput.Value())
 		if groupName != "" {
 			if err := m.store.UpsertGroup(groupName); err != nil {
 				m.err = err
@@ -1387,6 +1507,7 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			host := &db.HostModel{
 				Label:     strings.TrimSpace(m.modalForm.labelInput.Value()),
 				GroupName: groupName,
+				Tags:      tags,
 				Hostname:  m.modalForm.hostnameInput.Value(),
 				Username:  m.modalForm.usernameInput.Value(),
 				Port:      portInt,
@@ -1409,6 +1530,7 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					ID:        originalID,
 					Label:     strings.TrimSpace(m.modalForm.labelInput.Value()),
 					GroupName: groupName,
+					Tags:      tags,
 					Hostname:  m.modalForm.hostnameInput.Value(),
 					Username:  m.modalForm.usernameInput.Value(),
 					Port:      portInt,
@@ -1447,6 +1569,7 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	blurAll := func() {
 		m.modalForm.labelInput.Blur()
 		m.modalForm.groupInput.Blur()
+		m.modalForm.tagsInput.Blur()
 		m.modalForm.hostnameInput.Blur()
 		m.modalForm.usernameInput.Blur()
 		m.modalForm.portInput.Blur()
@@ -1462,6 +1585,8 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.modalForm.labelInput.Focus()
 		case ui.FieldGroup:
 			m.modalForm.groupInput.Focus()
+		case ui.FieldTags:
+			m.modalForm.tagsInput.Focus()
 		case ui.FieldHostname:
 			m.modalForm.hostnameInput.Focus()
 		case ui.FieldUsername:
@@ -1477,7 +1602,7 @@ func (m Model) handleModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	totalFields := 9
+	totalFields := 10
 	var cmd tea.Cmd
 
 	// Save from anywhere in the modal.
@@ -1622,6 +1747,8 @@ func (m *Model) handleInputUpdate(msg tea.Msg) tea.Cmd {
 	case ui.FieldGroup:
 		// Group selection is a spinner; use left/right (or h/l) to cycle.
 		return nil
+	case ui.FieldTags:
+		m.modalForm.tagsInput, cmd = m.modalForm.tagsInput.Update(msg)
 	case ui.FieldHostname:
 		m.modalForm.hostnameInput, cmd = m.modalForm.hostnameInput.Update(msg)
 	case ui.FieldUsername:
@@ -1923,7 +2050,7 @@ func (m Model) buildSpotlightItems(query string) []SpotlightItem {
 			} else if !strings.EqualFold(hg, g.name) {
 				continue
 			}
-			score, ok := fuzzyScore(query, hostDisplayName(h)+" "+h.Hostname+" "+h.Username)
+			score, ok := fuzzyScore(query, hostSearchCorpus(h))
 			if !ok {
 				score = 1
 			}
@@ -1944,7 +2071,7 @@ func (m Model) buildSpotlightItems(query string) []SpotlightItem {
 		if seenHost[h.ID] {
 			continue
 		}
-		score, ok := fuzzyScore(query, hostDisplayName(h)+" "+h.Hostname+" "+h.Username+" "+h.GroupName)
+		score, ok := fuzzyScore(query, hostSearchCorpus(h))
 		if !ok {
 			continue
 		}
@@ -1967,7 +2094,7 @@ func (m Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	const maxIdx = 15
+	const maxIdx = 21
 
 	key := msg.String()
 
@@ -2320,6 +2447,61 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				return startEdit(m.cfg.Sync.LocalPath, "empty = default path")
+			case 16:
+				m.err = fmt.Errorf("ℹ %s", m.updateSettingsState().ChannelLabel)
+				return m, nil
+			case 17:
+				m.err = fmt.Errorf("ℹ %s", m.updateSettingsState().VersionLabel)
+				return m, nil
+			case 18:
+				if m.updateChecking || m.updateApplying {
+					m.err = fmt.Errorf("ℹ update operation already in progress")
+					return m, nil
+				}
+				m.updateChecking = true
+				m.updateRunID++
+				runID := m.updateRunID
+				m.err = fmt.Errorf("ℹ checking for updates...")
+				return m, runUpdateCheckCmd(runID, m.currentVersion, m.cfg)
+			case 19:
+				if m.updateChecking || m.updateApplying {
+					m.err = fmt.Errorf("ℹ update operation already in progress")
+					return m, nil
+				}
+				if m.updateLast == nil {
+					m.err = fmt.Errorf("ℹ run 'check now' first")
+					return m, nil
+				}
+				if !m.updateLast.UpdateAvailable {
+					m.err = fmt.Errorf("ℹ already on latest stable release")
+					return m, nil
+				}
+				if m.updateLast.ApplyMode == update.ApplyModeGuidance || m.updateLast.ApplyMode == update.ApplyModeNone {
+					m.err = fmt.Errorf("ℹ auto-apply not available on this platform yet")
+					return m, nil
+				}
+				m.updateApplying = true
+				m.updateRunID++
+				runID := m.updateRunID
+				m.err = fmt.Errorf("ℹ applying update...")
+				return m, runUpdateApplyCmd(runID, *m.updateLast)
+			case 20:
+				m.err = fmt.Errorf("ℹ %s", m.updateSettingsState().PathHealth)
+				return m, nil
+			case 21:
+				if m.updateChecking || m.updateApplying {
+					m.err = fmt.Errorf("ℹ update operation already in progress")
+					return m, nil
+				}
+				if m.updateLast == nil || m.updateLast.PathHealth.Healthy || strings.TrimSpace(m.updateLast.PathHealth.DesiredPath) == "" {
+					m.err = fmt.Errorf("ℹ no PATH conflict detected")
+					return m, nil
+				}
+				m.updateApplying = true
+				m.updateRunID++
+				runID := m.updateRunID
+				m.err = fmt.Errorf("ℹ fixing PATH...")
+				return m, runUpdatePathFixCmd(runID, m.updateLast.PathHealth.DesiredPath)
 			}
 		}
 	}
@@ -2449,7 +2631,47 @@ func (m Model) View() string {
 }
 
 func (m Model) renderSettingsView() string {
-	return m.styles.RenderSettingsView(m.width, m.height, m.cfg, m.settingsIdx, m.settingsEditing, m.settingsInput, m.err)
+	return m.styles.RenderSettingsView(m.width, m.height, m.cfg, m.updateSettingsState(), m.settingsIdx, m.settingsEditing, m.settingsInput, m.err)
+}
+
+func (m Model) updateSettingsState() ui.UpdateSettingsState {
+	state := ui.UpdateSettingsState{
+		Checking: m.updateChecking,
+		Applying: m.updateApplying,
+	}
+	if m.updateLast != nil {
+		state.ChannelLabel = update.ChannelLabel(m.updateLast.Channel, m.updateLast.ChannelDetail)
+		current := strings.TrimSpace(m.updateLast.CurrentVersion)
+		if current == "" {
+			current = "(unknown)"
+		}
+		latest := strings.TrimSpace(m.updateLast.LatestVersion)
+		if latest == "" {
+			latest = "(unknown)"
+		}
+		state.VersionLabel = current + " -> " + latest
+		state.PathHealth = update.PathHealthLabel(m.updateLast.PathHealth)
+		state.CanApply = m.updateLast.UpdateAvailable && m.updateLast.ApplyMode != update.ApplyModeGuidance && m.updateLast.ApplyMode != update.ApplyModeNone
+		state.CanFixPath = !m.updateLast.PathHealth.Healthy && strings.TrimSpace(m.updateLast.PathHealth.DesiredPath) != ""
+	}
+	if state.VersionLabel == "" {
+		state.VersionLabel = normalizeVersionStringForUI(m.currentVersion) + " -> (not checked)"
+	}
+	if state.ChannelLabel == "" {
+		state.ChannelLabel = "(not checked)"
+	}
+	if state.PathHealth == "" {
+		state.PathHealth = "(not checked)"
+	}
+	return state
+}
+
+func normalizeVersionStringForUI(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "(unknown)"
+	}
+	return v
 }
 
 func (m Model) listItemsToRenderData() []interface{} {
@@ -2482,6 +2704,7 @@ func (m Model) listItemsToRenderData() []interface{} {
 				"ID":            host.ID,
 				"Label":         host.Label,
 				"GroupName":     host.GroupName,
+				"Tags":          hostSearchTags(host),
 				"Hostname":      host.Hostname,
 				"Username":      host.Username,
 				"Port":          host.Port,
@@ -2574,6 +2797,7 @@ func (m Model) renderModalView() string {
 	formData := &ui.ModalFormData{
 		Label:        m.modalForm.labelInput,
 		Group:        m.modalForm.groupInput,
+		Tags:         m.modalForm.tagsInput,
 		GroupOptions: m.modalForm.groupOptions,
 		GroupIndex:   m.modalForm.groupSelected,
 		Hostname:     m.modalForm.hostnameInput,
@@ -2848,6 +3072,25 @@ type syncAnimTickMsg struct {
 	runID int
 }
 
+type updateCheckedMsg struct {
+	runID  int
+	result *update.CheckResult
+	err    error
+}
+
+type updateAppliedMsg struct {
+	runID          int
+	result         *update.ApplyResult
+	handoffStarted bool
+	err            error
+}
+
+type updatePathFixedMsg struct {
+	runID      int
+	pathHealth update.PathHealth
+	err        error
+}
+
 type quitFinishedMsg struct{}
 
 type clearErrMsg struct {
@@ -2867,6 +3110,53 @@ func syncAnimTickCmd(runID int) tea.Cmd {
 	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg {
 		return syncAnimTickMsg{runID: runID}
 	})
+}
+
+func runUpdateCheckCmd(runID int, currentVersion string, cfg config.Config) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		result, err := update.Check(ctx, currentVersion, &cfg)
+		if err != nil {
+			return updateCheckedMsg{runID: runID, err: err}
+		}
+		return updateCheckedMsg{runID: runID, result: &result}
+	}
+}
+
+func runUpdateApplyCmd(runID int, check update.CheckResult) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		exe, err := os.Executable()
+		if err != nil {
+			return updateAppliedMsg{runID: runID, err: err}
+		}
+		result, err := update.Apply(ctx, check, exe)
+		if err != nil {
+			return updateAppliedMsg{runID: runID, err: err}
+		}
+		handoffStarted := false
+		if result.Handoff != nil {
+			if err := update.LaunchHandoff(result.Handoff); err != nil {
+				return updateAppliedMsg{runID: runID, err: err}
+			}
+			handoffStarted = true
+		}
+		return updateAppliedMsg{runID: runID, result: &result, handoffStarted: handoffStarted}
+	}
+}
+
+func runUpdatePathFixCmd(runID int, desiredExe string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		ph, err := update.FixPathConflicts(ctx, desiredExe)
+		if err != nil {
+			return updatePathFixedMsg{runID: runID, err: err}
+		}
+		return updatePathFixedMsg{runID: runID, pathHealth: ph}
+	}
 }
 
 // Helper functions

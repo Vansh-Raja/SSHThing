@@ -282,6 +282,7 @@ func (s *Styles) RenderHostDetails(hostsInterface []interface{}, selectedIdx int
 			groupName, _ := host["GroupName"].(string)
 			hostname, _ := host["Hostname"].(string)
 			username, _ := host["Username"].(string)
+			tags, _ := host["Tags"].([]string)
 			port, _ := host["Port"].(int)
 			hasKey, _ := host["HasKey"].(bool)
 			keyType, _ := host["KeyType"].(string)
@@ -331,6 +332,22 @@ func (s *Styles) RenderHostDetails(hostsInterface []interface{}, selectedIdx int
 			} else {
 				details.WriteString(s.renderDetailRow("Last SSH:", s.DetailValue.Foreground(ColorTextDim).Render("Never")))
 			}
+
+			tagText := s.DetailValue.Foreground(ColorTextDim).Render("None")
+			if len(tags) > 0 {
+				prefixed := make([]string, 0, len(tags))
+				for _, t := range tags {
+					t = strings.TrimSpace(t)
+					if t == "" {
+						continue
+					}
+					prefixed = append(prefixed, "#"+t)
+				}
+				if len(prefixed) > 0 {
+					tagText = strings.Join(prefixed, " ")
+				}
+			}
+			details.WriteString(s.renderDetailRow("Tags:", tagText))
 		}
 	}
 
@@ -367,15 +384,18 @@ func (s *Styles) RenderFooter(width int, err error) string {
 // RenderFooterWithSync renders the footer with keybindings and optional sync status
 func (s *Styles) RenderFooterWithSync(width int, err error, syncStatus string, syncActivity *SyncActivity) string {
 	var footer strings.Builder
+	noticeLines := make([]string, 0, 2)
 
-	// Show notice if present
 	if err != nil {
-		footer.WriteString(s.renderFooterNotice(err.Error()))
-		footer.WriteString("\n")
+		noticeLines = append(noticeLines, s.renderFooterNotice(err.Error()))
 	}
 
 	if syncActivity != nil && syncActivity.Active {
-		footer.WriteString(s.renderSyncActivityLine(width-4, syncActivity))
+		noticeLines = append(noticeLines, s.renderSyncActivityLine(width-4, syncActivity))
+	}
+
+	if len(noticeLines) > 0 {
+		footer.WriteString(s.renderNotificationSection(width, noticeLines))
 		footer.WriteString("\n")
 	}
 
@@ -405,6 +425,18 @@ func (s *Styles) RenderFooterWithSync(width int, err error, syncStatus string, s
 	footer.WriteString(footerText)
 
 	return s.Footer.Width(width - 2).Render(footer.String())
+}
+
+func (s *Styles) renderNotificationSection(width int, lines []string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	content := strings.Join(lines, "\n")
+	return lipgloss.NewStyle().
+		Width(width-2).
+		Padding(0, 1).
+		Background(ColorBgAlt).
+		Render(content)
 }
 
 func (s *Styles) renderSyncActivityLine(width int, activity *SyncActivity) string {

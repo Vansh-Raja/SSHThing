@@ -17,8 +17,20 @@ type settingsRow struct {
 	disabled    bool
 }
 
-func (s *Styles) RenderSettingsView(width, height int, cfg config.Config, selectedIdx int, editing bool, input textinput.Model, err error) string {
-	rows := buildSettingsRows(cfg)
+type UpdateSettingsState struct {
+	ChannelLabel   string
+	VersionLabel   string
+	PathHealth     string
+	Checking       bool
+	Applying       bool
+	CanApply       bool
+	CanFixPath     bool
+	PlatformHint   string
+	LastCheckedAgo string
+}
+
+func (s *Styles) RenderSettingsView(width, height int, cfg config.Config, updateState UpdateSettingsState, selectedIdx int, editing bool, input textinput.Model, err error) string {
+	rows := buildSettingsRows(cfg, updateState)
 	if selectedIdx < 0 {
 		selectedIdx = 0
 	}
@@ -131,12 +143,12 @@ func (s *Styles) RenderSettingsView(width, height int, cfg config.Config, select
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
 }
 
-func buildSettingsRows(cfg config.Config) []settingsRow {
+func buildSettingsRows(cfg config.Config, updateState UpdateSettingsState) []settingsRow {
 	termCustomDisabled := cfg.SSH.TermMode != config.TermCustom
 	unixBackendDisabled := runtime.GOOS == "windows" || !cfg.SSH.PasswordAutoLogin
 	syncDisabled := !cfg.Sync.Enabled
 
-	return []settingsRow{
+	rows := []settingsRow{
 		{
 			label:       "UI: Vim navigation",
 			value:       onOff(cfg.UI.VimMode),
@@ -223,7 +235,51 @@ func buildSettingsRows(cfg config.Config) []settingsRow {
 			description: "Local directory for sync repo. Empty uses default.",
 			disabled:    syncDisabled,
 		},
+		{
+			label:       "Updates: Channel",
+			value:       emptyAs(updateState.ChannelLabel, "(unknown)"),
+			description: "Detected install/update channel.",
+			disabled:    true,
+		},
+		{
+			label:       "Updates: Current -> Latest",
+			value:       emptyAs(updateState.VersionLabel, "(not checked)"),
+			description: "Latest stable release comparison.",
+			disabled:    true,
+		},
+		{
+			label:       "Updates: Check now",
+			value:       ternary(updateState.Checking, "Checking...", "Run"),
+			description: "Checks GitHub for the latest stable release.",
+			disabled:    updateState.Applying,
+		},
+		{
+			label:       "Updates: Apply now",
+			value:       ternary(updateState.Applying, "Applying...", "Run"),
+			description: "Applies available update using your detected channel.",
+			disabled:    !updateState.CanApply || updateState.Checking || updateState.Applying,
+		},
+		{
+			label:       "Updates: PATH health",
+			value:       emptyAs(updateState.PathHealth, "(not checked)"),
+			description: "Warns when another sshthing binary shadows the intended one.",
+			disabled:    true,
+		},
+		{
+			label:       "Updates: Fix PATH",
+			value:       "Run",
+			description: "Moves the intended install path ahead of stale sshthing entries.",
+			disabled:    !updateState.CanFixPath || updateState.Checking || updateState.Applying,
+		},
 	}
+	return rows
+}
+
+func ternary(cond bool, a, b string) string {
+	if cond {
+		return a
+	}
+	return b
 }
 
 func onOff(v bool) string {

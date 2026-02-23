@@ -6,6 +6,7 @@ import (
 
 	"github.com/Vansh-Raja/SSHThing/internal/app"
 	"github.com/Vansh-Raja/SSHThing/internal/ssh"
+	"github.com/Vansh-Raja/SSHThing/internal/update"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -15,6 +16,13 @@ func main() {
 	if ssh.IsAskpassInvocation() {
 		if err := ssh.RunAskpassHelper(); err != nil {
 			fmt.Fprintf(os.Stderr, "askpass error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 2 && os.Args[1] == update.HandoffArg {
+		if err := update.RunHandoffFromFile(os.Args[2]); err != nil {
+			fmt.Fprintf(os.Stderr, "update handoff error: %v\n", err)
 			os.Exit(1)
 		}
 		return
@@ -43,7 +51,7 @@ func main() {
 	}
 
 	// Create the initial model
-	m := app.NewModel()
+	m := app.NewModelWithVersion(version)
 
 	// Create the Bubble Tea program with alternate screen
 	p := tea.NewProgram(

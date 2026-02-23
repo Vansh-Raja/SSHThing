@@ -21,7 +21,7 @@ func TestLoadFromFile_EncryptedPayload(t *testing.T) {
 		Salt:      "abc123",
 		UpdatedAt: now,
 		Hosts: []SyncHost{
-			{ID: 1, Hostname: "prod.example.com", Username: "ubuntu", Port: 22, KeyData: "ciphertext", KeyType: "password", CreatedAt: now, UpdatedAt: now},
+			{ID: 1, Hostname: "prod.example.com", Username: "ubuntu", Port: 22, KeyData: "ciphertext", KeyType: "password", Tags: []string{"gpu", "ec2"}, CreatedAt: now, UpdatedAt: now},
 		},
 	}
 
@@ -63,6 +63,9 @@ func TestLoadFromFile_EncryptedPayload(t *testing.T) {
 	}
 	if loaded.Hosts[0].Hostname != "prod.example.com" {
 		t.Fatalf("unexpected hostname: %q", loaded.Hosts[0].Hostname)
+	}
+	if len(loaded.Hosts[0].Tags) != 2 || loaded.Hosts[0].Tags[0] != "gpu" || loaded.Hosts[0].Tags[1] != "ec2" {
+		t.Fatalf("unexpected tags after decrypt: %+v", loaded.Hosts[0].Tags)
 	}
 
 	if _, err := LoadFromFile(path, "wrong-password"); err == nil {

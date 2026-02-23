@@ -45,6 +45,7 @@ type SyncHost struct {
 	ID            int        `json:"id"`
 	Label         string     `json:"label"`
 	GroupName     string     `json:"group_name,omitempty"`
+	Tags          []string   `json:"tags,omitempty"`
 	Hostname      string     `json:"hostname"`
 	Username      string     `json:"username"`
 	Port          int        `json:"port"`

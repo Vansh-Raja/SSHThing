@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vansh-Raja/SSHThing/internal/db"
 	ssync "github.com/Vansh-Raja/SSHThing/internal/sync"
 	"github.com/charmbracelet/bubbles/textinput"
 )
@@ -76,6 +77,57 @@ func TestBuildSpotlightItemsGroupMatchIncludesHosts(t *testing.T) {
 	}
 }
 
+func TestBuildSpotlightItems_TagSearchMatchesHost(t *testing.T) {
+	m := NewModel()
+	m.hosts = []Host{
+		{ID: 1, Label: "gpu-box", Hostname: "gpu.local", Username: "admin", GroupName: "Lab", Tags: []string{"gpu", "cuda"}},
+		{ID: 2, Label: "web", Hostname: "web.local", Username: "ubuntu", GroupName: "Prod", Tags: []string{"nginx"}},
+	}
+	m.groups = []string{"Lab", "Prod"}
+	m.rebuildListItems()
+
+	items := m.buildSpotlightItems("#gpu")
+	if len(items) == 0 {
+		t.Fatalf("expected spotlight results for tag query")
+	}
+
+	found := false
+	for _, it := range items {
+		if it.Kind == SpotlightItemHost && it.Host.ID == 1 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected gpu host in spotlight results")
+	}
+}
+
+func TestBuildSpotlightItems_VirtualGroupTagMatchesHost(t *testing.T) {
+	m := NewModel()
+	m.hosts = []Host{
+		{ID: 1, Label: "api", Hostname: "api.example.com", Username: "ubuntu", GroupName: "Work"},
+	}
+	m.groups = []string{"Work"}
+	m.rebuildListItems()
+
+	items := m.buildSpotlightItems("#work")
+	if len(items) == 0 {
+		t.Fatalf("expected spotlight results for virtual group tag query")
+	}
+
+	foundHost := false
+	for _, it := range items {
+		if it.Kind == SpotlightItemHost && it.Host.ID == 1 {
+			foundHost = true
+			break
+		}
+	}
+	if !foundHost {
+		t.Fatalf("expected grouped host for virtual group tag query")
+	}
+}
+
 func TestGetFilteredHosts(t *testing.T) {
 	m := NewModel()
 	m.hosts = []Host{
@@ -119,7 +171,7 @@ func TestValidateForm(t *testing.T) {
 
 	// Helper to set up a basic valid form
 	setupForm := func() {
-		m.modalForm = m.newModalForm("myhost", "", "example.com", "user", "22", "ed25519", "")
+		m.modalForm = m.newModalForm("myhost", "", "", "example.com", "user", "22", "ed25519", "")
 	}
 
 	// Test case 1: Valid form
@@ -186,6 +238,16 @@ func TestAutoClearDuration(t *testing.T) {
 	}
 	if got := autoClearDuration("⚠ mount failed"); got != 10*time.Second {
 		t.Fatalf("expected error duration 10s, got %v", got)
+	}
+}
+
+func TestParseTagInput_NormalizesAndDedupes(t *testing.T) {
+	got := db.ParseTagInput("#CPU, gpu, Gpu, ec2-prod, !!!, ec2")
+	if len(got) != 4 {
+		t.Fatalf("expected 4 tags, got %v", got)
+	}
+	if got[0] != "cpu" || got[1] != "gpu" || got[2] != "ec2prod" || got[3] != "ec2" {
+		t.Fatalf("unexpected normalized tags: %v", got)
 	}
 }
 

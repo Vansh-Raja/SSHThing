@@ -77,6 +77,13 @@ type Config struct {
 		Branch     string         `json:"branch"`
 		LocalPath  string         `json:"local_path"`
 	} `json:"sync"`
+
+	Updates struct {
+		LastCheckedAt   string `json:"last_checked_at,omitempty"`
+		LastSeenVersion string `json:"last_seen_version,omitempty"`
+		LastSeenTag     string `json:"last_seen_tag,omitempty"`
+		ETagLatest      string `json:"etag_latest,omitempty"`
+	} `json:"updates"`
 }
 
 func Default() Config {
