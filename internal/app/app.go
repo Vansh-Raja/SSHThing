@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,13 +12,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Vansh-Raja/SSHThing/internal/authtoken"
 	"github.com/Vansh-Raja/SSHThing/internal/config"
 	"github.com/Vansh-Raja/SSHThing/internal/db"
 	"github.com/Vansh-Raja/SSHThing/internal/mount"
+	"github.com/Vansh-Raja/SSHThing/internal/securestore"
 	"github.com/Vansh-Raja/SSHThing/internal/ssh"
 	"github.com/Vansh-Raja/SSHThing/internal/sync"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
+	"github.com/Vansh-Raja/SSHThing/internal/unlock"
 	"github.com/Vansh-Raja/SSHThing/internal/update"
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -81,6 +86,18 @@ type Model struct {
 	settingsEditing  bool
 	settingsInput    textinput.Model
 
+	// Automation token manager state
+	tokenPrevView     ViewMode
+	tokenSummaries    []authtoken.TokenSummary
+	tokenIdx          int
+	tokenHostIdx      int
+	tokenHostPick     map[int]bool
+	tokenMode         int
+	tokenNameInput    textinput.Model
+	tokenRevealOpen   bool
+	tokenRevealValue  string
+	tokenRevealCopied bool
+
 	// Sync state
 	syncManager    *sync.Manager
 	masterPassword string // Stored for sync re-encryption (cleared on quit)
@@ -123,6 +140,12 @@ const (
 	groupFocusInput = iota
 	groupFocusSubmit
 	groupFocusCancel
+)
+
+const (
+	tokenModeList = iota
+	tokenModeCreateName
+	tokenModeCreateScope
 )
 
 // NewModel creates a new application model
@@ -173,34 +196,48 @@ func NewModelWithVersion(version string) Model {
 	groupInput.Prompt = ""
 	groupInput.Placeholder = "Group name"
 
+	tokenNameInput := textinput.New()
+	tokenNameInput.Prompt = ""
+	tokenNameInput.Placeholder = "Token name"
+
 	return Model{
-		cfg:              cfg,
-		cfgOriginal:      cfg,
-		hosts:            []Host{},
-		groups:           []string{},
-		listItems:        []ListItem{},
-		selectedIdx:      0,
-		viewMode:         viewMode,
-		styles:           ui.NewStyles(),
-		searchInput:      searchInput,
-		loginInput:       loginInput,
-		confirmInput:     confirmInput,
-		isFirstRun:       isFirstRun,
-		isSearching:      false,
-		armedSFTP:        false,
-		armedMount:       false,
-		armedUnmount:     false,
-		collapsed:        map[string]bool{},
-		quitPrevView:     ViewModeList,
-		quitFocus:        0,
-		mountManager:     mount.NewManager(),
-		settingsPrevView: ViewModeList,
-		settingsIdx:      0,
-		settingsEditing:  false,
-		settingsInput:    settingsInput,
-		groupInput:       groupInput,
-		spotlightItems:   []SpotlightItem{},
-		currentVersion:   strings.TrimSpace(version),
+		cfg:               cfg,
+		cfgOriginal:       cfg,
+		hosts:             []Host{},
+		groups:            []string{},
+		listItems:         []ListItem{},
+		selectedIdx:       0,
+		viewMode:          viewMode,
+		styles:            ui.NewStyles(),
+		searchInput:       searchInput,
+		loginInput:        loginInput,
+		confirmInput:      confirmInput,
+		isFirstRun:        isFirstRun,
+		isSearching:       false,
+		armedSFTP:         false,
+		armedMount:        false,
+		armedUnmount:      false,
+		collapsed:         map[string]bool{},
+		quitPrevView:      ViewModeList,
+		quitFocus:         0,
+		mountManager:      mount.NewManager(),
+		settingsPrevView:  ViewModeList,
+		settingsIdx:       0,
+		settingsEditing:   false,
+		settingsInput:     settingsInput,
+		tokenPrevView:     ViewModeSettings,
+		tokenSummaries:    []authtoken.TokenSummary{},
+		tokenIdx:          0,
+		tokenHostIdx:      0,
+		tokenHostPick:     map[int]bool{},
+		tokenMode:         tokenModeList,
+		tokenNameInput:    tokenNameInput,
+		tokenRevealOpen:   false,
+		tokenRevealValue:  "",
+		tokenRevealCopied: false,
+		groupInput:        groupInput,
+		spotlightItems:    []SpotlightItem{},
+		currentVersion:    strings.TrimSpace(version),
 	}
 }
 
@@ -476,6 +513,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleQuitConfirmKeys(msg)
 	case ViewModeSettings:
 		return m.handleSettingsKeys(msg)
+	case ViewModeTokenManager:
+		return m.handleTokenManagerKeys(msg)
 	}
 
 	return m, nil
@@ -547,6 +586,7 @@ func (m Model) handleLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m.err = nil
 		m.viewMode = ViewModeList
+		_ = unlock.Save(password, time.Duration(m.cfg.Automation.SessionTTLSeconds)*time.Second)
 		return m, nil
 
 	case tea.KeyEsc:
@@ -735,6 +775,7 @@ func (m *Model) loadHosts() {
 
 	m.loadGroups()
 	m.rebuildListItems()
+	m.syncTokenLabelsWithHosts()
 }
 
 func (m *Model) loadGroups() {
@@ -2094,7 +2135,7 @@ func (m Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	const maxIdx = 21
+	const maxIdx = 23
 
 	key := msg.String()
 
@@ -2502,11 +2543,403 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				runID := m.updateRunID
 				m.err = fmt.Errorf("ℹ fixing PATH...")
 				return m, runUpdatePathFixCmd(runID, m.updateLast.PathHealth.DesiredPath)
+			case 22:
+				m.tokenPrevView = m.viewMode
+				m.tokenMode = tokenModeList
+				m.tokenHostPick = map[int]bool{}
+				m.tokenHostIdx = 0
+				m.tokenIdx = 0
+				m.tokenRevealOpen = false
+				m.tokenRevealValue = ""
+				m.tokenRevealCopied = false
+				m.tokenNameInput.SetValue("")
+				m.tokenNameInput.Blur()
+				m.loadTokenSummaries()
+				m.viewMode = ViewModeTokenManager
+				m.err = nil
+				return m, nil
+			case 23:
+				if !m.cfg.Sync.Enabled {
+					m.err = fmt.Errorf("enable sync first")
+					return m, nil
+				}
+				m.cfg.Automation.SyncTokenDefinitions = !m.cfg.Automation.SyncTokenDefinitions
+				return m, nil
 			}
 		}
 	}
 
 	return m, nil
+}
+
+func (m *Model) syncTokenLabelsWithHosts() {
+	vault, err := authtoken.LoadVault()
+	if err != nil {
+		return
+	}
+	labels := make(map[int]string, len(m.hosts))
+	for _, h := range m.hosts {
+		labels[h.ID] = hostDisplayName(h)
+	}
+	if !vault.SyncHostLabels(labels) {
+		return
+	}
+	_ = authtoken.SaveVault(vault)
+}
+
+func (m *Model) loadTokenSummaries() {
+	vault, err := authtoken.LoadVault()
+	if err != nil {
+		m.err = fmt.Errorf("failed to load token vault: %v", err)
+		m.tokenSummaries = nil
+		m.tokenIdx = 0
+		return
+	}
+	m.tokenSummaries = vault.ListSummaries()
+	if len(m.tokenSummaries) == 0 {
+		m.tokenIdx = 0
+		return
+	}
+	if m.tokenIdx < 0 {
+		m.tokenIdx = 0
+	}
+	if m.tokenIdx >= len(m.tokenSummaries) {
+		m.tokenIdx = len(m.tokenSummaries) - 1
+	}
+}
+
+func (m Model) tokenManagerHosts() []ui.TokenManagerHostRow {
+	out := make([]ui.TokenManagerHostRow, 0, len(m.hosts))
+	for _, h := range m.hosts {
+		out = append(out, ui.TokenManagerHostRow{
+			HostID:  h.ID,
+			Label:   hostDisplayName(h),
+			Detail:  fmt.Sprintf("%s@%s:%d", h.Username, h.Hostname, h.Port),
+			HasAuth: h.HasKey,
+		})
+	}
+	return out
+}
+
+func (m Model) tokenManagerTokenRows() []ui.TokenManagerTokenRow {
+	out := make([]ui.TokenManagerTokenRow, 0, len(m.tokenSummaries))
+	for _, t := range m.tokenSummaries {
+		status := "active"
+		if t.RevokedAt != nil {
+			status = "revoked"
+		} else if !t.Usable {
+			status = "inactive"
+		} else if t.Legacy {
+			status = "legacy"
+		}
+		lastUsed := "never"
+		if t.LastUsedAt != nil {
+			lastUsed = t.LastUsedAt.Local().Format("2006-01-02 15:04")
+		}
+		name := strings.TrimSpace(t.Name)
+		if name == "" {
+			name = t.TokenID
+		}
+		out = append(out, ui.TokenManagerTokenRow{
+			TokenID:  t.TokenID,
+			Name:     name,
+			Hosts:    t.HostCount,
+			LastUsed: lastUsed,
+			Status:   status,
+			Synced:   t.SyncEnabled,
+		})
+	}
+	return out
+}
+
+func (m Model) handleTokenManagerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.store == nil {
+		m.err = fmt.Errorf("database is locked")
+		m.viewMode = ViewModeLogin
+		return m, nil
+	}
+
+	key := msg.String()
+	hosts := m.tokenManagerHosts()
+
+	if m.tokenRevealOpen {
+		switch key {
+		case "c", "C":
+			if strings.TrimSpace(m.tokenRevealValue) == "" {
+				m.err = fmt.Errorf("no token value available to copy")
+				return m, nil
+			}
+			if err := clipboard.WriteAll(m.tokenRevealValue); err != nil {
+				m.tokenRevealCopied = false
+				m.err = fmt.Errorf("copy failed: %v", err)
+				return m, nil
+			}
+			m.tokenRevealCopied = true
+			m.err = fmt.Errorf("✓ token copied to clipboard")
+			return m, nil
+		case "esc":
+			m.tokenRevealOpen = false
+			m.tokenRevealValue = ""
+			m.tokenRevealCopied = false
+			m.err = nil
+			return m, nil
+		default:
+			return m, nil
+		}
+	}
+
+	if m.tokenMode == tokenModeCreateName {
+		switch key {
+		case "esc":
+			m.tokenMode = tokenModeList
+			m.tokenNameInput.Blur()
+			m.tokenNameInput.SetValue("")
+			m.tokenHostPick = map[int]bool{}
+			m.err = nil
+			return m, nil
+		case "enter":
+			name := strings.TrimSpace(m.tokenNameInput.Value())
+			if name == "" {
+				m.err = fmt.Errorf("token name cannot be empty")
+				return m, nil
+			}
+			m.tokenMode = tokenModeCreateScope
+			m.tokenNameInput.Blur()
+			m.tokenHostPick = map[int]bool{}
+			m.tokenHostIdx = 0
+			m.err = fmt.Errorf("select hosts and press Enter to create token")
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.tokenNameInput, cmd = m.tokenNameInput.Update(msg)
+		return m, cmd
+	}
+
+	if m.tokenMode == tokenModeCreateScope {
+		switch key {
+		case "esc":
+			m.tokenMode = tokenModeList
+			m.tokenHostPick = map[int]bool{}
+			m.tokenHostIdx = 0
+			m.tokenNameInput.SetValue("")
+			m.err = nil
+			return m, nil
+		case "up", "k":
+			if key == "k" && !m.cfg.UI.VimMode {
+				return m, nil
+			}
+			if m.tokenHostIdx > 0 {
+				m.tokenHostIdx--
+			}
+			return m, nil
+		case "down", "j":
+			if key == "j" && !m.cfg.UI.VimMode {
+				return m, nil
+			}
+			if m.tokenHostIdx < len(hosts)-1 {
+				m.tokenHostIdx++
+			}
+			return m, nil
+		case " ":
+			if len(hosts) == 0 {
+				return m, nil
+			}
+			h := hosts[m.tokenHostIdx]
+			if m.tokenHostPick[h.HostID] {
+				delete(m.tokenHostPick, h.HostID)
+			} else {
+				m.tokenHostPick[h.HostID] = true
+			}
+			return m, nil
+		case "enter":
+			if len(m.tokenHostPick) == 0 {
+				m.err = fmt.Errorf("select at least one host")
+				return m, nil
+			}
+			grants, grantErr := m.selectedTokenHostGrants()
+			if grantErr != nil {
+				m.err = grantErr
+				return m, nil
+			}
+
+			name := strings.TrimSpace(m.tokenNameInput.Value())
+			pepper, _ := securestore.GetOrCreateDevicePepper(rand.Reader)
+			opts := authtoken.CreateOptions{
+				DevicePepper: pepper,
+				BindToDevice: len(pepper) > 0,
+				SyncEnabled:  m.cfg.Automation.SyncTokenDefinitions,
+			}
+			raw, rec, err := authtoken.CreateToken(name, grants, m.masterPassword, opts)
+			if err != nil {
+				m.err = fmt.Errorf("failed to create token: %v", err)
+				return m, nil
+			}
+			vault, err := authtoken.LoadVault()
+			if err != nil {
+				m.err = fmt.Errorf("failed to load token vault: %v", err)
+				return m, nil
+			}
+			if err := vault.AddToken(raw, rec); err != nil {
+				m.err = fmt.Errorf("failed to add token: %v", err)
+				return m, nil
+			}
+			if err := authtoken.SaveVault(vault); err != nil {
+				m.err = fmt.Errorf("failed to save token vault: %v", err)
+				return m, nil
+			}
+			m.tokenMode = tokenModeList
+			m.tokenHostPick = map[int]bool{}
+			m.tokenNameInput.SetValue("")
+			m.loadTokenSummaries()
+			m.tokenRevealOpen = true
+			m.tokenRevealValue = raw
+			m.tokenRevealCopied = false
+			m.err = fmt.Errorf("✓ Token created")
+			return m, nil
+		}
+		return m, nil
+	}
+
+	switch key {
+	case "esc", "q":
+		m.viewMode = m.tokenPrevView
+		m.err = nil
+		return m, nil
+	case "up", "k":
+		if key == "k" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		if m.tokenIdx > 0 {
+			m.tokenIdx--
+		}
+		return m, nil
+	case "down", "j":
+		if key == "j" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		if m.tokenIdx < len(m.tokenSummaries)-1 {
+			m.tokenIdx++
+		}
+		return m, nil
+	case "n":
+		m.tokenMode = tokenModeCreateName
+		m.tokenHostPick = map[int]bool{}
+		m.tokenHostIdx = 0
+		m.tokenNameInput.SetValue("")
+		m.tokenNameInput.Focus()
+		m.err = fmt.Errorf("enter token name and press Enter")
+		return m, textinput.Blink
+	case "r":
+		if len(m.tokenSummaries) == 0 {
+			m.err = fmt.Errorf("no tokens to revoke")
+			return m, nil
+		}
+		t := m.tokenSummaries[m.tokenIdx]
+		if t.RevokedAt != nil {
+			m.err = fmt.Errorf("token already revoked")
+			return m, nil
+		}
+		vault, err := authtoken.LoadVault()
+		if err != nil {
+			m.err = fmt.Errorf("failed to load token vault: %v", err)
+			return m, nil
+		}
+		if !vault.RevokeToken(t.TokenID) {
+			m.err = fmt.Errorf("token not found")
+			return m, nil
+		}
+		if err := authtoken.SaveVault(vault); err != nil {
+			m.err = fmt.Errorf("failed to save token vault: %v", err)
+			return m, nil
+		}
+		m.loadTokenSummaries()
+		m.err = fmt.Errorf("✓ Token revoked")
+		return m, nil
+	case "d":
+		if len(m.tokenSummaries) == 0 {
+			m.err = fmt.Errorf("no tokens to delete")
+			return m, nil
+		}
+		t := m.tokenSummaries[m.tokenIdx]
+		vault, err := authtoken.LoadVault()
+		if err != nil {
+			m.err = fmt.Errorf("failed to load token vault: %v", err)
+			return m, nil
+		}
+		deleted, err := vault.DeleteRevokedToken(t.TokenID)
+		if err != nil {
+			m.err = err
+			return m, nil
+		}
+		if !deleted {
+			m.err = fmt.Errorf("token not found")
+			return m, nil
+		}
+		if err := authtoken.SaveVault(vault); err != nil {
+			m.err = fmt.Errorf("failed to save token vault: %v", err)
+			return m, nil
+		}
+		m.loadTokenSummaries()
+		m.err = fmt.Errorf("✓ Revoked token deleted")
+		return m, nil
+	case "a":
+		if len(m.tokenSummaries) == 0 {
+			m.err = fmt.Errorf("no tokens to activate")
+			return m, nil
+		}
+		t := m.tokenSummaries[m.tokenIdx]
+		if t.Usable {
+			m.err = fmt.Errorf("token is already active on this device")
+			return m, nil
+		}
+		vault, err := authtoken.LoadVault()
+		if err != nil {
+			m.err = fmt.Errorf("failed to load token vault: %v", err)
+			return m, nil
+		}
+		pepper, _ := securestore.GetOrCreateDevicePepper(rand.Reader)
+		raw, err := vault.ActivateToken(t.TokenID, m.masterPassword, pepper)
+		if err != nil {
+			m.err = fmt.Errorf("failed to activate token: %v", err)
+			return m, nil
+		}
+		if err := authtoken.SaveVault(vault); err != nil {
+			m.err = fmt.Errorf("failed to save token vault: %v", err)
+			return m, nil
+		}
+		m.loadTokenSummaries()
+		m.tokenRevealOpen = true
+		m.tokenRevealValue = raw
+		m.tokenRevealCopied = false
+		m.err = fmt.Errorf("✓ Token activated on this device")
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m Model) selectedTokenHostGrants() ([]authtoken.HostGrant, error) {
+	grants := make([]authtoken.HostGrant, 0, len(m.tokenHostPick))
+	for _, h := range m.hosts {
+		if !m.tokenHostPick[h.ID] {
+			continue
+		}
+		if !h.HasKey {
+			return nil, fmt.Errorf("host '%s' has no stored auth secret", hostDisplayName(h))
+		}
+		secret, err := m.store.GetHostSecret(h.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt secret for '%s': %v", hostDisplayName(h), err)
+		}
+		if strings.TrimSpace(secret) == "" {
+			return nil, fmt.Errorf("host '%s' has no usable auth secret", hostDisplayName(h))
+		}
+		grants = append(grants, authtoken.HostGrant{HostID: h.ID, DisplayLabel: hostDisplayName(h)})
+	}
+	if len(grants) == 0 {
+		return nil, fmt.Errorf("no eligible hosts selected")
+	}
+	return grants, nil
 }
 
 // validateForm validates the modal form data
@@ -2625,6 +3058,8 @@ func (m Model) View() string {
 		return m.renderQuitConfirmView() + hideCursorAndMoveAway
 	case ViewModeSettings:
 		return m.renderSettingsView() + hideCursorAndMoveAway
+	case ViewModeTokenManager:
+		return m.renderTokenManagerView() + hideCursorAndMoveAway
 	default:
 		return "Unknown view mode" + hideCursorAndMoveAway
 	}
@@ -2632,6 +3067,25 @@ func (m Model) View() string {
 
 func (m Model) renderSettingsView() string {
 	return m.styles.RenderSettingsView(m.width, m.height, m.cfg, m.updateSettingsState(), m.settingsIdx, m.settingsEditing, m.settingsInput, m.err)
+}
+
+func (m Model) renderTokenManagerView() string {
+	return m.styles.RenderTokenManagerView(
+		m.width,
+		m.height,
+		m.tokenManagerTokenRows(),
+		m.tokenManagerHosts(),
+		m.tokenIdx,
+		m.tokenHostIdx,
+		m.tokenMode == tokenModeCreateName,
+		m.tokenMode == tokenModeCreateScope,
+		m.tokenHostPick,
+		m.tokenNameInput,
+		m.tokenRevealOpen,
+		m.tokenRevealValue,
+		m.tokenRevealCopied,
+		m.err,
+	)
 }
 
 func (m Model) updateSettingsState() ui.UpdateSettingsState {

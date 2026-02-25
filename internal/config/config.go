@@ -84,6 +84,11 @@ type Config struct {
 		LastSeenTag     string `json:"last_seen_tag,omitempty"`
 		ETagLatest      string `json:"etag_latest,omitempty"`
 	} `json:"updates"`
+
+	Automation struct {
+		SyncTokenDefinitions bool `json:"sync_token_definitions"`
+		SessionTTLSeconds    int  `json:"session_ttl_seconds"`
+	} `json:"automation"`
 }
 
 func Default() Config {
@@ -109,6 +114,9 @@ func Default() Config {
 	c.Sync.SSHKeyPath = ""
 	c.Sync.Branch = "main"
 	c.Sync.LocalPath = "" // empty means default path
+
+	c.Automation.SyncTokenDefinitions = false
+	c.Automation.SessionTTLSeconds = 900
 	return c
 }
 
@@ -229,6 +237,10 @@ func withDefaults(c Config) Config {
 	}
 	if c.Sync.Branch == "" {
 		c.Sync.Branch = def.Sync.Branch
+	}
+
+	if c.Automation.SessionTTLSeconds <= 0 || c.Automation.SessionTTLSeconds > 86400 {
+		c.Automation.SessionTTLSeconds = def.Automation.SessionTTLSeconds
 	}
 
 	// Keep UI defaults stable when fields are left at zero-values; callers should

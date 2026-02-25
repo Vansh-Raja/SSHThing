@@ -692,6 +692,47 @@ func (s *Store) GetHosts() ([]HostModel, error) {
 	return hosts, nil
 }
 
+// GetHostByID returns one host by stable integer ID.
+func (s *Store) GetHostByID(id int) (*HostModel, error) {
+	rows, err := s.db.Query(`
+		SELECT id, COALESCE(label, ''), COALESCE(group_name, ''), COALESCE(tags, ''), hostname, username, port,
+		       COALESCE(key_type, ''), COALESCE(key_data, ''),
+		       created_at, COALESCE(updated_at, created_at), last_connected
+		FROM hosts
+		WHERE id = ?
+		LIMIT 1
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, sql.ErrNoRows
+	}
+
+	var h HostModel
+	var tagsRaw string
+	var createdAtStr, updatedAtStr string
+	var lastConnStr sql.NullString
+	if err := rows.Scan(&h.ID, &h.Label, &h.GroupName, &tagsRaw, &h.Hostname, &h.Username, &h.Port, &h.KeyType, &h.KeyData, &createdAtStr, &updatedAtStr, &lastConnStr); err != nil {
+		return nil, err
+	}
+	h.GroupName = normalizeGroupName(h.GroupName)
+	h.Tags = DecodeTags(tagsRaw)
+	h.CreatedAt = parseTimestamp(createdAtStr)
+	h.UpdatedAt = parseTimestamp(updatedAtStr)
+	if h.UpdatedAt.IsZero() {
+		h.UpdatedAt = h.CreatedAt
+	}
+	if lastConnStr.Valid && lastConnStr.String != "" {
+		t := parseTimestamp(lastConnStr.String)
+		if !t.IsZero() {
+			h.LastConnected = &t
+		}
+	}
+	return &h, nil
+}
+
 // parseTimestamp attempts to parse a SQLite timestamp string
 func parseTimestamp(s string) time.Time {
 	if s == "" {

@@ -202,6 +202,7 @@ func LoadFromFile(filePath string, password string) (*SyncData, error) {
 			UpdatedAt: fileData.UpdatedAt,
 			Groups:    fileData.Groups,
 			Hosts:     fileData.Hosts,
+			TokenDefs: fileData.TokenDefs,
 		}
 		if legacy.Version == 0 {
 			legacy.Version = 2

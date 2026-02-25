@@ -88,6 +88,28 @@ func TestConnect_WithPassword_UsesAskpassEnv(t *testing.T) {
 	}
 }
 
+func TestConnectExec_AppendsRemoteCommand(t *testing.T) {
+	cmd, tempKey, err := ConnectExec(Connection{
+		Hostname: "example.com",
+		Username: "ubuntu",
+		Port:     22,
+	}, "echo hello")
+	if err != nil {
+		t.Fatalf("ConnectExec returned error: %v", err)
+	}
+	if tempKey != nil {
+		defer tempKey.Cleanup()
+	}
+
+	args := strings.Join(cmd.Args, " ")
+	if !strings.Contains(args, " -T ") {
+		t.Fatalf("expected -T in args, got: %q", args)
+	}
+	if !strings.HasSuffix(args, " ubuntu@example.com echo hello") {
+		t.Fatalf("expected remote command at end, got: %q", args)
+	}
+}
+
 func TestConnectSFTP_WithPassword_SSHPassFirstWhenAvailable(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("sshpass backend not used on windows")

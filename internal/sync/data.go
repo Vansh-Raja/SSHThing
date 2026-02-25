@@ -2,17 +2,20 @@ package sync
 
 import (
 	"time"
+
+	"github.com/Vansh-Raja/SSHThing/internal/authtoken"
 )
 
 // SyncData represents the portable format for syncing hosts across devices.
 // The KeyData field in each host remains encrypted - we never export decrypted keys.
 // The Salt field is required to re-encrypt keys when importing to a different database.
 type SyncData struct {
-	Version   int         `json:"version"`
-	Salt      string      `json:"salt"` // Hex-encoded encryption salt from source database
-	UpdatedAt time.Time   `json:"updated_at"`
-	Groups    []SyncGroup `json:"groups,omitempty"`
-	Hosts     []SyncHost  `json:"hosts"`
+	Version   int                      `json:"version"`
+	Salt      string                   `json:"salt"` // Hex-encoded encryption salt from source database
+	UpdatedAt time.Time                `json:"updated_at"`
+	Groups    []SyncGroup              `json:"groups,omitempty"`
+	Hosts     []SyncHost               `json:"hosts"`
+	TokenDefs []authtoken.SyncTokenDef `json:"token_defs,omitempty"`
 }
 
 // SyncFile is the on-disk sync file format.
@@ -25,9 +28,10 @@ type SyncFile struct {
 	Data      string    `json:"data,omitempty"`
 
 	// Legacy plaintext payload fields (v2 and older)
-	Salt   string      `json:"salt,omitempty"`
-	Groups []SyncGroup `json:"groups,omitempty"`
-	Hosts  []SyncHost  `json:"hosts,omitempty"`
+	Salt      string                   `json:"salt,omitempty"`
+	Groups    []SyncGroup              `json:"groups,omitempty"`
+	Hosts     []SyncHost               `json:"hosts,omitempty"`
+	TokenDefs []authtoken.SyncTokenDef `json:"token_defs,omitempty"`
 }
 
 // SyncGroup represents a named group entry in the sync file.
@@ -91,7 +95,7 @@ type SyncConflict struct {
 }
 
 // CurrentSyncVersion is the version of the sync data format
-const CurrentSyncVersion = 3
+const CurrentSyncVersion = 4
 
 // GroupTombstoneRetention is how long we retain deleted group tombstones for sync.
 // After this window, tombstones may be garbage collected, and very stale devices may resurrect old groups.

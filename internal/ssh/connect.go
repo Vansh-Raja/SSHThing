@@ -186,6 +186,62 @@ func Connect(conn Connection) (*exec.Cmd, *TempKeyFile, error) {
 	return cmd, tempKey, nil
 }
 
+// ConnectExec establishes a non-interactive SSH command execution session.
+// The remote command is passed as a single argument to ssh after the target host.
+func ConnectExec(conn Connection, remoteCommand string) (*exec.Cmd, *TempKeyFile, error) {
+	remoteCommand = strings.TrimSpace(remoteCommand)
+	if remoteCommand == "" {
+		return nil, nil, fmt.Errorf("remote command is required")
+	}
+
+	var tempKey *TempKeyFile
+	var args []string
+
+	args = append(args, "-T")
+	args = append(args, "-o", "StrictHostKeyChecking="+strictHostKeyChecking(conn.HostKeyPolicy))
+	args = append(args, "-o", fmt.Sprintf("ServerAliveInterval=%d", keepAliveSeconds(conn.KeepAliveSeconds)))
+
+	if conn.Port != 22 && conn.Port != 0 {
+		args = append(args, "-p", fmt.Sprintf("%d", conn.Port))
+	}
+
+	if conn.PrivateKey != "" {
+		var err error
+		tempKey, err = NewTempKeyFile(conn.PrivateKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create temp key file: %w", err)
+		}
+		args = append(args, "-i", tempKey.Path())
+	}
+
+	passwordAuth := conn.PrivateKey == "" && conn.Password != ""
+	if passwordAuth {
+		args = append(args, "-o", "PreferredAuthentications=password,keyboard-interactive")
+		args = append(args, "-o", "PubkeyAuthentication=no")
+	}
+
+	target := conn.Username + "@" + conn.Hostname
+	args = append(args, target, remoteCommand)
+
+	cmd, cleanupHolder, err := prepareClientCommand("ssh", args, conn, tempKey)
+	if err != nil {
+		if tempKey != nil {
+			_ = tempKey.Cleanup()
+		}
+		return nil, nil, err
+	}
+	if tempKey == nil {
+		tempKey = cleanupHolder
+	} else {
+		tempKey.merge(cleanupHolder)
+	}
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd, tempKey, nil
+}
+
 // ConnectSFTP establishes an interactive SFTP session using the system `sftp` client.
 // It returns the exec.Cmd that can be used to run the session and any temp key file
 // that must be cleaned up after exit.
@@ -408,5 +464,17 @@ func RunSSH(conn Connection) error {
 	}
 
 	// Run the SSH session
+	return cmd.Run()
+}
+
+// RunSSHExec runs a non-interactive remote command over SSH and waits for completion.
+func RunSSHExec(conn Connection, remoteCommand string) error {
+	cmd, tempKey, err := ConnectExec(conn, remoteCommand)
+	if err != nil {
+		return err
+	}
+	if tempKey != nil {
+		defer tempKey.Cleanup()
+	}
 	return cmd.Run()
 }

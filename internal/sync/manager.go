@@ -2,9 +2,11 @@ package sync
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/Vansh-Raja/SSHThing/internal/authtoken"
 	"github.com/Vansh-Raja/SSHThing/internal/config"
 	"github.com/Vansh-Raja/SSHThing/internal/db"
 )
@@ -126,6 +128,15 @@ func (m *Manager) Sync() *SyncResult {
 		result.HostsUpdated = importResult.Updated
 		result.HostsPulled = importResult.Added + importResult.Updated
 		result.Conflicts = importResult.Conflicts
+
+		if m.cfg.Automation.SyncTokenDefinitions {
+			vault, err := authtoken.LoadVault()
+			if err == nil && vault != nil {
+				if vault.MergeSyncDefinitions(remoteData.TokenDefs) {
+					_ = authtoken.SaveVault(vault)
+				}
+			}
+		}
 	}
 
 	// Step 4: Export local data
@@ -142,6 +153,25 @@ func (m *Manager) Sync() *SyncResult {
 		return result
 	}
 	result.HostsPushed = computeHostsPushed(localData, remoteData)
+	if m.cfg.Automation.SyncTokenDefinitions {
+		vault, err := authtoken.LoadVault()
+		if err == nil && vault != nil {
+			if hosts, herr := m.store.GetHosts(); herr == nil {
+				labels := make(map[int]string, len(hosts))
+				for _, h := range hosts {
+					d := strings.TrimSpace(h.Label)
+					if d == "" {
+						d = strings.TrimSpace(h.Hostname)
+					}
+					labels[h.ID] = d
+				}
+				if vault.SyncHostLabels(labels) {
+					_ = authtoken.SaveVault(vault)
+				}
+			}
+			localData.TokenDefs = vault.ExportSyncDefinitions()
+		}
+	}
 	if err := ExportDataToFile(localData, m.git.GetSyncFilePath(), m.password); err != nil {
 		result.Error = err
 		result.Message = fmt.Sprintf("Export failed: %v", err)

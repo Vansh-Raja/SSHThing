@@ -205,6 +205,95 @@ Sync your hosts across multiple devices using a private Git repository.
 The sync status is displayed in the footer (e.g., "Sync: 2m ago", "Syncing...", or "Error: ...").
 When you press `Shift+Y`, SSHThing now runs sync asynchronously and shows a live syncing indicator + loading bar in the footer while work is in progress.
 
+## Automation Tokens + `sshthing exec`
+
+Use automation tokens when you want `sshpass`-style command execution for agents/scripts without exposing VPS passwords in plaintext files.
+
+### What this gives you
+
+- Tokens are created only inside logged-in SSHThing
+- One token can allow access to multiple hosts
+- Token access is bound internally to host IDs (label renames keep working)
+- Tokens are immutable scope (to change scope, create a new token)
+- Revoked tokens stop working immediately
+- New tokens use DB-backed execution (host credentials are fetched from your encrypted DB at exec time)
+
+### Create a token (inside app)
+
+1. Open settings with `,`
+2. Open `Automation: Manage tokens`
+3. Press `N` to create
+4. Enter a token name and press `Enter`
+5. Select hosts with `Space`
+6. Press `Enter` to create
+7. In the one-time popup:
+   - press `C` to copy token
+   - press `Esc` to close
+
+### Token manager keybindings
+
+- `N`: create new token
+- `A`: activate selected inactive token on this device
+- `R`: revoke selected token
+- `D`: delete selected token (revoked only)
+- `Esc`: back
+
+### CLI exec usage
+
+```bash
+sshthing exec -t "Production App Server" --auth "stk_xxx_yyy" "hostname"
+```
+
+Also supported:
+
+```bash
+sshthing exec -t "Production App Server" --auth-file /path/to/token.txt "hostname"
+printf 'stk_xxx_yyy' | sshthing exec -t "Production App Server" --auth-stdin "hostname"
+```
+
+Session cache commands (optional):
+
+```bash
+printf 'MASTER_PASSWORD' | sshthing session unlock --password-stdin --ttl 15m
+sshthing session status
+sshthing session lock
+```
+
+### Multi-host token example
+
+If one token has both `Production App Server` and `Background Worker` in scope:
+
+```bash
+sshthing exec -t "Production App Server" --auth "stk_xxx_yyy" "systemctl status my-app --no-pager"
+sshthing exec -t "Background Worker" --auth "stk_xxx_yyy" "systemctl status my-worker --no-pager"
+```
+
+### Test flow (recommended)
+
+1. Create token with two hosts in scope
+2. Run one command against each host with same token
+3. Revoke token in app (`R`)
+4. Re-run command and confirm it fails
+5. Delete revoked token (`D`)
+
+### Important behavior
+
+- `-t` must match a host label in that token's scope exactly (same text/case)
+- use the value shown in the host `Label` field inside SSHThing
+- if the label contains spaces, wrap it in quotes: `-t "Deployment Server"`
+- If label not in scope, command is denied
+- If token is revoked/deleted, command is denied
+- Commands return remote exit code (good for CI/agent workflows)
+- Synced token definitions may appear as inactive on a new device until activated (`A`) locally
+
+### Security notes
+
+- Prefer `--auth-file` or `--auth-stdin` over `--auth` for less shell-history exposure
+- Token is shown once at creation: save it safely
+- Revoked tokens should be deleted when no longer needed
+- By default, usable token secrets are local to the current SSHThing data directory
+- Optional setting `Automation: Sync token definitions` syncs only names/scope/revocations (no usable token secret material)
+
 ## Data & Safety Notes
 
 - Database location:

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Vansh-Raja/SSHThing/internal/authtoken"
 	"github.com/Vansh-Raja/SSHThing/internal/db"
 )
 
@@ -207,6 +208,7 @@ func Merge(local, remote *SyncData) *SyncData {
 			UpdatedAt: time.Now(),
 			Groups:    []SyncGroup{},
 			Hosts:     []SyncHost{},
+			TokenDefs: []authtoken.SyncTokenDef{},
 		}
 	}
 
@@ -261,10 +263,31 @@ func Merge(local, remote *SyncData) *SyncData {
 		hosts = append(hosts, h)
 	}
 
+	mergedTokens := make(map[string]authtoken.SyncTokenDef)
+	for _, td := range remote.TokenDefs {
+		if strings.TrimSpace(td.TokenID) == "" {
+			continue
+		}
+		mergedTokens[td.TokenID] = td
+	}
+	for _, td := range local.TokenDefs {
+		if strings.TrimSpace(td.TokenID) == "" {
+			continue
+		}
+		if existing, ok := mergedTokens[td.TokenID]; !ok || td.UpdatedAt.After(existing.UpdatedAt) {
+			mergedTokens[td.TokenID] = td
+		}
+	}
+	tokenDefs := make([]authtoken.SyncTokenDef, 0, len(mergedTokens))
+	for _, td := range mergedTokens {
+		tokenDefs = append(tokenDefs, td)
+	}
+
 	return &SyncData{
 		Version:   CurrentSyncVersion,
 		UpdatedAt: time.Now(),
 		Groups:    groups,
 		Hosts:     hosts,
+		TokenDefs: tokenDefs,
 	}
 }

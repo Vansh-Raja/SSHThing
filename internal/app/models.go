@@ -31,6 +31,7 @@ const (
 	ViewModeHelp
 	ViewModeSpotlight
 	ViewModeSettings
+	ViewModeTokenManager
 	ViewModeLogin
 	ViewModeSetup // First-run password setup
 	ViewModeQuitConfirm
@@ -59,6 +60,8 @@ func (v ViewMode) String() string {
 		return "spotlight"
 	case ViewModeSettings:
 		return "settings"
+	case ViewModeTokenManager:
+		return "token_manager"
 	case ViewModeLogin:
 		return "login"
 	case ViewModeSetup:
