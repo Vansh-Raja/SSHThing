@@ -22,7 +22,7 @@ A secure, modern SSH host manager TUI built with Go and Bubble Tea.
   - Password auth (optional encrypted storage + auto-login)
 - 🔌 **SSH connect**: connects using system `ssh`
 - 🔎 **Spotlight search**: `/` to search and connect quickly
-- 📁 **Mount in Finder (beta, macOS)**: mounts via FUSE-T + SSHFS and opens in Finder
+- 📁 **SSHFS Mounts (beta)**: mounts remote filesystems via SSHFS (macOS Finder / Linux file manager)
 - 🔄 **Git Sync**: sync hosts across devices via a private Git repository
 
 ### 📅 Planned
@@ -36,7 +36,7 @@ A secure, modern SSH host manager TUI built with Go and Bubble Tea.
 - Optional for best password auto-login on Linux/macOS: `sshpass`
 - A terminal with 256-color support
 - SQLCipher build support (this project uses `github.com/mutecomm/go-sqlcipher/v4`, which typically requires CGO and SQLCipher on your system)
-- Finder mounts (beta): macOS only + `sshfs` (FUSE-T)
+- SSHFS mounts (beta): macOS requires FUSE-T + `sshfs`; Linux requires `sshfs` + FUSE
 
 ## Install / Run
 
@@ -72,6 +72,45 @@ If macOS blocks the binary on first run:
 ```bash
 xattr -dr com.apple.quarantine sshthing
 ```
+
+### Linux
+
+**Install from Release (.deb — Debian/Ubuntu):**
+
+```bash
+curl -LO https://github.com/Vansh-Raja/SSHThing/releases/latest/download/sshthing-linux-amd64.deb
+sudo dpkg -i sshthing-linux-amd64.deb
+sshthing
+```
+
+**Install from Release (.rpm — Fedora/RHEL):**
+
+```bash
+curl -LO https://github.com/Vansh-Raja/SSHThing/releases/latest/download/sshthing-linux-amd64.rpm
+sudo rpm -i sshthing-linux-amd64.rpm
+sshthing
+```
+
+**Install from Release (tarball):**
+
+1. Download the right tarball from [Releases](https://github.com/Vansh-Raja/SSHThing/releases):
+   - x86_64: `sshthing-linux-amd64.tar.gz`
+   - ARM64: `sshthing-linux-arm64.tar.gz`
+2. Extract and run:
+
+```bash
+tar xzf sshthing-linux-*.tar.gz
+chmod +x sshthing
+./sshthing
+```
+
+3. (Optional) Install it on your PATH:
+
+```bash
+sudo mv sshthing /usr/local/bin/sshthing
+```
+
+**Note:** SSHFS mounts require `sshfs` and `fusermount` — install via your package manager (e.g., `apt install sshfs`).
 
 ### Windows
 
@@ -127,14 +166,27 @@ go build -o sshthing ./cmd/sshthing
 
 **Windows from source:** See [BUILDING_WINDOWS.md](BUILDING_WINDOWS.md) for CGO/SQLCipher setup.
 
-## Finder Mounts (Beta, macOS)
+## SSHFS Mounts (Beta)
 
-Install dependencies:
+### macOS
 
 ```bash
 brew install --cask fuse-t
 brew tap macos-fuse-t/homebrew-cask
 brew install --cask fuse-t-sshfs
+```
+
+### Linux
+
+```bash
+# Debian/Ubuntu
+sudo apt install sshfs
+
+# Fedora/RHEL
+sudo dnf install fuse-sshfs
+
+# Arch
+sudo pacman -S sshfs
 ```
 
 ## Keybindings
@@ -143,7 +195,7 @@ brew install --cask fuse-t-sshfs
 - `↑/↓` or `j/k`: navigate
 - `Enter`: connect to selected host (SSH)
 - `S` then `Enter`: connect to selected host (SFTP)
-- `M` then `Enter`: mount/unmount selected host in Finder (beta, macOS)
+- `M` then `Enter`: mount/unmount selected host (beta, macOS/Linux)
 - `Shift+Y`: sync hosts with Git repository
 - `a`: add host
 - `e`: edit host
@@ -163,7 +215,7 @@ brew install --cask fuse-t-sshfs
 ### Spotlight
 - `Enter`: connect (SSH)
 - `S` then `Enter`: connect (SFTP)
-- `M` then `Enter`: mount/unmount (beta, macOS)
+- `M` then `Enter`: mount/unmount (beta, macOS/Linux)
 
 ## Git Sync
 
@@ -308,7 +360,9 @@ sshthing exec -t "Background Worker" --auth "stk_xxx_yyy" "systemctl status my-w
   - Linux: `~/.config/sshthing/sync/`
   - Windows: `%APPDATA%\sshthing\sync\`
 - If you forget the master password, the encrypted DB cannot be recovered.
-- Mount points (macOS only): `~/Library/Application Support/sshthing/mounts/`
+- Mount points:
+  - macOS: `~/Library/Application Support/sshthing/mounts/`
+  - Linux: `~/.config/sshthing/mounts/`
 - If you choose "Leave Mounted & Quit", a mount key file may remain at the mount-keys directory until you unmount.
 
 ### Environment Variables

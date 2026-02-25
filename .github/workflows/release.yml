@@ -203,8 +203,128 @@ jobs:
           name: sshthing-macos-arm64
           path: sshthing-macos-arm64.zip
 
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlcipher-dev pkg-config gcc
+
+      - name: Build
+        run: |
+          export CGO_ENABLED=1
+          export GOARCH=amd64
+          go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o sshthing ./cmd/sshthing
+
+      - name: Smoke test binary
+        run: |
+          ./sshthing --version
+          ./sshthing --help >/dev/null
+          arch_info="$(file sshthing)"
+          echo "$arch_info"
+          case "$arch_info" in
+            *x86-64*|*x86_64*) ;;
+            *)
+              echo "Expected x86_64 binary"
+              exit 1
+              ;;
+          esac
+
+      - name: Create tarball
+        run: |
+          tar czf sshthing-linux-amd64.tar.gz sshthing README.md LICENSE
+
+      - name: Install nfpm
+        run: |
+          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
+          sudo apt-get update
+          sudo apt-get install -y nfpm
+
+      - name: Build .deb and .rpm
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          export VERSION GOARCH=amd64
+          nfpm package --packager deb --target sshthing-linux-amd64.deb
+          nfpm package --packager rpm --target sshthing-linux-amd64.rpm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshthing-linux-amd64
+          path: |
+            sshthing-linux-amd64.tar.gz
+            sshthing-linux-amd64.deb
+            sshthing-linux-amd64.rpm
+
+  build-linux-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install cross-compile dependencies
+        run: |
+          sudo dpkg --add-architecture arm64
+          # Add arm64 archive sources alongside the default amd64 ones
+          sudo tee /etc/apt/sources.list.d/arm64-cross.list <<'SOURCES'
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -cs) main restricted universe
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -cs)-updates main restricted universe
+          SOURCES
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu pkg-config libsqlcipher-dev:arm64
+
+      - name: Build
+        run: |
+          export CGO_ENABLED=1
+          export GOARCH=arm64
+          export CC=aarch64-linux-gnu-gcc
+          export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
+          go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o sshthing ./cmd/sshthing
+
+      - name: Create tarball
+        run: |
+          tar czf sshthing-linux-arm64.tar.gz sshthing README.md LICENSE
+
+      - name: Install nfpm
+        run: |
+          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
+          sudo apt-get update
+          sudo apt-get install -y nfpm
+
+      - name: Build .deb and .rpm
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          export VERSION GOARCH=arm64
+          nfpm package --packager deb --target sshthing-linux-arm64.deb
+          nfpm package --packager rpm --target sshthing-linux-arm64.rpm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshthing-linux-arm64
+          path: |
+            sshthing-linux-arm64.tar.gz
+            sshthing-linux-arm64.deb
+            sshthing-linux-arm64.rpm
+
   release:
-    needs: [build-windows, build-macos, build-macos-arm64]
+    needs: [build-windows, build-macos, build-macos-arm64, build-linux, build-linux-arm64]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -223,7 +343,24 @@ jobs:
           cp artifacts/sshthing-windows-amd64/sshthing-setup-windows-amd64.exe dist/
           cp artifacts/sshthing-macos-amd64/sshthing-macos-amd64.zip dist/
           cp artifacts/sshthing-macos-arm64/sshthing-macos-arm64.zip dist/
-          (cd dist && sha256sum sshthing-setup-windows-amd64.exe sshthing-windows-amd64.zip sshthing-macos-amd64.zip sshthing-macos-arm64.zip > SHA256SUMS)
+          cp artifacts/sshthing-linux-amd64/sshthing-linux-amd64.tar.gz dist/
+          cp artifacts/sshthing-linux-amd64/sshthing-linux-amd64.deb dist/
+          cp artifacts/sshthing-linux-amd64/sshthing-linux-amd64.rpm dist/
+          cp artifacts/sshthing-linux-arm64/sshthing-linux-arm64.tar.gz dist/
+          cp artifacts/sshthing-linux-arm64/sshthing-linux-arm64.deb dist/
+          cp artifacts/sshthing-linux-arm64/sshthing-linux-arm64.rpm dist/
+          (cd dist && sha256sum \
+            sshthing-setup-windows-amd64.exe \
+            sshthing-windows-amd64.zip \
+            sshthing-macos-amd64.zip \
+            sshthing-macos-arm64.zip \
+            sshthing-linux-amd64.tar.gz \
+            sshthing-linux-amd64.deb \
+            sshthing-linux-amd64.rpm \
+            sshthing-linux-arm64.tar.gz \
+            sshthing-linux-arm64.deb \
+            sshthing-linux-arm64.rpm \
+            > SHA256SUMS)
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v3
@@ -233,6 +370,12 @@ jobs:
             dist/sshthing-windows-amd64.zip
             dist/sshthing-macos-amd64.zip
             dist/sshthing-macos-arm64.zip
+            dist/sshthing-linux-amd64.tar.gz
+            dist/sshthing-linux-amd64.deb
+            dist/sshthing-linux-amd64.rpm
+            dist/sshthing-linux-arm64.tar.gz
+            dist/sshthing-linux-arm64.deb
+            dist/sshthing-linux-arm64.rpm
             dist/SHA256SUMS
 
       - name: Create or validate draft release
@@ -264,6 +407,12 @@ jobs:
             dist/sshthing-windows-amd64.zip \
             dist/sshthing-macos-amd64.zip \
             dist/sshthing-macos-arm64.zip \
+            dist/sshthing-linux-amd64.tar.gz \
+            dist/sshthing-linux-amd64.deb \
+            dist/sshthing-linux-amd64.rpm \
+            dist/sshthing-linux-arm64.tar.gz \
+            dist/sshthing-linux-arm64.deb \
+            dist/sshthing-linux-arm64.rpm \
             dist/SHA256SUMS \
             --repo "$repo" \
             --clobber
@@ -287,6 +436,12 @@ jobs:
             "sshthing-windows-amd64.zip"
             "sshthing-macos-amd64.zip"
             "sshthing-macos-arm64.zip"
+            "sshthing-linux-amd64.tar.gz"
+            "sshthing-linux-amd64.deb"
+            "sshthing-linux-amd64.rpm"
+            "sshthing-linux-arm64.tar.gz"
+            "sshthing-linux-arm64.deb"
+            "sshthing-linux-arm64.rpm"
             "SHA256SUMS"
           )
 

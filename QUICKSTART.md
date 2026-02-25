@@ -27,15 +27,15 @@ go build -o sshthing ./cmd/sshthing
 
 - Select a host and press `Enter` (SSH)
 - For SFTP: press `S`, then `Enter`
-- For Finder mount (beta, macOS): press `M`, then `Enter`
+- For SSHFS mount (beta, macOS/Linux): press `M`, then `Enter`
 - Or press `/` to open spotlight search and:
   - `Enter` for SSH
   - `S`, then `Enter` for SFTP
-  - `M`, then `Enter` for Finder mount (beta)
+  - `M`, then `Enter` for SSHFS mount (beta)
 
-## Finder Mounts (Beta, macOS)
+## SSHFS Mounts (Beta, macOS/Linux)
 
-Install dependencies:
+**macOS dependencies:**
 
 ```bash
 brew install --cask fuse-t
@@ -43,8 +43,16 @@ brew tap macos-fuse-t/homebrew-cask
 brew install --cask fuse-t-sshfs
 ```
 
+**Linux dependencies:**
+
+```bash
+sudo apt install sshfs    # Debian/Ubuntu
+sudo dnf install fuse-sshfs  # Fedora/RHEL
+sudo pacman -S sshfs      # Arch
+```
+
 Usage:
-- `M`, then `Enter` mounts/unmounts the selected host and opens it in Finder.
+- `M`, then `Enter` mounts/unmounts the selected host and opens it in your file manager.
 - On quit, if mounts are active, SSHThing asks whether to unmount or leave them mounted (and restores state on next login).
 
 ## Reset DB (Destructive)

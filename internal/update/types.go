@@ -9,7 +9,6 @@ const (
 	ChannelWindowsInstaller Channel = "windows_installer"
 	ChannelMacOSBrew        Channel = "macos_brew"
 	ChannelStandalone       Channel = "standalone"
-	ChannelLinuxGuidance    Channel = "linux_guidance"
 )
 
 type ApplyMode string

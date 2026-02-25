@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -39,10 +40,11 @@ type PreparedMount struct {
 func (p *PreparedMount) Cmd() *exec.Cmd { return p.cmd }
 
 type Manager struct {
-	mu       sync.Mutex
-	active   map[int]*Mount
-	sshfsBin string
-	diskutil string
+	mu         sync.Mutex
+	active     map[int]*Mount
+	sshfsBin   string
+	diskutil   string
+	fusermount string
 }
 
 func NewManager() *Manager {
@@ -61,14 +63,17 @@ func (m *Manager) IsMounted(hostID int) (bool, *Mount) {
 func (m *Manager) CheckPrereqs() error {
 	switch runtime.GOOS {
 	case "darwin":
-		// macOS - continue with FUSE-T/SSHFS checks below
+		return m.checkPrereqsDarwin()
+	case "linux":
+		return m.checkPrereqsLinux()
 	case "windows":
-		return fmt.Errorf("Mount feature is not yet available on Windows.\nThis feature requires FUSE filesystem support which is macOS-only for now.")
+		return fmt.Errorf("Mount feature is not yet available on Windows.\nThis feature requires FUSE filesystem support.")
 	default:
-		return fmt.Errorf("Mount feature is currently only supported on macOS (darwin)")
+		return fmt.Errorf("Mount feature is not supported on %s", runtime.GOOS)
 	}
+}
 
-	// Prefer the standard `sshfs` name, but allow variants.
+func (m *Manager) checkPrereqsDarwin() error {
 	for _, name := range []string{"sshfs", "sshfs-fuse-t"} {
 		if p, err := exec.LookPath(name); err == nil {
 			m.sshfsBin = p
@@ -90,6 +95,31 @@ func (m *Manager) CheckPrereqs() error {
 	}
 	if p, err := exec.LookPath("diskutil"); err == nil {
 		m.diskutil = p
+	}
+	return nil
+}
+
+func (m *Manager) checkPrereqsLinux() error {
+	if p, err := exec.LookPath("sshfs"); err == nil {
+		m.sshfsBin = p
+	}
+	if m.sshfsBin == "" {
+		return errors.New("⚠ Mount requires sshfs.\nInstall:\n  apt install sshfs        (Debian/Ubuntu)\n  dnf install fuse-sshfs   (Fedora/RHEL)\n  pacman -S sshfs          (Arch)")
+	}
+
+	if _, err := exec.LookPath("umount"); err != nil {
+		return fmt.Errorf("⚠ missing required tool: umount")
+	}
+
+	// fusermount3 preferred, fusermount as fallback.
+	for _, name := range []string{"fusermount3", "fusermount"} {
+		if p, err := exec.LookPath(name); err == nil {
+			m.fusermount = p
+			break
+		}
+	}
+	if m.fusermount == "" {
+		return fmt.Errorf("⚠ missing required tool: fusermount (install fuse or fuse3)")
 	}
 	return nil
 }
@@ -244,10 +274,15 @@ func (m *Manager) PrepareMount(hostID int, conn ssh.Connection, remotePath strin
 	// sshfs [user@]host:[dir] mountpoint [options]
 	args := []string{remoteSpec, localPath}
 
-	mountOpts := []string{
-		"reconnect",
-		fmt.Sprintf("volname=%s", strings.TrimSpace(displayName)),
-		"defer_permissions",
+	var mountOpts []string
+	if runtime.GOOS == "linux" {
+		mountOpts = []string{"reconnect"}
+	} else {
+		mountOpts = []string{
+			"reconnect",
+			fmt.Sprintf("volname=%s", strings.TrimSpace(displayName)),
+			"defer_permissions",
+		}
 	}
 	args = append(args, "-o", strings.Join(mountOpts, ","))
 
@@ -320,8 +355,15 @@ func (m *Manager) FinalizeMount(p *PreparedMount) error {
 	}
 	m.mu.Unlock()
 
-	// Open in Finder. If this fails, treat as non-fatal.
-	_ = exec.Command("open", p.LocalPath).Run()
+	// Open in file manager. If this fails, treat as non-fatal.
+	switch runtime.GOOS {
+	case "darwin":
+		_ = exec.Command("open", p.LocalPath).Run()
+	case "linux":
+		if xdgOpen, err := exec.LookPath("xdg-open"); err == nil {
+			_ = exec.Command(xdgOpen, p.LocalPath).Run()
+		}
+	}
 	return nil
 }
 
@@ -336,7 +378,12 @@ func (m *Manager) PrepareUnmount(hostID int) (*exec.Cmd, string, error) {
 		return nil, "", fmt.Errorf("⚠ host is not mounted")
 	}
 
-	cmd := exec.Command("umount", mnt.LocalPath)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "linux" && m.fusermount != "" {
+		cmd = exec.Command(m.fusermount, "-u", mnt.LocalPath)
+	} else {
+		cmd = exec.Command("umount", mnt.LocalPath)
+	}
 	cmd.Env = os.Environ()
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -353,12 +400,22 @@ func (m *Manager) FinalizeUnmount(hostID int, primaryErr error) error {
 		return nil
 	}
 
-	// If umount failed, try diskutil fallback (if available).
-	if primaryErr != nil && m.diskutil != "" {
-		_ = exec.Command(m.diskutil, "unmount", mnt.LocalPath).Run()
-		stillMounted, _ := waitMounted(mnt.LocalPath, 200*time.Millisecond)
-		if stillMounted {
-			_ = exec.Command(m.diskutil, "unmount", "force", mnt.LocalPath).Run()
+	// If umount failed, try platform-specific fallback.
+	if primaryErr != nil {
+		switch runtime.GOOS {
+		case "darwin":
+			if m.diskutil != "" {
+				_ = exec.Command(m.diskutil, "unmount", mnt.LocalPath).Run()
+				stillMounted, _ := waitMounted(mnt.LocalPath, 200*time.Millisecond)
+				if stillMounted {
+					_ = exec.Command(m.diskutil, "unmount", "force", mnt.LocalPath).Run()
+				}
+			}
+		case "linux":
+			if m.fusermount != "" {
+				// Lazy unmount as force fallback.
+				_ = exec.Command(m.fusermount, "-uz", mnt.LocalPath).Run()
+			}
 		}
 	}
 
@@ -477,6 +534,11 @@ func waitUnmounted(localPath string, timeout time.Duration) (bool, error) {
 }
 
 func isMounted(localPath string) (bool, error) {
+	// Linux fast-path: read /proc/mounts directly instead of spawning mount(8).
+	if runtime.GOOS == "linux" {
+		return isMountedProc(localPath)
+	}
+
 	out, err := exec.Command("mount").Output()
 	if err != nil {
 		return false, err
@@ -494,6 +556,29 @@ func isMounted(localPath string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func isMountedProc(localPath string) (bool, error) {
+	f, err := os.Open("/proc/mounts")
+	if err != nil {
+		// Fall back to mount(8) if /proc/mounts is unavailable.
+		out, err2 := exec.Command("mount").Output()
+		if err2 != nil {
+			return false, err2
+		}
+		return strings.Contains(string(out), " "+localPath+" "), nil
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		// /proc/mounts format: device mountpoint fstype options ...
+		fields := strings.Fields(scanner.Text())
+		if len(fields) >= 2 && fields[1] == localPath {
+			return true, nil
+		}
+	}
+	return false, scanner.Err()
 }
 
 // IsMounted reports whether a given local mount path is currently mounted.

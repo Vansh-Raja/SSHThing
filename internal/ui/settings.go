@@ -210,7 +210,7 @@ func buildSettingsRows(cfg config.Config, updateState UpdateSettingsState) []set
 		{
 			label:       "Mounts: Enabled (beta)",
 			value:       onOff(cfg.Mount.Enabled),
-			description: "Enables macOS Finder mounts (requires FUSE-T + sshfs).",
+			description: mountDescription(),
 		},
 		{
 			label:       "Mounts: Default remote path",
@@ -498,4 +498,13 @@ func emptyAs(v, alt string) string {
 		return alt
 	}
 	return v
+}
+
+func mountDescription() string {
+	switch runtime.GOOS {
+	case "linux":
+		return "Enables SSHFS mounts (requires sshfs + FUSE)."
+	default:
+		return "Enables Finder mounts (requires FUSE-T + sshfs)."
+	}
 }

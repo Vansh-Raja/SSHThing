@@ -5,6 +5,27 @@ Entries below are written as an “engineering history” of the major problems 
 
 ## Running Log
 
+- id: 2026-02-25T12:00:00Z-linux
+  time: 2026-02-25T12:00:00Z
+  type: code-change
+  summary: "Add full Linux support: file-based keyring fallback for headless systems, native SSHFS mount/unmount with fusermount and /proc/mounts, self-update via tar.gz artifacts, CI test-linux job, release workflow producing .tar.gz/.deb/.rpm for amd64+arm64, nfpm packaging config, and updated documentation."
+  files: internal/securestore/keyring.go, internal/securestore/filestore.go, internal/mount/mount.go, internal/ui/settings.go, internal/update/check.go, internal/update/apply.go, internal/update/download.go, internal/update/types.go, .github/workflows/ci.yml, .github/workflows/release.yml, nfpm.yaml, README.md, QUICKSTART.md
+  commit: pending
+
+- id: 2026-02-25T05:49:38Z-3658
+  time: 2026-02-25T05:49:38Z
+  type: code-change
+  summary: Added project-local .opencode and .claude sshthing-agent-tui skills plus shared references, and created repo opencode.json to require approval for loading sshthing-agent-tui skill.
+  files: .opencode/skills/sshthing-agent-tui/, .claude/skills/sshthing-agent-tui/, opencode.json
+  commit: pending
+
+- id: 2026-02-25T05:49:37Z-6853
+  time: 2026-02-25T05:49:37Z
+  type: plan-updated
+  summary: Planned local Claude/OpenCode manual-only sshthing-agent-tui skills with shared workflow/safety/navigation references and OpenCode permission gating.
+  files: n/a
+  commit: pending
+
 - id: 2026-02-25T04:50:32Z-82a7
   time: 2026-02-25T04:50:32Z
   type: git-commit

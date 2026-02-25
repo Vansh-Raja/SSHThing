@@ -130,7 +130,12 @@ func applyReplaceMode(ctx context.Context, check CheckResult, currentExe string)
 		binaryName = "sshthing.exe"
 	}
 	newBinaryPath := filepath.Join(tmpDir, binaryName)
-	if err := extractBinaryFromZip(archivePath, binaryName, newBinaryPath); err != nil {
+	if strings.HasSuffix(archivePath, ".tar.gz") || strings.HasSuffix(archivePath, ".tgz") {
+		err = extractBinaryFromTarGz(archivePath, binaryName, newBinaryPath)
+	} else {
+		err = extractBinaryFromZip(archivePath, binaryName, newBinaryPath)
+	}
+	if err != nil {
 		return ApplyResult{}, err
 	}
 

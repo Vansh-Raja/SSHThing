@@ -1,0 +1,20 @@
+name: sshthing
+arch: "${GOARCH}"
+platform: linux
+version: "${VERSION}"
+maintainer: "Vansh Raja <noreply@sshthing.dev>"
+description: "Secure SSH host manager with encrypted storage"
+homepage: "https://github.com/Vansh-Raja/SSHThing"
+license: MIT
+contents:
+  - src: ./sshthing
+    dst: /usr/local/bin/sshthing
+    file_info:
+      mode: 0755
+overrides:
+  deb:
+    depends:
+      - libsqlcipher0
+  rpm:
+    depends:
+      - sqlcipher

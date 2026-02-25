@@ -1,8 +1,10 @@
 package update
 
 import (
+	"archive/tar"
 	"archive/zip"
 	"bufio"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -134,5 +136,48 @@ func extractBinaryFromZip(zipPath, binaryName, outPath string) error {
 		}
 	}
 
+	return fmt.Errorf("binary %s not found in archive", binaryName)
+}
+
+func extractBinaryFromTarGz(tarGzPath, binaryName, outPath string) error {
+	f, err := os.Open(tarGzPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+		if strings.EqualFold(filepath.Base(header.Name), binaryName) {
+			if err := os.MkdirAll(filepath.Dir(outPath), 0700); err != nil {
+				return err
+			}
+			wf, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0755)
+			if err != nil {
+				return err
+			}
+			defer wf.Close()
+			if _, err := io.Copy(wf, tr); err != nil {
+				return err
+			}
+			return nil
+		}
+	}
 	return fmt.Errorf("binary %s not found in archive", binaryName)
 }

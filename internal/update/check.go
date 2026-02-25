@@ -99,7 +99,10 @@ func resolveReleaseAsset(assets []githubReleaseAsset) AssetInfo {
 		return findAsset(assets, "sshthing-macos-amd64.zip")
 	}
 	if goos == "linux" {
-		return AssetInfo{}
+		if goarch == "arm64" {
+			return findAsset(assets, "sshthing-linux-arm64.tar.gz")
+		}
+		return findAsset(assets, "sshthing-linux-amd64.tar.gz")
 	}
 	return AssetInfo{}
 }
@@ -143,9 +146,16 @@ func selectApplyMode(result *CheckResult) {
 		}
 		result.ApplyMode = ApplyModeGuidance
 		result.Guidance = []string{"Download latest macOS zip from GitHub Releases and replace your binary."}
+	case "linux":
+		if result.Asset.URL != "" {
+			result.ApplyMode = ApplyModeReplaceBin
+		} else {
+			result.ApplyMode = ApplyModeGuidance
+			result.Guidance = []string{"No Linux binary found in this release. Rebuild from source."}
+		}
 	default:
 		result.ApplyMode = ApplyModeGuidance
-		result.Guidance = []string{"Linux auto-update is not enabled yet. Use your package manager or rebuild from source."}
+		result.Guidance = []string{"Auto-update is not available on this platform. Rebuild from source."}
 	}
 }
 
@@ -167,7 +177,7 @@ func detectChannel(ctx context.Context) (Channel, string, string, error) {
 		}
 		return ChannelStandalone, "macOS standalone binary", "", nil
 	case "linux":
-		return ChannelLinuxGuidance, "linux check-only", "", nil
+		return ChannelStandalone, "linux standalone", "", nil
 	default:
 		return ChannelUnknown, "unsupported platform", "", nil
 	}
