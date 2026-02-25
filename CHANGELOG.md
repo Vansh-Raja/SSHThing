@@ -10,28 +10,28 @@ Entries below are written as an “engineering history” of the major problems 
   type: code-change
   summary: Implement hybrid automation tokens with a v2 grant-only vault, legacy v1 compatibility, device/session unlock support, optional token-definition metadata sync (no secrets), and activation flow.
   files: internal/authtoken/, internal/securestore/, internal/unlock/, internal/db/db.go, internal/ssh/connect.go, internal/sync/, internal/config/config.go, internal/app/, internal/ui/settings.go, cmd/sshthing/, go.mod, go.sum
-  commit: pending
+  commit: b2012f43b9a267452d3319186939e02114cf1d7b @ 2026-02-25T04:48:57Z
 
 - id: 2026-02-24T10:30:16Z-1964
   time: 2026-02-24T10:30:16Z
   type: plan-updated
   summary: Plan hybrid token security work: v2 grant-only design, DB-backed exec, keyring/session unlock, and optional token-definition sync.
   files: n/a
-  commit: pending
+  commit: b2012f43b9a267452d3319186939e02114cf1d7b @ 2026-02-25T04:48:57Z
 
 - id: 2026-02-24T08:49:46Z-77c7
   time: 2026-02-24T08:49:46Z
   type: code-change
   summary: Update README automation token/exec docs with end-to-end flows and clearer label matching plus quoting examples.
   files: README.md
-  commit: pending
+  commit: b2012f43b9a267452d3319186939e02114cf1d7b @ 2026-02-25T04:48:57Z
 
 - id: 2026-02-24T05:56:51Z-7c2e
   time: 2026-02-24T05:56:51Z
   type: code-change
   summary: Add automation tokens and `sshthing exec` with immutable multi-host scopes, in-app token management, and a non-interactive exec SSH path.
   files: internal/authtoken/, internal/ssh/, cmd/sshthing/, internal/app/, internal/ui/, internal/db/
-  commit: pending
+  commit: b2012f43b9a267452d3319186939e02114cf1d7b @ 2026-02-25T04:48:57Z
 
 - id: 2026-02-23T18:25:33Z-8c4a
   time: 2026-02-23T18:25:33Z
