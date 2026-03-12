@@ -346,6 +346,18 @@ sshthing exec -t "Background Worker" --auth "stk_xxx_yyy" "systemctl status my-w
 - By default, usable token secrets are local to the current SSHThing data directory
 - Optional setting `Automation: Sync token definitions` syncs only names/scope/revocations (no usable token secret material)
 
+## AI Agent Skills
+
+SSHThing ships with agent skills that let AI coding assistants (Claude Code, OpenCode, Codex) run commands on your remote servers using automation tokens.
+
+**Quick setup** — paste this into any AI assistant:
+
+```
+Set up SSHThing agent skills for my AI coding assistant by following the instructions at: https://raw.githubusercontent.com/Vansh-Raja/SSHThing/main/skills/SETUP_PROMPT.md
+```
+
+Or see [`skills/README.md`](skills/README.md) for manual installation.
+
 ## Data & Safety Notes
 
 - Database location:

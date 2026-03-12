@@ -46,6 +46,11 @@ tmp/
 temp/
 .gocache/
 .gopath/
-.claude/
 .gemini-clipboard/
 *.bak
+
+# Design mockup binaries
+/sshmock*
+
+# Claude Code local config
+.claude/

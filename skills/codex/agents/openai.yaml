@@ -1,0 +1,4 @@
+display_name: SSHThing
+icon: terminal
+brand_color: "#89b4fa"
+allow_implicit_invocation: true

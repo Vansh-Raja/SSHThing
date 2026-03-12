@@ -18,6 +18,8 @@ import (
 	"github.com/Vansh-Raja/SSHThing/internal/unlock"
 	"github.com/Vansh-Raja/SSHThing/internal/update"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 var version = "dev"
@@ -87,6 +89,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Force TrueColor so all themes render correctly
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
 	// Create the initial model
 	m := app.NewModelWithVersion(version)
 
@@ -102,6 +107,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)
 	}
+
+	// OSC 111: restore the terminal's original default background on exit
+	fmt.Fprint(os.Stdout, "\x1b]111\x1b\\")
 }
 
 func runExec(args []string) error {

@@ -17,61 +17,32 @@ type Host struct {
 	LastConnected *time.Time `json:"last_connected,omitempty"`
 }
 
-// ViewMode represents the current view state
-type ViewMode int
+// ── Page constants ────────────────────────────────────────────────────
 
 const (
-	ViewModeList ViewMode = iota
-	ViewModeAddHost
-	ViewModeEditHost
-	ViewModeDeleteHost
-	ViewModeCreateGroup
-	ViewModeRenameGroup
-	ViewModeDeleteGroup
-	ViewModeHelp
-	ViewModeSpotlight
-	ViewModeSettings
-	ViewModeTokenManager
-	ViewModeLogin
-	ViewModeSetup // First-run password setup
-	ViewModeQuitConfirm
+	PageHome     = 0
+	PageSettings = 1
+	PageTokens   = 2
+	NumPages     = 3
 )
 
-// String returns the string representation of ViewMode
-func (v ViewMode) String() string {
-	switch v {
-	case ViewModeList:
-		return "list"
-	case ViewModeAddHost:
-		return "add"
-	case ViewModeEditHost:
-		return "edit"
-	case ViewModeDeleteHost:
-		return "delete"
-	case ViewModeCreateGroup:
-		return "create_group"
-	case ViewModeRenameGroup:
-		return "rename_group"
-	case ViewModeDeleteGroup:
-		return "delete_group"
-	case ViewModeHelp:
-		return "help"
-	case ViewModeSpotlight:
-		return "spotlight"
-	case ViewModeSettings:
-		return "settings"
-	case ViewModeTokenManager:
-		return "token_manager"
-	case ViewModeLogin:
-		return "login"
-	case ViewModeSetup:
-		return "setup"
-	case ViewModeQuitConfirm:
-		return "quit_confirm"
-	default:
-		return "unknown"
-	}
-}
+// ── Overlay constants ─────────────────────────────────────────────────
+
+const (
+	OverlayNone        = 0
+	OverlayLogin       = 1
+	OverlaySetup       = 2
+	OverlayHelp        = 3
+	OverlaySearch      = 4
+	OverlayAddHost     = 5
+	OverlayDeleteHost  = 6
+	OverlayCreateGroup = 7
+	OverlayRenameGroup = 8
+	OverlayDeleteGroup = 9
+	OverlayQuit        = 10
+)
+
+// ── List types ────────────────────────────────────────────────────────
 
 type ListItemKind int
 
@@ -104,3 +75,11 @@ type SpotlightItem struct {
 	Score     int
 	Indent    int
 }
+
+// ── Token mode constants ──────────────────────────────────────────────
+
+const (
+	tokenModeList = iota
+	tokenModeCreateName
+	tokenModeCreateScope
+)

@@ -50,8 +50,10 @@ type Config struct {
 	Version int `json:"version"`
 
 	UI struct {
-		VimMode   bool `json:"vim_mode"`
-		ShowIcons bool `json:"show_icons"`
+		VimMode   bool   `json:"vim_mode"`
+		ShowIcons bool   `json:"show_icons"`
+		Theme     string `json:"theme"`
+		IconSet   string `json:"icon_set"`
 	} `json:"ui"`
 
 	SSH struct {
@@ -60,12 +62,14 @@ type Config struct {
 		TermMode            TermMode            `json:"term_mode"`
 		TermCustom          string              `json:"term_custom"`
 		PasswordAutoLogin   bool                `json:"password_auto_login"`
+		PasswordNoticeShown bool                `json:"password_notice_shown,omitempty"`
 		PasswordBackendUnix PasswordBackendUnix `json:"password_backend_unix"`
 	} `json:"ssh"`
 
 	Mount struct {
 		Enabled           bool              `json:"enabled"`
 		DefaultRemotePath string            `json:"default_remote_path"`
+		LocalMountPath    string            `json:"local_mount_path,omitempty"`
 		QuitBehavior      MountQuitBehavior `json:"quit_behavior"`
 	} `json:"mount"`
 
@@ -93,15 +97,17 @@ type Config struct {
 
 func Default() Config {
 	var c Config
-	c.Version = 1
+	c.Version = 2
 	c.UI.VimMode = true
 	c.UI.ShowIcons = true
+	c.UI.Theme = "Catppuccin Mocha"
+	c.UI.IconSet = "Unicode"
 
 	c.SSH.HostKeyPolicy = HostKeyAcceptNew
 	c.SSH.KeepAliveSeconds = 60
 	c.SSH.TermMode = TermAuto
 	c.SSH.TermCustom = ""
-	c.SSH.PasswordAutoLogin = false
+	c.SSH.PasswordAutoLogin = true
 	c.SSH.PasswordBackendUnix = PasswordBackendSSHPassFirst
 
 	c.Mount.Enabled = true
@@ -190,17 +196,10 @@ func withDefaults(c Config) Config {
 		c.Version = def.Version
 	}
 
-	// UI defaults
-	// (bools default false, so we only fill if config version missing)
-	if c.Version == def.Version {
-		// keep as-is
-	} else {
-		// Future migration hook.
-	}
-	if !c.UI.VimMode && def.UI.VimMode {
-		// If config explicitly set false, keep it; otherwise defaulting from zero-value
-		// is ambiguous. We'll assume missing config implies default, but only when the
-		// file was absent. Load() returns defaults in that case.
+	// Migrate from v1 → v2: PasswordAutoLogin default changed to true
+	if c.Version < 2 {
+		c.SSH.PasswordAutoLogin = true
+		c.Version = 2
 	}
 
 	// Enums / ints: normalize invalid values.
@@ -241,12 +240,6 @@ func withDefaults(c Config) Config {
 
 	if c.Automation.SessionTTLSeconds <= 0 || c.Automation.SessionTTLSeconds > 86400 {
 		c.Automation.SessionTTLSeconds = def.Automation.SessionTTLSeconds
-	}
-
-	// Keep UI defaults stable when fields are left at zero-values; callers should
-	// prefer Default() when config file doesn't exist.
-	if c.UI.ShowIcons == false && def.UI.ShowIcons {
-		// Same note as above; leave as-is.
 	}
 
 	return c

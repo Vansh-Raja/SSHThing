@@ -2,6 +2,7 @@ package mount
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -33,11 +34,14 @@ type PreparedMount struct {
 	remotePath string
 	display    string
 
-	keyPath string
-	cmd     *exec.Cmd
+	keyPath   string
+	cmd       *exec.Cmd
+	stderrBuf bytes.Buffer
 }
 
-func (p *PreparedMount) Cmd() *exec.Cmd { return p.cmd }
+func (p *PreparedMount) Cmd() *exec.Cmd        { return p.cmd }
+func (p *PreparedMount) RemotePath() string     { return p.remotePath }
+func (p *PreparedMount) Stderr() string         { return strings.TrimSpace(p.stderrBuf.String()) }
 
 type Manager struct {
 	mu         sync.Mutex
@@ -237,7 +241,7 @@ func remoteSpecFor(conn ssh.Connection, remotePath string) string {
 	return target + ":" + remotePath
 }
 
-func (m *Manager) PrepareMount(hostID int, conn ssh.Connection, remotePath string, displayName string) (*PreparedMount, error) {
+func (m *Manager) PrepareMount(hostID int, conn ssh.Connection, remotePath string, displayName string, localMountBase string) (*PreparedMount, error) {
 	m.mu.Lock()
 	_, alreadyMounted := m.active[hostID]
 	m.mu.Unlock()
@@ -249,15 +253,24 @@ func (m *Manager) PrepareMount(hostID int, conn ssh.Connection, remotePath strin
 		return nil, err
 	}
 
-	root, err := mountRoot()
-	if err != nil {
-		return nil, err
+	root := strings.TrimSpace(localMountBase)
+	if root == "" {
+		var err error
+		root, err = mountRoot()
+		if err != nil {
+			return nil, err
+		}
 	}
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return nil, err
+	if err := os.MkdirAll(root, 0755); err != nil {
+		return nil, fmt.Errorf("cannot create mount directory %s: %v", root, err)
 	}
 
-	mountName := safeMountName(conn.Hostname, conn.Port)
+	// Prefer display name (server label) for the folder; fall back to hostname.
+	label := strings.TrimSpace(displayName)
+	if label == "" {
+		label = conn.Hostname
+	}
+	mountName := safeMountName(label, conn.Port)
 	localPath := filepath.Join(root, mountName)
 	if err := os.MkdirAll(localPath, 0700); err != nil {
 		return nil, err
@@ -303,9 +316,8 @@ func (m *Manager) PrepareMount(hostID int, conn ssh.Connection, remotePath strin
 	cmd.Env = os.Environ()
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 
-	return &PreparedMount{
+	p := &PreparedMount{
 		HostID:     hostID,
 		Hostname:   conn.Hostname,
 		LocalPath:  localPath,
@@ -314,7 +326,10 @@ func (m *Manager) PrepareMount(hostID int, conn ssh.Connection, remotePath strin
 		display:    strings.TrimSpace(displayName),
 		keyPath:    keyPath,
 		cmd:        cmd,
-	}, nil
+	}
+	cmd.Stderr = &p.stderrBuf
+
+	return p, nil
 }
 
 func (m *Manager) AbortMount(p *PreparedMount) {
