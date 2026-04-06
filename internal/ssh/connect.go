@@ -38,33 +38,12 @@ type TempKeyFile struct {
 // NewTempKeyFile creates a secure temporary file for the private key.
 // The file is created with 600 permissions (owner read/write only).
 func NewTempKeyFile(privateKey string) (*TempKeyFile, error) {
-	privateKey = strings.ReplaceAll(privateKey, "\r\n", "\n")
-	privateKey = strings.ReplaceAll(privateKey, "\r", "\n")
-	if privateKey != "" && !strings.HasSuffix(privateKey, "\n") {
-		privateKey += "\n"
-	}
-
-	// Create temp directory if it doesn't exist
 	tmpDir := filepath.Join(os.TempDir(), "ssh-manager")
-	if err := os.MkdirAll(tmpDir, 0700); err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
-	}
-
-	// Generate unique filename
 	filename := fmt.Sprintf("key_%s", uuid.New().String())
 	keyPath := filepath.Join(tmpDir, filename)
 
-	// Create file with secure permissions
-	file, err := os.OpenFile(keyPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp key file: %w", err)
-	}
-	defer file.Close()
-
-	// Write the private key
-	if _, err := file.WriteString(privateKey); err != nil {
-		os.Remove(keyPath)
-		return nil, fmt.Errorf("failed to write private key: %w", err)
+	if err := writePrivateKeyFile(keyPath, privateKey); err != nil {
+		return nil, err
 	}
 
 	return &TempKeyFile{path: keyPath}, nil
@@ -103,18 +82,7 @@ func (t *TempKeyFile) Cleanup() error {
 		return nil
 	}
 	if t.path != "" {
-		// Overwrite the file content before deletion for extra security
-		file, err := os.OpenFile(t.path, os.O_WRONLY, 0600)
-		if err == nil {
-			info, _ := file.Stat()
-			if info != nil {
-				zeros := make([]byte, info.Size())
-				_, _ = file.Write(zeros)
-			}
-			_ = file.Close()
-		}
-
-		_ = os.Remove(t.path)
+		_ = secureDeleteFile(t.path)
 	}
 
 	for _, c := range t.closers {

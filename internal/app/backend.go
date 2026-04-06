@@ -847,11 +847,19 @@ func (m *Model) buildSettingsItems() []ui.SettingsItem {
 		{Category: "updates", Label: "apply update", Value: "", Kind: 2},
 		{Category: "updates", Label: "PATH health", Value: m.updateSettingsState().PathHealth, Kind: 2},
 		{Category: "updates", Label: "fix PATH", Value: "", Kind: 2},
+		{Category: "updates", Label: updateSettingsNoteLabel(), Value: "", Kind: 2},
 		// Tokens
 		{Category: "tokens", Label: "manage tokens", Value: "", Kind: 2},
 		{Category: "tokens", Label: "sync token definitions", Value: boolVal(m.cfg.Automation.SyncTokenDefinitions), Kind: 0, Disabled: !m.cfg.Sync.Enabled},
 	}
 	return items
+}
+
+func updateSettingsNoteLabel() string {
+	if runtime.GOOS == "windows" {
+		return "if relaunch fails, open a new terminal"
+	}
+	return "if relaunch fails, start SSHThing again"
 }
 
 func (m *Model) filteredSettingsIdxs() []int {
@@ -1192,8 +1200,8 @@ func (m *Model) applySettingChange(idx int, action string) {
 			}
 		}
 	case 15, 16, 17, 18: // sync repo/key/branch/local - editable
-	case 25: // manage tokens (opens token page)
-	case 26: // sync token definitions
+	case 26: // manage tokens (opens token page)
+	case 27: // sync token definitions
 		if m.cfg.Sync.Enabled {
 			m.cfg.Automation.SyncTokenDefinitions = !m.cfg.Automation.SyncTokenDefinitions
 		}

@@ -66,7 +66,12 @@ func (m Model) handleLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		password := m.loginField.Value
 		store, err := db.Init(password)
 		if err != nil {
-			m.loginError = "incorrect password"
+			msg := err.Error()
+			if strings.Contains(strings.ToLower(msg), "invalid password for database") {
+				m.loginError = "incorrect password"
+			} else {
+				m.loginError = msg
+			}
 			m.loginField.SetValue("")
 			return m, nil
 		}
@@ -1227,11 +1232,15 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case " ", "enter":
 		idx := m.settingsCursor
-		// Action items that need commands or navigation
-		switch idx {
-		case 19, 20, 23: // display-only (channel, version, PATH health)
+		if idx >= len(m.settingsItems) {
 			return m, nil
-		case 21: // check now
+		}
+		item := m.settingsItems[idx]
+		// Action items that need commands or navigation
+		switch item.Label {
+		case "channel", "version", "PATH health", updateSettingsNoteLabel():
+			return m, nil
+		case "check now":
 			if !m.updateChecking {
 				m.updateRunID++
 				m.updateChecking = true
@@ -1240,7 +1249,7 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, runUpdateCheckCmd(m.updateRunID, m.currentVersion, m.cfg)
 			}
 			return m, nil
-		case 22: // apply update
+		case "apply update":
 			if m.updateLast != nil && m.updateLast.UpdateAvailable && !m.updateApplying {
 				m.updateRunID++
 				m.updateApplying = true
@@ -1249,7 +1258,7 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, runUpdateApplyCmd(m.updateRunID, *m.updateLast)
 			}
 			return m, nil
-		case 24: // fix PATH
+		case "fix PATH":
 			if m.updateLast != nil && !m.updateApplying {
 				exe, _ := os.Executable()
 				m.updateRunID++
@@ -1258,19 +1267,16 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, runUpdatePathFixCmd(m.updateRunID, exe)
 			}
 			return m, nil
-		case 25: // manage tokens
+		case "manage tokens":
 			m.page = PageTokens
 			m.loadTokenSummaries()
 			return m, nil
 		}
 		// Kind=2 editable text fields
-		if idx < len(m.settingsItems) {
-			item := m.settingsItems[idx]
-			if item.Kind == 2 && !item.Disabled {
-				m.settingsEditing = true
-				m.settingsEditVal = item.Value
-				return m, nil
-			}
+		if item.Kind == 2 && !item.Disabled {
+			m.settingsEditing = true
+			m.settingsEditVal = item.Value
+			return m, nil
 		}
 		// Toggle/enum
 		m.applySettingChange(m.settingsCursor, "toggle")

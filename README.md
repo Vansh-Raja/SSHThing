@@ -123,6 +123,7 @@ sudo mv sshthing /usr/local/bin/sshthing
 2. Run the installer
 3. Leave the “Add SSHThing to PATH” option enabled (recommended)
 4. Launch from the Start Menu, or run `sshthing` in a new terminal
+5. If an in-app update finishes but the relaunch step fails, open a new terminal before retrying `sshthing`
 
 **Alternative (portable zip):**
 1. Download `sshthing-windows-amd64.zip` from [Releases](https://github.com/Vansh-Raja/SSHThing/releases)

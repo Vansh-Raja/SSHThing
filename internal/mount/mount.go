@@ -152,15 +152,6 @@ func mountKeyPathFor(hostID int) (string, error) {
 	return filepath.Join(dir, fmt.Sprintf("host_%d.key", hostID)), nil
 }
 
-func normalizeKeyForFile(privateKey string) string {
-	privateKey = strings.ReplaceAll(privateKey, "\r\n", "\n")
-	privateKey = strings.ReplaceAll(privateKey, "\r", "\n")
-	if privateKey != "" && !strings.HasSuffix(privateKey, "\n") {
-		privateKey += "\n"
-	}
-	return privateKey
-}
-
 func writeMountKeyFile(hostID int, privateKey string) (string, error) {
 	privateKey = strings.TrimSpace(privateKey)
 	if privateKey == "" {
@@ -170,36 +161,14 @@ func writeMountKeyFile(hostID int, privateKey string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	keyDir := filepath.Dir(keyPath)
-	if err := os.MkdirAll(keyDir, 0700); err != nil {
-		return "", err
-	}
-	content := []byte(normalizeKeyForFile(privateKey))
-	if err := os.WriteFile(keyPath, content, 0600); err != nil {
+	if err := ssh.WritePrivateKeyFile(keyPath, privateKey); err != nil {
 		return "", err
 	}
 	return keyPath, nil
 }
 
 func cleanupKeyFile(path string) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return
-	}
-	size := info.Size()
-	if size > 0 {
-		f, err := os.OpenFile(path, os.O_WRONLY, 0600)
-		if err == nil {
-			zeros := make([]byte, size)
-			_, _ = f.Write(zeros)
-			_ = f.Close()
-		}
-	}
-	_ = os.Remove(path)
+	_ = ssh.SecureDeleteFile(path)
 }
 
 func safeMountName(hostname string, port int) string {

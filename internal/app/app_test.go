@@ -9,6 +9,23 @@ import (
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
 )
 
+func TestBuildSettingsItemsIncludesUpdateNote(t *testing.T) {
+	m := NewModel()
+	items := m.buildSettingsItems()
+
+	found := false
+	for _, item := range items {
+		if item.Category == "updates" && item.Label == updateSettingsNoteLabel() {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Fatalf("expected updates note row %q", updateSettingsNoteLabel())
+	}
+}
+
 func TestRebuildListItemsGrouped(t *testing.T) {
 	m := NewModel()
 	m.hosts = []Host{

@@ -5,6 +5,13 @@ Entries below are written as an “engineering history” of the major problems 
 
 ## Running Log
 
+- id: 2026-04-06T13:30:00Z-windows-acl-fix
+  time: 2026-04-06T13:30:00Z
+  type: code-change
+  summary: "Fix Windows key-based SSH failures by applying protected ACLs to temporary private key files and mount key files, and surface non-password DB unlock/build errors directly at login."
+  files: internal/ssh/connect.go, internal/ssh/keyfile_common.go, internal/ssh/keyfile_other.go, internal/ssh/keyfile_windows.go, internal/ssh/keyfile_windows_test.go, internal/mount/mount.go, internal/mount/keyfile_windows_test.go, internal/app/handlers.go, internal/app/backend.go, internal/app/app_test.go, README.md
+  commit: pending
+
 - id: 2026-02-25T12:00:00Z-linux
   time: 2026-02-25T12:00:00Z
   type: code-change
