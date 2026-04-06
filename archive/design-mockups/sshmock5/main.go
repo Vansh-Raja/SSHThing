@@ -17,20 +17,20 @@ import (
 
 // ── palette ────────────────────────────────────────────────────────
 var (
-	termBlack   = lipgloss.Color("#0a0a0a")
-	termDark    = lipgloss.Color("#0d1a0d")
-	termDim     = lipgloss.Color("#1a331a")
-	termMid     = lipgloss.Color("#2d5a2d")
-	termGreen   = lipgloss.Color("#33ff33")
-	termBright  = lipgloss.Color("#66ff66")
-	termDull    = lipgloss.Color("#339933")
-	termFade    = lipgloss.Color("#226622")
-	termWhite   = lipgloss.Color("#ccffcc")
+	termBlack  = lipgloss.Color("#0a0a0a")
+	termDark   = lipgloss.Color("#0d1a0d")
+	termDim    = lipgloss.Color("#1a331a")
+	termMid    = lipgloss.Color("#2d5a2d")
+	termGreen  = lipgloss.Color("#33ff33")
+	termBright = lipgloss.Color("#66ff66")
+	termDull   = lipgloss.Color("#339933")
+	termFade   = lipgloss.Color("#226622")
+	termWhite  = lipgloss.Color("#ccffcc")
 
-	termRed     = lipgloss.Color("#ff3333")
-	termYellow  = lipgloss.Color("#ffff33")
-	termCyan    = lipgloss.Color("#33ffff")
-	termAmber   = lipgloss.Color("#ffaa00")
+	termRed    = lipgloss.Color("#ff3333")
+	termYellow = lipgloss.Color("#ffff33")
+	termCyan   = lipgloss.Color("#33ffff")
+	termAmber  = lipgloss.Color("#ffaa00")
 )
 
 type host struct {

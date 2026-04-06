@@ -39,9 +39,9 @@ type PreparedMount struct {
 	stderrBuf bytes.Buffer
 }
 
-func (p *PreparedMount) Cmd() *exec.Cmd        { return p.cmd }
-func (p *PreparedMount) RemotePath() string     { return p.remotePath }
-func (p *PreparedMount) Stderr() string         { return strings.TrimSpace(p.stderrBuf.String()) }
+func (p *PreparedMount) Cmd() *exec.Cmd     { return p.cmd }
+func (p *PreparedMount) RemotePath() string { return p.remotePath }
+func (p *PreparedMount) Stderr() string     { return strings.TrimSpace(p.stderrBuf.String()) }
 
 type Manager struct {
 	mu         sync.Mutex

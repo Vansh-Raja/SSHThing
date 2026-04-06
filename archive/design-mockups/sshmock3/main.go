@@ -262,7 +262,7 @@ func (m model) View() string {
 			if sel {
 				// gradient selection bar
 				nameR := lipgloss.NewStyle().Foreground(voidBlack).Bold(true).Render(lbl)
-				line := lipgloss.NewStyle().Background(neonPink).Width(sideW-2).
+				line := lipgloss.NewStyle().Background(neonPink).Width(sideW - 2).
 					Render(fmt.Sprintf("  %s %s", "◆", nameR))
 				listLines = append(listLines, line)
 			} else {

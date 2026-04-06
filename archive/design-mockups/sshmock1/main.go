@@ -110,14 +110,14 @@ const (
 )
 
 type model struct {
-	items    []listItem
-	groups   []group
-	hosts    []host
-	cursor   int
-	w, h     int
-	view     view
-	search   string
-	tick     int
+	items  []listItem
+	groups []group
+	hosts  []host
+	cursor int
+	w, h   int
+	view   view
+	search string
+	tick   int
 }
 
 func initialModel() model {

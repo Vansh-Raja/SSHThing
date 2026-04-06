@@ -70,10 +70,10 @@ type Model struct {
 	deleteCursor int // 0=delete, 1=cancel
 
 	// Group overlays
-	groupInputValue  string
-	groupInputCursor int
-	groupOldName     string
-	groupFocus       int // 0=input, 1=action, 2=cancel
+	groupInputValue   string
+	groupInputCursor  int
+	groupOldName      string
+	groupFocus        int // 0=input, 1=action, 2=cancel
 	groupDeleteCursor int // 0=delete, 1=cancel
 
 	// Quit overlay
@@ -351,10 +351,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mountManager.AbortMount(m.pendingMount)
 				m.pendingMount = nil
 				if msg.stderr != "" {
-				m.err = fmt.Errorf("mount failed: %s", msg.stderr)
-			} else {
-				m.err = fmt.Errorf("mount failed: %v", msg.err)
-			}
+					m.err = fmt.Errorf("mount failed: %s", msg.stderr)
+				} else {
+					m.err = fmt.Errorf("mount failed: %v", msg.err)
+				}
 				return m, tea.Batch(tea.HideCursor, m.errorAutoClearCmd(prevErr))
 			}
 			if err := m.mountManager.FinalizeMount(m.pendingMount); err != nil {
@@ -445,7 +445,7 @@ func (m Model) View() string {
 				Focus:       m.formFocus,
 				Editing:     m.formEditing,
 				Groups:      m.formGroups,
-				GroupIdx:     m.formGroupIdx,
+				GroupIdx:    m.formGroupIdx,
 				AuthOptions: m.formAuthOpts,
 				AuthIdx:     m.formAuthIdx,
 				KeyTypes:    m.formKeyTypes,

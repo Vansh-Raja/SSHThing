@@ -24,12 +24,16 @@ type unixAskpassServer struct {
 }
 
 func startAskpassServer(password string) (askpassServer, error) {
-	tmpDir := filepath.Join(os.TempDir(), "ssh-manager", "askpass")
+	// Use /tmp directly instead of os.TempDir() because macOS's private
+	// temp dir (/var/folders/.../T/) produces paths that exceed the
+	// 104-character Unix socket path limit.
+	tmpDir := filepath.Join("/tmp", "sshthing-ap")
 	if err := os.MkdirAll(tmpDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create askpass temp dir: %w", err)
 	}
 
-	endpoint := filepath.Join(tmpDir, fmt.Sprintf("sock_%s", uuid.NewString()))
+	// Use only first 8 chars of UUID to keep path short for macOS socket limit.
+	endpoint := filepath.Join(tmpDir, uuid.NewString()[:8])
 	_ = os.Remove(endpoint)
 	ln, err := net.Listen("unix", endpoint)
 	if err != nil {

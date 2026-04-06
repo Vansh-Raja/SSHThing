@@ -182,69 +182,69 @@ type iconSet struct {
 }
 
 var unicodeIcons = iconSet{
-	name:            "Unicode",
-	home:            "⌂",
-	settings:        "○",
-	tokens:          "◇",
-	connected:       "●",
-	idle:            "○",
-	offline:         "·",
-	activeMarker:    "•",
-	inactiveMarker:  "·",
-	expanded:        "▿",
-	collapsed:       "▹",
-	selected:        "▸",
-	focused:         "→",
-	leftArrow:       "◄",
-	rightArrow:      "►",
-	bar:             "▏",
-	cursor:          "█",
-	truncation:      "…",
-	rule:            "─",
-	lock:            "◆",
-	warning:         "△",
-	errorIcon:       "✗",
-	success:         "✓",
-	folder:          "▪",
-	edit:            "~",
-	deleteIcon:      "×",
-	add:             "+",
-	save:            "▸",
-	cancel:          "○",
-	shield:          "◇",
+	name:           "Unicode",
+	home:           "⌂",
+	settings:       "○",
+	tokens:         "◇",
+	connected:      "●",
+	idle:           "○",
+	offline:        "·",
+	activeMarker:   "•",
+	inactiveMarker: "·",
+	expanded:       "▿",
+	collapsed:      "▹",
+	selected:       "▸",
+	focused:        "→",
+	leftArrow:      "◄",
+	rightArrow:     "►",
+	bar:            "▏",
+	cursor:         "█",
+	truncation:     "…",
+	rule:           "─",
+	lock:           "◆",
+	warning:        "△",
+	errorIcon:      "✗",
+	success:        "✓",
+	folder:         "▪",
+	edit:           "~",
+	deleteIcon:     "×",
+	add:            "+",
+	save:           "▸",
+	cancel:         "○",
+	shield:         "◇",
 }
 
 var nerdFontIcons = iconSet{
-	name:            "Nerd Font",
-	home:            "\uf015",
-	settings:        "\uf013",
-	tokens:          "\uf084",
-	connected:       "\uf058",
-	idle:            "\uf192",
-	offline:         "\uf10c",
-	activeMarker:    "\uf111",
-	inactiveMarker:  "\uf10c",
-	expanded:        "\uf078",
-	collapsed:       "\uf054",
-	selected:        "\uf0da",
-	focused:         "\uf061",
-	leftArrow:       "\uf053",
-	rightArrow:      "\uf054",
-	bar:             "▏",
-	cursor:          "█",
-	truncation:      "\uf141",
-	rule:            "─",
-	lock:            "\uf023",
-	warning:         "\uf071",
-	errorIcon:       "\uf00d",
-	success:         "\uf00c",
-	folder:          "\uf07b",
-	edit:            "\uf044",
-	deleteIcon:      "\uf1f8",
-	add:             "\uf067",
-	save:            "\uf0c7",
-	cancel:          "\uf05e",
-	shield:          "\uf132",
+	name:           "Nerd Font",
+	home:           "\uf015",
+	settings:       "\uf013",
+	tokens:         "\uf084",
+	connected:      "\uf058",
+	idle:           "\uf192",
+	offline:        "\uf10c",
+	activeMarker:   "\uf111",
+	inactiveMarker: "\uf10c",
+	expanded:       "\uf078",
+	collapsed:      "\uf054",
+	selected:       "\uf0da",
+	focused:        "\uf061",
+	leftArrow:      "\uf053",
+	rightArrow:     "\uf054",
+	bar:            "▏",
+	cursor:         "█",
+	truncation:     "\uf141",
+	rule:           "─",
+	lock:           "\uf023",
+	warning:        "\uf071",
+	errorIcon:      "\uf00d",
+	success:        "\uf00c",
+	folder:         "\uf07b",
+	edit:           "\uf044",
+	deleteIcon:     "\uf1f8",
+	add:            "\uf067",
+	save:           "\uf0c7",
+	cancel:         "\uf05e",
+	shield:         "\uf132",
 }
 
 var iconPresets = []iconSet{unicodeIcons, nerdFontIcons}
@@ -494,11 +494,11 @@ type model struct {
 	deleteCursor  int // 0=Delete, 1=Cancel
 
 	// group CRUD
-	groupInput       string
-	groupInputCursor int
-	groupFocus       int // 0=input, 1=submit, 2=cancel
-	groupEditIdx     int // index into m.groups (-1 for create)
-	groupDeleteIdx   int
+	groupInput        string
+	groupInputCursor  int
+	groupFocus        int // 0=input, 1=submit, 2=cancel
+	groupEditIdx      int // index into m.groups (-1 for create)
+	groupDeleteIdx    int
 	groupDeleteCursor int // 0=Delete, 1=Cancel
 
 	// quit confirmation
@@ -555,7 +555,7 @@ const (
 	ffTags     = 1
 	ffHostname = 2
 	ffPort     = 3
-	ffUsername  = 4
+	ffUsername = 4
 	ffAuthDet  = 5
 	// virtual focus targets (not text fields):
 	ffGroup    = 6

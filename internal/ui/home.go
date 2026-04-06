@@ -88,7 +88,7 @@ func (r *Renderer) RenderHomeView(p HomeViewParams) string {
 			prefix := "    "
 			if sel {
 				nameStyle = lipgloss.NewStyle().Foreground(r.Theme.Accent)
-				prefix = lipgloss.NewStyle().Foreground(r.Theme.Accent).Render("  "+r.Icons.Focused+" ")
+				prefix = lipgloss.NewStyle().Foreground(r.Theme.Accent).Render("  " + r.Icons.Focused + " ")
 			}
 			listLines = append(listLines, "")
 			listLines = append(listLines, prefix+nameStyle.Render(r.Icons.Add+" new group"))
@@ -124,7 +124,7 @@ func (r *Renderer) RenderHomeView(p HomeViewParams) string {
 
 			if sel {
 				nameStyle = lipgloss.NewStyle().Foreground(r.Theme.Accent).Bold(true)
-				prefix = lipgloss.NewStyle().Foreground(r.Theme.Accent).Render("  "+r.Icons.Focused+" ")
+				prefix = lipgloss.NewStyle().Foreground(r.Theme.Accent).Render("  " + r.Icons.Focused + " ")
 			}
 
 			maxLblW := listW - 10

@@ -434,13 +434,13 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.formEditIdx < 0 {
 			// Add new
 			host := &db.HostModel{
-				Label:    strings.TrimSpace(m.formFields[ui.FFLabel].Value),
+				Label:     strings.TrimSpace(m.formFields[ui.FFLabel].Value),
 				GroupName: groupName,
-				Tags:     tags,
-				Hostname: m.formFields[ui.FFHostname].Value,
-				Username: m.formFields[ui.FFUsername].Value,
-				Port:     portInt,
-				KeyType:  keyType,
+				Tags:      tags,
+				Hostname:  m.formFields[ui.FFHostname].Value,
+				Username:  m.formFields[ui.FFUsername].Value,
+				Port:      portInt,
+				KeyType:   keyType,
 			}
 			if err := m.store.CreateHost(host, plainKey); err != nil {
 				m.err = err

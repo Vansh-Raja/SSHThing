@@ -11,8 +11,8 @@ import (
 
 // QuitViewParams holds data needed to render the quit confirmation overlay.
 type QuitViewParams struct {
-	Mounts      []string // list of active mount labels
-	QuitCursor  int      // 0,1,2 button selection
+	Mounts     []string // list of active mount labels
+	QuitCursor int      // 0,1,2 button selection
 }
 
 // RenderQuitOverlay renders the quit confirmation overlay.
@@ -237,17 +237,17 @@ func (r *Renderer) RenderSearchOverlay(p SearchViewParams) string {
 
 // AddHostViewParams holds data for the add/edit host form overlay.
 type AddHostViewParams struct {
-	IsEdit       bool
-	Fields       []FormField // [label, tags, hostname, port, username, authDetail]
-	Focus        int
-	Editing      bool
-	Groups       []string
-	GroupIdx     int
-	AuthOptions  []string
-	AuthIdx      int
-	KeyTypes     []string
-	KeyTypeIdx   int
-	Err          error
+	IsEdit      bool
+	Fields      []FormField // [label, tags, hostname, port, username, authDetail]
+	Focus       int
+	Editing     bool
+	Groups      []string
+	GroupIdx    int
+	AuthOptions []string
+	AuthIdx     int
+	KeyTypes    []string
+	KeyTypeIdx  int
+	Err         error
 }
 
 // Form field indices for add host.
@@ -256,7 +256,7 @@ const (
 	FFTags     = 1
 	FFHostname = 2
 	FFPort     = 3
-	FFUsername  = 4
+	FFUsername = 4
 	FFAuthDet  = 5
 	FFGroup    = 100 // selector, not a text field
 	FFAuthMeth = 101 // selector, not a text field
@@ -603,11 +603,11 @@ func (r *Renderer) RenderDeleteHostOverlay(p DeleteHostViewParams) string {
 
 // GroupInputViewParams holds data for create/rename group overlays.
 type GroupInputViewParams struct {
-	Title        string // e.g. "+ new group" or "edit rename group"
-	InputValue   string
-	InputCursor  int
-	Focus        int // 0=input, 1=action button, 2=cancel
-	ActionLabel  string // "create" or "rename"
+	Title       string // e.g. "+ new group" or "edit rename group"
+	InputValue  string
+	InputCursor int
+	Focus       int    // 0=input, 1=action button, 2=cancel
+	ActionLabel string // "create" or "rename"
 }
 
 // RenderCreateGroupOverlay renders the create group overlay.

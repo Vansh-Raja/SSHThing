@@ -19,13 +19,13 @@ type SettingsItem struct {
 
 // SettingsViewParams holds data for the settings page view.
 type SettingsViewParams struct {
-	Items          []SettingsItem
-	Cursor         int
-	Filter         string
-	Searching      bool
-	FilteredIdxs   []int // indices into Items that match filter
-	Page           int
-	Err            error
+	Items        []SettingsItem
+	Cursor       int
+	Filter       string
+	Searching    bool
+	FilteredIdxs []int // indices into Items that match filter
+	Page         int
+	Err          error
 }
 
 // RenderSettingsView renders the settings page.

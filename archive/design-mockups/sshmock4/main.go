@@ -17,22 +17,22 @@ import (
 
 // ── palette ────────────────────────────────────────────────────────
 var (
-	bg0    = lipgloss.Color("#1c1917") // stone-950
-	bg1    = lipgloss.Color("#292524") // stone-900
-	bg2    = lipgloss.Color("#44403c") // stone-700
-	bg3    = lipgloss.Color("#57534e") // stone-600
+	bg0 = lipgloss.Color("#1c1917") // stone-950
+	bg1 = lipgloss.Color("#292524") // stone-900
+	bg2 = lipgloss.Color("#44403c") // stone-700
+	bg3 = lipgloss.Color("#57534e") // stone-600
 
 	sand   = lipgloss.Color("#a8a29e") // stone-400
 	cream  = lipgloss.Color("#d6d3d1") // stone-300
 	bone   = lipgloss.Color("#e7e5e4") // stone-200
 	pWhite = lipgloss.Color("#fafaf9") // stone-50
 
-	amber   = lipgloss.Color("#f59e0b")
-	copper  = lipgloss.Color("#ea580c")
-	rust    = lipgloss.Color("#dc2626")
-	jade    = lipgloss.Color("#059669")
-	sky     = lipgloss.Color("#0ea5e9")
-	indigo  = lipgloss.Color("#6366f1")
+	amber    = lipgloss.Color("#f59e0b")
+	copper   = lipgloss.Color("#ea580c")
+	rust     = lipgloss.Color("#dc2626")
+	jade     = lipgloss.Color("#059669")
+	sky      = lipgloss.Color("#0ea5e9")
+	indigo   = lipgloss.Color("#6366f1")
 	dimAmber = lipgloss.Color("#92400e")
 )
 
@@ -95,14 +95,14 @@ func buildList(groups []grp, hosts []host) []listItem {
 }
 
 type model struct {
-	items    []listItem
-	groups   []grp
-	hosts    []host
-	cursor   int
-	scroll   int
-	w, h     int
-	view     int
-	tick     int
+	items  []listItem
+	groups []grp
+	hosts  []host
+	cursor int
+	scroll int
+	w, h   int
+	view   int
+	tick   int
 }
 
 func initialModel() model {
