@@ -494,3 +494,56 @@ Detailed engineering history of problems and solutions (useful for write-ups/por
 - UI: Sync status shown in settings, with Shift+Y to trigger manual sync.
 
 **Where:** `internal/sync/` (manager, git, export, import, data), `internal/app/app.go` (sync triggers), `internal/ui/settings.go` (sync config display).
+
+---
+
+<!--
+## Changelog Maintenance Instructions (for AI agents and contributors)
+
+### When to update
+- Every time a new version is tagged and released, add a new entry at the TOP of
+  the release section (below the `---` after the header, ABOVE the previous version).
+
+### Format
+Use Keep a Changelog (https://keepachangelog.com/en/1.1.0/) format:
+
+```
+## [vX.Y.Z] — YYYY-MM-DD
+
+### Added
+- New features (user-visible).
+
+### Changed
+- Changes to existing functionality.
+
+### Fixed
+- Bug fixes.
+
+### Removed
+- Removed features or deprecated items.
+```
+
+### Rules
+1. **Version heading**: `## [vX.Y.Z] — YYYY-MM-DD` — use the git tag and today's date.
+2. **Newest first**: Latest version goes at the top, right after the `---` separator.
+3. **User-facing language**: Write for users, not developers. Say what changed and why
+   it matters, not which files were modified.
+4. **Bold the key phrase**: Start each bullet with a **bolded summary** then explain.
+5. **One bullet per change**: Don't combine unrelated fixes into one bullet.
+6. **Only include sections that apply**: Skip `### Changed` if nothing changed, etc.
+7. **Don't touch the Engineering Log**: The detailed engineering log below is a separate
+   historical record. Don't modify, reorder, or delete entries there.
+8. **Commit the changelog with the release commit**: The changelog update should be in
+   the same commit (or the commit just before) the version tag.
+
+### Example workflow for a new release
+1. Read `git log <last-tag>..HEAD --oneline` to see what changed.
+2. Add a new `## [vX.Y.Z]` section at the top of the release entries.
+3. Categorize changes into Added/Changed/Fixed/Removed.
+4. Commit, tag, push.
+
+### Quick reference — version bumping
+- **Patch** (v2.0.1 → v2.0.2): Bug fixes only.
+- **Minor** (v2.0.2 → v2.1.0): New features, backward compatible.
+- **Major** (v2.1.0 → v3.0.0): Breaking changes.
+-->
