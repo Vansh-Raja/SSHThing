@@ -277,11 +277,26 @@ func (gm *GitManager) Pull() error {
 		}
 	}
 
-	// Try to get the remote branch reference
+	// Try to get the remote branch reference.
+	// Fall back to common branch names if the configured branch isn't found,
+	// since the remote repo may use "master" while config says "main" or vice versa.
 	remoteRef, err := gm.repo.Reference(plumbing.NewRemoteReferenceName("origin", gm.branch), true)
 	if err != nil {
-		// Remote branch doesn't exist yet - this is fine, we'll push to create it
-		return nil
+		fallbacks := []string{"main", "master"}
+		for _, fb := range fallbacks {
+			if fb == gm.branch {
+				continue
+			}
+			if ref, fbErr := gm.repo.Reference(plumbing.NewRemoteReferenceName("origin", fb), true); fbErr == nil {
+				remoteRef = ref
+				err = nil
+				break
+			}
+		}
+		if err != nil {
+			// Remote branch doesn't exist yet - this is fine, we'll push to create it
+			return nil
+		}
 	}
 
 	// Reset local to remote (handles diverged histories)

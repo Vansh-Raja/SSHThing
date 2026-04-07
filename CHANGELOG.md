@@ -1,9 +1,50 @@
 # Changelog
 
-This repo is developed on `main`. Versioned releases are published as tags (starting at `v0.1.0`).
-Entries below are written as an “engineering history” of the major problems we hit and how we fixed them (useful for future write-ups/portfolio posts).
+All notable changes to SSHThing are documented here.  
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for release entries.
 
-## Running Log
+---
+
+## [v2.0.2] — 2026-04-07
+
+### Fixed
+- **Sync branch mismatch bug**: `Pull()` silently skipped pulling when the configured branch name (e.g. `main`) didn't match the remote's actual branch (e.g. `master`). This caused one machine to overwrite the other's data via force-push, losing new hosts. The sync now falls back to trying `main`/`master` if the configured branch isn't found on the remote.
+
+## [v2.0.1] — 2026-04-06
+
+### Fixed
+- Windows SSH key-based connections failing due to insufficiently restrictive ACLs on temporary private key files. Now applies Windows-native protected ACLs matching OpenSSH's requirements.
+- Surface non-password DB unlock/build errors directly at login instead of swallowing them.
+
+## [v2.0.0] — 2026-04-06
+
+### Added
+- **Complete UI architecture rewrite** — modular file structure replacing monolithic UI files.
+- **20 themes** — 13 new themes: Solarized Dark/Light, One Dark, Monokai, Kanagawa, Everforest, Ayu Dark, Nightfox, Material Palenight, Synthwave 84, Cobalt2, Rose Pine Dawn, Gruvbox Light.
+- **LLM setup prompt** — `skills/SETUP_PROMPT.md` lets users paste a one-liner into any AI agent to auto-install SSHThing skills.
+- **Caps Lock quit support** — uppercase `Q` now triggers quit confirmation.
+- Full background color theming with OSC 11 terminal integration.
+- Design mockups archived to `archive/design-mockups/` for reference.
+
+### Fixed
+- macOS askpass Unix socket path exceeding 104-char limit (switched to `/tmp/sshthing-ap` with short UUIDs).
+- gofmt formatting drift across 12 files.
+
+## [v1.0.6] — 2026-02-25
+
+### Fixed
+- Use native arm64 runner for Linux arm64 release builds.
+
+## [v1.0.5] — 2026-02-25
+
+### Added
+- Full Linux support: file-based keyring fallback, native SSHFS mounts, self-updater, CI and release artifacts (.tar.gz, .deb, .rpm) for amd64 and arm64.
+
+---
+
+## Engineering Log
+
+Detailed engineering history of problems and solutions (useful for write-ups/portfolio posts).
 
 - id: 2026-04-06T13:30:00Z-windows-acl-fix
   time: 2026-04-06T13:30:00Z
