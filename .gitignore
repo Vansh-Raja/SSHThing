@@ -54,3 +54,6 @@ temp/
 
 # Claude Code local config
 .claude/
+
+.opencode/
+opencode.json
