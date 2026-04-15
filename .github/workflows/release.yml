@@ -459,3 +459,85 @@ jobs:
           if [ "$is_draft" = "true" ]; then
             gh release edit "$tag" --repo "$repo" --draft=false
           fi
+
+  update-homebrew-tap:
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute version and SHA256
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          version="${tag#v}"
+          tarball_url="https://github.com/${{ github.repository }}/archive/refs/tags/${tag}.tar.gz"
+
+          curl -sL -o source.tar.gz "$tarball_url"
+          sha256="$(sha256sum source.tar.gz | awk '{print $1}')"
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
+          echo "tarball_url=${tarball_url}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: Vansh-Raja/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          FORMULA="homebrew-tap/Formula/sshthing.rb"
+
+          cat > "$FORMULA" << 'RUBY'
+          class Sshthing < Formula
+            desc "Secure SSH manager TUI (SQLCipher + AES-GCM) with SSH/SFTP and Finder mounts"
+            homepage "https://github.com/Vansh-Raja/SSHThing"
+
+            url "TARBALL_URL_PLACEHOLDER"
+            sha256 "SHA256_PLACEHOLDER"
+            head "https://github.com/Vansh-Raja/SSHThing.git", branch: "main"
+
+            depends_on "go" => :build
+            depends_on "sqlcipher"
+
+            def install
+              ENV["CGO_ENABLED"] = "1"
+              ENV.append "CGO_CPPFLAGS", "-I#{Formula["sqlcipher"].opt_include}"
+              ENV.append "CGO_LDFLAGS", "-L#{Formula["sqlcipher"].opt_lib}"
+
+              ldflags = %W[
+                -s -w
+                -X main.version=#{version}
+              ]
+
+              system "go", "build", *std_go_args(output: bin/"sshthing", ldflags: ldflags), "./cmd/sshthing"
+            end
+
+            test do
+              assert_match "sshthing", shell_output("#{bin}/sshthing --version")
+            end
+          end
+          RUBY
+
+          # Strip leading whitespace from heredoc
+          sed -i 's/^          //' "$FORMULA"
+
+          # Replace placeholders with actual values
+          sed -i "s|TARBALL_URL_PLACEHOLDER|${{ steps.meta.outputs.tarball_url }}|" "$FORMULA"
+          sed -i "s|SHA256_PLACEHOLDER|${{ steps.meta.outputs.sha256 }}|" "$FORMULA"
+
+      - name: Commit and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/sshthing.rb
+          git commit -m "sshthing ${{ github.ref_name }}"
+          git push
