@@ -93,6 +93,14 @@ type Config struct {
 		SyncTokenDefinitions bool `json:"sync_token_definitions"`
 		SessionTTLSeconds    int  `json:"session_ttl_seconds"`
 	} `json:"automation"`
+
+	Teams struct {
+		Enabled               bool   `json:"enabled"`
+		APIBaseURL            string `json:"api_base_url"`
+		BrowserBaseURL        string `json:"browser_base_url"`
+		SessionCacheEnabled   bool   `json:"session_cache_enabled"`
+		SharedSecretCacheMode string `json:"shared_secret_cache_mode"`
+	} `json:"teams"`
 }
 
 func Default() Config {
@@ -123,6 +131,12 @@ func Default() Config {
 
 	c.Automation.SyncTokenDefinitions = false
 	c.Automation.SessionTTLSeconds = 900
+
+	c.Teams.Enabled = false
+	c.Teams.APIBaseURL = ""
+	c.Teams.BrowserBaseURL = ""
+	c.Teams.SessionCacheEnabled = true
+	c.Teams.SharedSecretCacheMode = "disabled"
 	return c
 }
 
@@ -240,6 +254,15 @@ func withDefaults(c Config) Config {
 
 	if c.Automation.SessionTTLSeconds <= 0 || c.Automation.SessionTTLSeconds > 86400 {
 		c.Automation.SessionTTLSeconds = def.Automation.SessionTTLSeconds
+	}
+
+	if c.Teams.SharedSecretCacheMode == "" {
+		c.Teams.SharedSecretCacheMode = def.Teams.SharedSecretCacheMode
+	}
+	switch c.Teams.SharedSecretCacheMode {
+	case "disabled", "memory_only", "local_cache":
+	default:
+		c.Teams.SharedSecretCacheMode = def.Teams.SharedSecretCacheMode
 	}
 
 	return c

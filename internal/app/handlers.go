@@ -54,6 +54,8 @@ func (m Model) handlePageKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSettingsKeys(msg)
 	case PageTokens:
 		return m.handleTokensKeys(msg)
+	case PageTeams:
+		return m.handleTeamsKeys(msg)
 	}
 	return m, nil
 }
@@ -829,6 +831,11 @@ func (m Model) handleHomeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "Q":
 		return m.requestQuit()
 
+	case "T":
+		m.page = PageTeams
+		m.openTeamsPage()
+		return m, nil
+
 	case "shift+tab":
 		m.page = (m.page + 1) % NumPages
 		if m.page == PageTokens {
@@ -836,6 +843,8 @@ func (m Model) handleHomeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if m.page == PageSettings {
 			m.cfgOriginal = m.cfg
 			m.settingsItems = m.buildSettingsItems()
+		} else if m.page == PageTeams {
+			m.openTeamsPage()
 		}
 		return m, nil
 
@@ -1063,6 +1072,409 @@ func (m Model) handleHomeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		runID := m.syncRunID
 		m.err = fmt.Errorf("\u2139 Syncing...")
 		return m, tea.Batch(runSyncCmd(runID, m.syncManager), syncAnimTickCmd(runID))
+	}
+
+	return m, nil
+}
+
+// ── Teams page ───────────────────────────────────────────────────────
+
+func (m Model) handleTeamsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	m.clampTeamsMockState()
+
+	switch key {
+	case "esc", "q", "Q":
+		if m.teamsState == teamsStateInviteMember ||
+			m.teamsState == teamsStateEditMember ||
+			m.teamsState == teamsStateRemoveMember {
+			m.leaveTeamsMemberManagement()
+			return m, nil
+		}
+		if m.teamsState == teamsStateMembers {
+			m.teamsState = teamsStateHosts
+			m.err = nil
+			return m, nil
+		}
+		m.page = PageHome
+		m.err = nil
+		return m, nil
+
+	case "shift+tab":
+		m.page = (m.page + 1) % NumPages
+		if m.page == PageTokens {
+			m.loadTokenSummaries()
+		} else if m.page == PageSettings {
+			m.cfgOriginal = m.cfg
+			m.settingsItems = m.buildSettingsItems()
+		} else if m.page == PageTeams {
+			m.openTeamsPage()
+		}
+		return m, nil
+
+	case "h":
+		if m.teamsAuthed && m.teamsHasTeam &&
+			m.teamsState != teamsStateInviteMember &&
+			m.teamsState != teamsStateEditMember &&
+			m.teamsState != teamsStateRemoveMember {
+			m.teamsState = teamsStateHosts
+		}
+		return m, nil
+
+	case "m":
+		if m.teamsAuthed && m.teamsHasTeam &&
+			m.teamsState != teamsStateInviteMember &&
+			m.teamsState != teamsStateEditMember &&
+			m.teamsState != teamsStateRemoveMember {
+			m.teamsState = teamsStateMembers
+		}
+		return m, nil
+	}
+
+	switch m.teamsState {
+	case teamsStateInviteMember:
+		return m.handleTeamsInviteMemberKeys(msg)
+	case teamsStateEditMember:
+		return m.handleTeamsEditMemberKeys(msg)
+	case teamsStateRemoveMember:
+		return m.handleTeamsRemoveMemberKeys(msg)
+	}
+
+	switch key {
+	case "up", "k":
+		if key == "k" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		if m.teamsState == teamsStateMembers {
+			m.moveTeamsMemberSelection(-1)
+		} else if m.teamsState == teamsStateHosts {
+			m.moveTeamsHostSelection(-1)
+		} else {
+			if m.teamsActionIdx > 0 {
+				m.teamsActionIdx--
+			}
+		}
+		return m, nil
+
+	case "down", "j":
+		if key == "j" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		if m.teamsState == teamsStateMembers {
+			m.moveTeamsMemberSelection(1)
+		} else if m.teamsState == teamsStateHosts {
+			m.moveTeamsHostSelection(1)
+		} else {
+			maxIdx := len(m.teamsActionOptions()) - 1
+			if m.teamsActionIdx < maxIdx {
+				m.teamsActionIdx++
+			}
+		}
+		return m, nil
+
+	case "a":
+		switch m.teamsState {
+		case teamsStateHosts:
+			m.err = fmt.Errorf("ℹ Mock: add shared host later")
+		case teamsStateMembers:
+			m.openTeamsInviteMember()
+		}
+		return m, nil
+
+	case "e":
+		switch m.teamsState {
+		case teamsStateHosts:
+			m.err = fmt.Errorf("ℹ Mock: edit shared host later")
+		case teamsStateMembers:
+			m.openTeamsEditMember()
+		}
+		return m, nil
+
+	case "d", "delete":
+		switch m.teamsState {
+		case teamsStateHosts:
+			m.err = fmt.Errorf("ℹ Mock: delete shared host later")
+		case teamsStateMembers:
+			m.openTeamsRemoveMember()
+		}
+		return m, nil
+
+	case "/":
+		if m.teamsState != teamsStateHosts {
+			return m, nil
+		}
+		m.err = fmt.Errorf("ℹ Mock: team search later")
+		return m, nil
+	}
+
+	if key != "enter" {
+		return m, nil
+	}
+
+	switch m.teamsState {
+	case teamsStateLogin:
+		switch m.teamsActionIdx {
+		case 0:
+			m.teamsAuthed = true
+			m.teamsHasTeam = true
+			m.resolveTeamsState()
+			m.err = fmt.Errorf("✓ Logged in to Teams")
+		case 1:
+			m.teamsAuthed = true
+			m.teamsHasTeam = false
+			m.resolveTeamsState()
+			m.err = fmt.Errorf("✓ Teams account created")
+		default:
+			m.page = PageHome
+			m.err = nil
+		}
+		return m, nil
+	case teamsStateEmpty:
+		switch m.teamsActionIdx {
+		case 0:
+			m.teamsHasTeam = true
+			m.resolveTeamsState()
+			m.err = fmt.Errorf("✓ Team created")
+		case 1:
+			m.teamsHasTeam = true
+			m.resolveTeamsState()
+			m.err = fmt.Errorf("✓ Joined team")
+		default:
+			m.page = PageHome
+			m.err = nil
+		}
+		return m, nil
+	case teamsStateHosts:
+		item, ok := m.selectedTeamsHostItem()
+		if !ok {
+			return m, nil
+		}
+		if item.IsGroup {
+			group := item.GroupName
+			if group == "" {
+				group = "Ungrouped"
+			}
+			m.collapsed[group] = !m.collapsed[group]
+			return m, nil
+		}
+		m.err = fmt.Errorf("✓ Mock connect: %s", item.Label)
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m Model) handleTeamsInviteMemberKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	switch key {
+	case "up", "k":
+		if key == "k" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		if m.teamsManageFocus > 0 {
+			m.teamsManageFocus--
+		}
+		return m, nil
+	case "down", "j", "tab":
+		if key == "j" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		if m.teamsManageFocus < 3 {
+			m.teamsManageFocus++
+		}
+		return m, nil
+	case "shift+tab":
+		if m.teamsManageFocus > 0 {
+			m.teamsManageFocus--
+		}
+		return m, nil
+	case "left", "h":
+		if key == "h" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		switch m.teamsManageFocus {
+		case 1:
+			m.teamsInviteRole = (m.teamsInviteRole - 1 + len(teamsMemberRoles)) % len(teamsMemberRoles)
+		case 3:
+			m.teamsManageFocus = 2
+		}
+		return m, nil
+	case "right", "l":
+		if key == "l" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		switch m.teamsManageFocus {
+		case 1:
+			m.teamsInviteRole = (m.teamsInviteRole + 1) % len(teamsMemberRoles)
+		case 2:
+			m.teamsManageFocus = 3
+		}
+		return m, nil
+	case "backspace":
+		if m.teamsManageFocus == 0 && m.teamsInviteEmail != "" {
+			m.teamsInviteEmail = removeLastRune(m.teamsInviteEmail)
+		}
+		return m, nil
+	case "enter":
+		switch m.teamsManageFocus {
+		case 0:
+			m.teamsManageFocus = 1
+			return m, nil
+		case 1:
+			m.teamsManageFocus = 2
+			return m, nil
+		case 2:
+			email := strings.TrimSpace(m.teamsInviteEmail)
+			if email == "" {
+				m.err = fmt.Errorf("enter an email first")
+				return m, nil
+			}
+			name := strings.TrimSpace(strings.Split(email, "@")[0])
+			if name == "" {
+				name = "new member"
+			}
+			m.teamsTeam.Members = append(m.teamsTeam.Members, teamsMockMember{
+				ID:       fmt.Sprintf("invite-%d", len(m.teamsTeam.Members)+1),
+				Name:     teamsMockDisplayName(name),
+				Email:    email,
+				Role:     teamsMemberRoles[m.teamsInviteRole],
+				Status:   "invited",
+				LastSeen: "invite pending",
+			})
+			m.teamsMemberIdx = len(m.teamsTeam.Members) - 1
+			m.teamsInviteEmail = ""
+			m.leaveTeamsMemberManagement()
+			m.err = fmt.Errorf("✓ Invite sent to %s", email)
+			return m, nil
+		default:
+			m.leaveTeamsMemberManagement()
+			return m, nil
+		}
+	}
+
+	if m.teamsManageFocus == 0 {
+		for _, r := range msg.Runes {
+			m.teamsInviteEmail += string(r)
+		}
+	}
+
+	return m, nil
+}
+
+func (m Model) handleTeamsEditMemberKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	switch key {
+	case "up", "k":
+		if key == "k" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		if m.teamsManageFocus > 0 {
+			m.teamsManageFocus--
+		}
+		return m, nil
+	case "down", "j", "tab":
+		if key == "j" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		if m.teamsManageFocus < 2 {
+			m.teamsManageFocus++
+		}
+		return m, nil
+	case "shift+tab":
+		if m.teamsManageFocus > 0 {
+			m.teamsManageFocus--
+		}
+		return m, nil
+	case "left", "h":
+		if key == "h" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		switch m.teamsManageFocus {
+		case 0:
+			m.teamsEditRole = (m.teamsEditRole - 1 + len(teamsMemberRoles)) % len(teamsMemberRoles)
+		case 2:
+			m.teamsManageFocus = 1
+		}
+		return m, nil
+	case "right", "l":
+		if key == "l" && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		switch m.teamsManageFocus {
+		case 0:
+			m.teamsEditRole = (m.teamsEditRole + 1) % len(teamsMemberRoles)
+		case 1:
+			m.teamsManageFocus = 2
+		}
+		return m, nil
+	case "enter":
+		switch m.teamsManageFocus {
+		case 0:
+			m.teamsManageFocus = 1
+			return m, nil
+		case 1:
+			if member, ok := m.selectedTeamsMember(); ok {
+				for i := range m.teamsTeam.Members {
+					if m.teamsTeam.Members[i].ID == member.ID {
+						m.teamsTeam.Members[i].Role = teamsMemberRoles[m.teamsEditRole]
+						break
+					}
+				}
+				m.leaveTeamsMemberManagement()
+				m.err = fmt.Errorf("✓ Updated %s", member.Name)
+			}
+			return m, nil
+		default:
+			m.leaveTeamsMemberManagement()
+			return m, nil
+		}
+	}
+
+	return m, nil
+}
+
+func (m Model) handleTeamsRemoveMemberKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	switch key {
+	case "left", "h", "up", "k", "right", "l", "down", "j", "tab", "shift+tab":
+		if (key == "h" || key == "k" || key == "l" || key == "j") && !m.cfg.UI.VimMode {
+			return m, nil
+		}
+		if m.teamsManageFocus == 0 {
+			m.teamsManageFocus = 1
+		} else {
+			m.teamsManageFocus = 0
+		}
+		return m, nil
+	case "enter":
+		if m.teamsManageFocus == 1 {
+			m.leaveTeamsMemberManagement()
+			return m, nil
+		}
+		member, ok := m.selectedTeamsMember()
+		if !ok {
+			m.leaveTeamsMemberManagement()
+			return m, nil
+		}
+		nextMembers := make([]teamsMockMember, 0, len(m.teamsTeam.Members)-1)
+		for _, existing := range m.teamsTeam.Members {
+			if existing.ID != member.ID {
+				nextMembers = append(nextMembers, existing)
+			}
+		}
+		m.teamsTeam.Members = nextMembers
+		if m.teamsMemberIdx >= len(m.teamsTeam.Members) && len(m.teamsTeam.Members) > 0 {
+			m.teamsMemberIdx = len(m.teamsTeam.Members) - 1
+		}
+		if len(m.teamsTeam.Members) == 0 {
+			m.teamsMemberIdx = 0
+		}
+		m.leaveTeamsMemberManagement()
+		m.err = fmt.Errorf("✓ Removed %s", member.Name)
+		return m, nil
 	}
 
 	return m, nil
@@ -1423,6 +1835,8 @@ func (m Model) handleTokensKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if m.page == PageSettings {
 			m.cfgOriginal = m.cfg
 			m.settingsItems = m.buildSettingsItems()
+		} else if m.page == PageTeams {
+			m.openTeamsPage()
 		}
 		return m, nil
 

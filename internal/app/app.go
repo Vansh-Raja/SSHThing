@@ -11,6 +11,10 @@ import (
 	"github.com/Vansh-Raja/SSHThing/internal/db"
 	"github.com/Vansh-Raja/SSHThing/internal/mount"
 	syncpkg "github.com/Vansh-Raja/SSHThing/internal/sync"
+	"github.com/Vansh-Raja/SSHThing/internal/teamcache"
+	"github.com/Vansh-Raja/SSHThing/internal/teamsattach"
+	"github.com/Vansh-Raja/SSHThing/internal/teamsclient"
+	"github.com/Vansh-Raja/SSHThing/internal/teamssession"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
 	"github.com/Vansh-Raja/SSHThing/internal/update"
 	tea "github.com/charmbracelet/bubbletea"
@@ -27,7 +31,7 @@ type Model struct {
 	collapsed   map[string]bool
 
 	// Navigation
-	page    int // PageHome, PageSettings, PageTokens
+	page    int // PageHome, PageSettings, PageTokens, PageTeams
 	overlay int // OverlayNone, OverlayLogin, etc.
 
 	width  int
@@ -122,6 +126,25 @@ type Model struct {
 	updateRunID    int
 	updateLast     *update.CheckResult
 
+	// Teams mock
+	teamsState       int
+	teamsActionIdx   int
+	teamsResourceIdx int
+	teamsMemberIdx   int
+	teamsAuthed      bool
+	teamsHasTeam     bool
+	teamsManageFocus int
+	teamsInviteEmail string
+	teamsInviteRole  int
+	teamsEditRole    int
+	teamsTeam        teamsMockTeam
+	teamsClient      *teamsclient.Client
+	teamsSession     teamssession.Session
+	teamsSessionOK   bool
+	teamsCache       teamcache.Cache
+	teamsCacheOK     bool
+	teamsAttachments teamsattach.Store
+
 	// Error
 	err    error
 	errSeq int
@@ -150,30 +173,40 @@ func NewModelWithVersion(version string) Model {
 	var setupFields [2]ui.FormField
 	setupFields[0] = ui.NewMaskedField("password")
 	setupFields[1] = ui.NewMaskedField("confirm")
+	teamsSessionState, teamsSessionOK, _ := teamssession.Load()
+	teamsCacheState, teamsCacheOK, _ := teamcache.Load()
+	teamsAttachmentState, _ := teamsattach.Load()
 
 	return Model{
-		cfg:            cfg,
-		cfgOriginal:    cfg,
-		hosts:          []Host{},
-		groups:         []string{},
-		listItems:      []ListItem{},
-		selectedIdx:    0,
-		page:           PageHome,
-		overlay:        overlay,
-		collapsed:      map[string]bool{},
-		theme:          theme,
-		themeIdx:       themeIdx,
-		icons:          icons,
-		iconIdx:        iconIdx,
-		loginField:     loginField,
-		setupFields:    setupFields,
-		quitCursor:     0,
-		mountManager:   mount.NewManager(),
-		tokenSummaries: []authtoken.TokenSummary{},
-		tokenHostPick:  map[int]bool{},
-		tokenMode:      tokenModeList,
-		currentVersion: strings.TrimSpace(version),
-		formEditIdx:    -1,
+		cfg:              cfg,
+		cfgOriginal:      cfg,
+		hosts:            []Host{},
+		groups:           []string{},
+		listItems:        []ListItem{},
+		selectedIdx:      0,
+		page:             PageHome,
+		overlay:          overlay,
+		collapsed:        map[string]bool{},
+		theme:            theme,
+		themeIdx:         themeIdx,
+		icons:            icons,
+		iconIdx:          iconIdx,
+		loginField:       loginField,
+		setupFields:      setupFields,
+		quitCursor:       0,
+		mountManager:     mount.NewManager(),
+		tokenSummaries:   []authtoken.TokenSummary{},
+		tokenHostPick:    map[int]bool{},
+		tokenMode:        tokenModeList,
+		currentVersion:   strings.TrimSpace(version),
+		formEditIdx:      -1,
+		teamsTeam:        teamsMockTeamData(),
+		teamsClient:      teamsclient.New(cfg.Teams.APIBaseURL, nil),
+		teamsSession:     teamsSessionState,
+		teamsSessionOK:   teamsSessionOK,
+		teamsCache:       teamsCacheState,
+		teamsCacheOK:     teamsCacheOK,
+		teamsAttachments: teamsAttachmentState,
 	}
 }
 
@@ -581,6 +614,21 @@ func (m Model) View() string {
 			Page:   m.page,
 			Err:    m.err,
 		})
+	case PageTeams:
+		switch m.teamsState {
+		case teamsStateMembers:
+			content = r.RenderTeamsMembersView(m.buildTeamsMembersViewParams())
+		case teamsStateHosts:
+			content = r.RenderTeamsHostsView(m.buildTeamsHostsViewParams())
+		case teamsStateInviteMember:
+			content = r.RenderTeamsInviteMemberView(m.buildTeamsInviteMemberParams())
+		case teamsStateEditMember:
+			content = r.RenderTeamsEditMemberView(m.buildTeamsEditMemberParams())
+		case teamsStateRemoveMember:
+			content = r.RenderTeamsRemoveMemberView(m.buildTeamsRemoveMemberParams())
+		default:
+			content = r.RenderTeamsActionView(m.buildTeamsActionViewParams())
+		}
 	default:
 		content = "Unknown page"
 	}

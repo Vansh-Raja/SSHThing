@@ -23,7 +23,8 @@ const (
 	PageHome     = 0
 	PageSettings = 1
 	PageTokens   = 2
-	NumPages     = 3
+	PageTeams    = 3
+	NumPages     = 4
 )
 
 // ── Overlay constants ─────────────────────────────────────────────────

@@ -29,6 +29,7 @@ func (r *Renderer) PageIcons() []PageIndicator {
 		{r.Icons.Home, 0},
 		{r.Icons.Settings, 1},
 		{r.Icons.Tokens, 2},
+		{r.Icons.Shield, 3},
 	}
 }
 

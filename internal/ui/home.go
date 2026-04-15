@@ -168,7 +168,7 @@ func (r *Renderer) RenderHomeView(p HomeViewParams) string {
 	}
 
 	// footer keybind bar — always visible
-	footerText := r.RenderFooter("\u2191\u2193 nav  \u23CE connect  S sftp  M mount  Y sync  / search  a add  e edit  d del  , settings  ? help  q quit")
+	footerText := r.RenderFooter("\u2191\u2193 nav  \u23CE connect  S sftp  M mount  Y sync  / search  a add  e edit  d del  T teams  , settings  ? help  q quit")
 
 	// notification area above footer (err + sync status)
 	var notifLine string

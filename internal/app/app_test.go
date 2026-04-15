@@ -1,12 +1,14 @@
 package app
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Vansh-Raja/SSHThing/internal/db"
 	ssync "github.com/Vansh-Raja/SSHThing/internal/sync"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestBuildSettingsItemsIncludesUpdateNote(t *testing.T) {
@@ -216,6 +218,149 @@ func TestAutoClearDuration(t *testing.T) {
 	}
 	if got := autoClearDuration("⚠ mount failed"); got != 10*time.Second {
 		t.Fatalf("expected error duration 10s, got %v", got)
+	}
+}
+
+func TestBuildTeamsMockViewParams_DefaultsToLoginScreen(t *testing.T) {
+	m := NewModel()
+	m.page = PageTeams
+
+	p := m.buildTeamsActionViewParams()
+
+	if p.Message != "Login / Sign up" {
+		t.Fatalf("expected login message, got %q", p.Message)
+	}
+	if p.Options[0].Label != "Login" {
+		t.Fatalf("expected first login option Login, got %+v", p.Options)
+	}
+	if p.Description != "Shared hosts for your team" {
+		t.Fatalf("unexpected entry description: %q", p.Description)
+	}
+}
+
+func TestTeamsEmptyStateShowsCreateOrJoin(t *testing.T) {
+	m := NewModel()
+	m.page = PageTeams
+	m.teamsAuthed = true
+	m.teamsHasTeam = false
+
+	p := m.buildTeamsActionViewParams()
+	if p.Message != "You're not part of a team yet" {
+		t.Fatalf("unexpected empty-state message: %q", p.Message)
+	}
+	if len(p.Options) < 2 || p.Options[0].Label != "Create team" || p.Options[1].Label != "Join team" {
+		t.Fatalf("unexpected empty-state options: %+v", p.Options)
+	}
+}
+
+func TestTeamsHostsParamsDoNotReferenceWorkspaceOrVault(t *testing.T) {
+	m := NewModel()
+	m.page = PageTeams
+	m.teamsAuthed = true
+	m.teamsHasTeam = true
+	m.resolveTeamsState()
+	p := m.buildTeamsHostsViewParams()
+
+	joined := strings.Join([]string{p.TeamName, p.Selected.ShareMode}, "\n")
+	if strings.Contains(strings.ToLower(joined), "workspace") || strings.Contains(strings.ToLower(joined), "vault") {
+		t.Fatalf("unexpected terminology leaked into teams hosts params: %s", joined)
+	}
+}
+
+func TestTeamsHostsIncludeGroupedAndUngroupedItems(t *testing.T) {
+	m := NewModel()
+	m.teamsAuthed = true
+	m.teamsHasTeam = true
+
+	items := m.buildTeamsHostItems()
+	if len(items) == 0 {
+		t.Fatalf("expected team host items")
+	}
+
+	seenProduction := false
+	seenStaging := false
+	seenUngrouped := false
+	for _, item := range items {
+		if !item.IsGroup {
+			continue
+		}
+		switch item.GroupName {
+		case "Production":
+			seenProduction = true
+		case "Staging":
+			seenStaging = true
+		case "Ungrouped":
+			seenUngrouped = true
+		}
+	}
+
+	if !seenProduction || !seenStaging || !seenUngrouped {
+		t.Fatalf("expected Production, Staging, and Ungrouped in team hosts")
+	}
+}
+
+func TestTeamsBackFromMembersReturnsToHosts(t *testing.T) {
+	m := NewModel()
+	m.page = PageTeams
+	m.overlay = OverlayNone
+	m.teamsAuthed = true
+	m.teamsHasTeam = true
+	m.teamsState = teamsStateMembers
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m1 := updated.(Model)
+
+	if m1.page != PageTeams {
+		t.Fatalf("expected to stay on teams page, got %v", m1.page)
+	}
+	if m1.teamsState != teamsStateHosts {
+		t.Fatalf("expected q from members to return to hosts, got %v", m1.teamsState)
+	}
+}
+
+func TestTeamsInviteMemberAddsPendingMember(t *testing.T) {
+	m := NewModel()
+	m.page = PageTeams
+	m.overlay = OverlayNone
+	m.teamsAuthed = true
+	m.teamsHasTeam = true
+	m.teamsState = teamsStateInviteMember
+	m.teamsInviteEmail = "new.person@acme.dev"
+	m.teamsInviteRole = 2
+	m.teamsManageFocus = 2
+
+	before := len(m.teamsTeam.Members)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m1 := updated.(Model)
+
+	if len(m1.teamsTeam.Members) != before+1 {
+		t.Fatalf("expected invited member to be added")
+	}
+	if m1.teamsState != teamsStateMembers {
+		t.Fatalf("expected invite flow to return to members, got %v", m1.teamsState)
+	}
+	last := m1.teamsTeam.Members[len(m1.teamsTeam.Members)-1]
+	if last.Email != "new.person@acme.dev" || last.Status != "invited" {
+		t.Fatalf("unexpected invited member: %+v", last)
+	}
+}
+
+func TestTeamsManagementBackReturnsToMembers(t *testing.T) {
+	m := NewModel()
+	m.page = PageTeams
+	m.overlay = OverlayNone
+	m.teamsAuthed = true
+	m.teamsHasTeam = true
+	m.teamsState = teamsStateInviteMember
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m1 := updated.(Model)
+
+	if m1.page != PageTeams {
+		t.Fatalf("expected to stay on teams page, got %v", m1.page)
+	}
+	if m1.teamsState != teamsStateMembers {
+		t.Fatalf("expected q from management screen to return to members, got %v", m1.teamsState)
 	}
 }
 

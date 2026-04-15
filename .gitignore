@@ -49,6 +49,15 @@ temp/
 .gemini-clipboard/
 *.bak
 
+# Node / web
+node_modules/
+.next/
+dist/
+.turbo/
+.env.local
+.env.*.local
+coverage/
+
 # Design mockup binaries
 /sshmock*
 

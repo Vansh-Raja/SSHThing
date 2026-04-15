@@ -1,0 +1,17 @@
+{
+  "name": "@sshthing/convex",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "convex dev",
+    "deploy": "convex deploy",
+    "codegen": "convex codegen"
+  },
+  "dependencies": {
+    "convex": "^1.23.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}
+
