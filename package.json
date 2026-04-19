@@ -1,0 +1,19 @@
+{
+  "name": "sshthing-monorepo",
+  "private": true,
+  "packageManager": "pnpm@10.8.0",
+  "workspaces": [
+    "web",
+    "convex"
+  ],
+  "scripts": {
+    "web:dev": "pnpm --dir web dev",
+    "web:build": "pnpm --dir web build",
+    "web:typecheck": "pnpm --dir web typecheck",
+    "convex:dev": "convex dev",
+    "convex:deploy": "convex deploy"
+  },
+  "devDependencies": {
+    "convex": "^1.23.0"
+  }
+}

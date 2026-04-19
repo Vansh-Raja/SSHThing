@@ -2,11 +2,14 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
 	"github.com/Vansh-Raja/SSHThing/internal/config"
 	syncpkg "github.com/Vansh-Raja/SSHThing/internal/sync"
+	"github.com/Vansh-Raja/SSHThing/internal/teams"
+	"github.com/Vansh-Raja/SSHThing/internal/teamsclient"
 	"github.com/Vansh-Raja/SSHThing/internal/update"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -64,11 +67,30 @@ type clearErrMsg struct {
 
 type tickMsg struct{}
 
+type profileAuthPolledMsg struct {
+	runID  int
+	result teams.CliAuthPollResponse
+	err    error
+}
+
 // ── Command constructors ──────────────────────────────────────────────
 
 func tickCmd() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg {
 		return tickMsg{}
+	})
+}
+
+func pollProfileAuthCmd(runID int, client *teamsclient.Client, sessionID, pollSecret string, interval time.Duration) tea.Cmd {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	return tea.Tick(interval, func(time.Time) tea.Msg {
+		if client == nil {
+			return profileAuthPolledMsg{runID: runID, err: fmt.Errorf("teams client is not configured")}
+		}
+		result, err := client.PollCLIAuth(context.Background(), sessionID, pollSecret)
+		return profileAuthPolledMsg{runID: runID, result: result, err: err}
 	})
 }
 

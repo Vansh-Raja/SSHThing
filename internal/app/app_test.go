@@ -6,6 +6,7 @@ import (
 
 	"github.com/Vansh-Raja/SSHThing/internal/db"
 	ssync "github.com/Vansh-Raja/SSHThing/internal/sync"
+	"github.com/Vansh-Raja/SSHThing/internal/teamssession"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
 )
 
@@ -23,6 +24,101 @@ func TestBuildSettingsItemsIncludesUpdateNote(t *testing.T) {
 
 	if !found {
 		t.Fatalf("expected updates note row %q", updateSettingsNoteLabel())
+	}
+}
+
+func TestBuildSettingsItemsOmitsTeamsRows(t *testing.T) {
+	m := NewModel()
+	items := m.buildSettingsItems()
+
+	unexpected := map[string]bool{
+		"enable teams":           true,
+		"teams api base url":     true,
+		"teams browser base url": true,
+		"clear teams session":    true,
+		"clear teams cache":      true,
+	}
+	for _, item := range items {
+		if unexpected[item.Label] {
+			t.Fatalf("did not expect teams settings row %q", item.Label)
+		}
+	}
+}
+
+func TestVisiblePagesPersonalModeOmitsTeams(t *testing.T) {
+	m := NewModel()
+	for _, page := range m.visiblePages() {
+		if page == PageTeams {
+			t.Fatalf("did not expect teams page in personal mode")
+		}
+	}
+}
+
+func TestVisiblePagesTeamsModeShowsTeamsShell(t *testing.T) {
+	m := NewModel()
+	m.teamsSession = teamSessionForTests(time.Now().Add(time.Hour))
+	m.appMode = appModeTeams
+
+	found := false
+	for _, page := range m.visiblePages() {
+		if page == PageTeams {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected teams page in teams mode")
+	}
+}
+
+func TestToggleAppModeRequiresSignIn(t *testing.T) {
+	t.Setenv("SSHTHING_DATA_DIR", t.TempDir())
+	m := NewModel()
+	m.toggleAppMode()
+	if m.appMode != appModePersonal {
+		t.Fatalf("expected to stay in personal mode")
+	}
+	if m.page != PageProfile {
+		t.Fatalf("expected to be redirected to profile, got %d", m.page)
+	}
+}
+
+func TestToggleAppModeSwitchesBetweenModes(t *testing.T) {
+	m := NewModel()
+	m.teamsSession = teamSessionForTests(time.Now().Add(time.Hour))
+	m.syncProfileFromSession()
+
+	m.toggleAppMode()
+	if m.appMode != appModeTeams {
+		t.Fatalf("expected teams mode")
+	}
+	if m.page != PageTeams {
+		t.Fatalf("expected teams page, got %d", m.page)
+	}
+
+	m.toggleAppMode()
+	if m.appMode != appModePersonal {
+		t.Fatalf("expected personal mode")
+	}
+	if m.page != PageHome {
+		t.Fatalf("expected home page, got %d", m.page)
+	}
+}
+
+func TestCloudServiceBaseURLSupportsEnvOverride(t *testing.T) {
+	t.Setenv("SSHTHING_CLOUD_BASE_URL", "https://cloud.example.com/")
+	if got := cloudServiceBaseURL(); got != "https://cloud.example.com" {
+		t.Fatalf("expected env override, got %q", got)
+	}
+}
+
+func teamSessionForTests(expiresAt time.Time) teamssession.Session {
+	return teamssession.Session{
+		AccessToken:  "access",
+		RefreshToken: "refresh",
+		ExpiresAt:    expiresAt.UnixMilli(),
+		UserName:     "Test User",
+		UserEmail:    "test@example.com",
 	}
 }
 

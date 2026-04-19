@@ -11,10 +11,11 @@ const SidebarW = 4
 
 // Renderer holds all context needed to render views.
 type Renderer struct {
-	Theme Theme
-	Icons IconSet
-	W, H  int
-	Tick  int
+	Theme          Theme
+	Icons          IconSet
+	W, H           int
+	Tick           int
+	PageIndicators []PageIndicator
 }
 
 // PageIndicator pairs a sidebar icon with its page index.
@@ -25,10 +26,15 @@ type PageIndicator struct {
 
 // PageIcons returns the sidebar page indicators.
 func (r *Renderer) PageIcons() []PageIndicator {
+	if len(r.PageIndicators) > 0 {
+		return r.PageIndicators
+	}
 	return []PageIndicator{
 		{r.Icons.Home, 0},
-		{r.Icons.Settings, 1},
-		{r.Icons.Tokens, 2},
+		{r.Icons.Profile, 1},
+		{r.Icons.Settings, 2},
+		{r.Icons.Tokens, 3},
+		{r.Icons.Teams, 4},
 	}
 }
 

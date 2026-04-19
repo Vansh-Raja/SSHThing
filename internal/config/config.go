@@ -56,6 +56,11 @@ type Config struct {
 		IconSet   string `json:"icon_set"`
 	} `json:"ui"`
 
+	TeamsUI struct {
+		Theme   string `json:"theme"`
+		IconSet string `json:"icon_set"`
+	} `json:"teams_ui"`
+
 	SSH struct {
 		HostKeyPolicy       HostKeyPolicy       `json:"host_key_policy"`
 		KeepAliveSeconds    int                 `json:"keepalive_seconds"`
@@ -93,15 +98,25 @@ type Config struct {
 		SyncTokenDefinitions bool `json:"sync_token_definitions"`
 		SessionTTLSeconds    int  `json:"session_ttl_seconds"`
 	} `json:"automation"`
+
+	Teams struct {
+		Enabled             bool   `json:"enabled"`
+		APIBaseURL          string `json:"api_base_url"`
+		BrowserBaseURL      string `json:"browser_base_url"`
+		SessionCacheEnabled bool   `json:"session_cache_enabled"`
+		LastTeamID          string `json:"last_team_id,omitempty"`
+	} `json:"teams"`
 }
 
 func Default() Config {
 	var c Config
-	c.Version = 2
+	c.Version = 4
 	c.UI.VimMode = true
 	c.UI.ShowIcons = true
 	c.UI.Theme = "Catppuccin Mocha"
 	c.UI.IconSet = "Unicode"
+	c.TeamsUI.Theme = "Catppuccin Latte"
+	c.TeamsUI.IconSet = "ASCII"
 
 	c.SSH.HostKeyPolicy = HostKeyAcceptNew
 	c.SSH.KeepAliveSeconds = 60
@@ -123,6 +138,11 @@ func Default() Config {
 
 	c.Automation.SyncTokenDefinitions = false
 	c.Automation.SessionTTLSeconds = 900
+
+	c.Teams.Enabled = false
+	c.Teams.APIBaseURL = ""
+	c.Teams.BrowserBaseURL = ""
+	c.Teams.SessionCacheEnabled = true
 	return c
 }
 
@@ -201,6 +221,19 @@ func withDefaults(c Config) Config {
 		c.SSH.PasswordAutoLogin = true
 		c.Version = 2
 	}
+	if c.Version < 3 {
+		c.Teams.SessionCacheEnabled = true
+		c.Version = 3
+	}
+	if c.Version < 4 {
+		if c.TeamsUI.Theme == "" {
+			c.TeamsUI.Theme = "Catppuccin Latte"
+		}
+		if c.TeamsUI.IconSet == "" {
+			c.TeamsUI.IconSet = "ASCII"
+		}
+		c.Version = 4
+	}
 
 	// Enums / ints: normalize invalid values.
 	switch c.SSH.HostKeyPolicy {
@@ -240,6 +273,19 @@ func withDefaults(c Config) Config {
 
 	if c.Automation.SessionTTLSeconds <= 0 || c.Automation.SessionTTLSeconds > 86400 {
 		c.Automation.SessionTTLSeconds = def.Automation.SessionTTLSeconds
+	}
+
+	if c.Teams.APIBaseURL == "" {
+		c.Teams.APIBaseURL = def.Teams.APIBaseURL
+	}
+	if c.Teams.BrowserBaseURL == "" {
+		c.Teams.BrowserBaseURL = def.Teams.BrowserBaseURL
+	}
+	if c.TeamsUI.Theme == "" {
+		c.TeamsUI.Theme = def.TeamsUI.Theme
+	}
+	if c.TeamsUI.IconSet == "" {
+		c.TeamsUI.IconSet = def.TeamsUI.IconSet
 	}
 
 	return c

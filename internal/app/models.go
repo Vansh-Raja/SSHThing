@@ -1,6 +1,10 @@
 package app
 
-import "time"
+import (
+	"time"
+
+	"github.com/Vansh-Raja/SSHThing/internal/teams"
+)
 
 // Host represents an SSH host configuration
 type Host struct {
@@ -21,9 +25,15 @@ type Host struct {
 
 const (
 	PageHome     = 0
-	PageSettings = 1
-	PageTokens   = 2
-	NumPages     = 3
+	PageProfile  = 1
+	PageSettings = 2
+	PageTokens   = 3
+	PageTeams    = 4
+)
+
+const (
+	appModePersonal = iota
+	appModeTeams
 )
 
 // ── Overlay constants ─────────────────────────────────────────────────
@@ -65,6 +75,7 @@ type SpotlightItemKind int
 const (
 	SpotlightItemGroup SpotlightItemKind = iota
 	SpotlightItemHost
+	SpotlightItemCommand
 )
 
 // SpotlightItem represents one row in spotlight results.
@@ -72,6 +83,10 @@ type SpotlightItem struct {
 	Kind      SpotlightItemKind
 	GroupName string
 	Host      Host
+	TeamHost  teams.TeamHost
+	Command   string
+	Detail    string
+	Team      teams.TeamSummary
 	Score     int
 	Indent    int
 }
@@ -82,4 +97,15 @@ const (
 	tokenModeList = iota
 	tokenModeCreateName
 	tokenModeCreateScope
+)
+
+const (
+	profileStateSignedOut = iota
+	profileStateSigningIn
+	profileStateSignedIn
+)
+
+const (
+	teamsStateZero = iota
+	teamsStateHosts
 )

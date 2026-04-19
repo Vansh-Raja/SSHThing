@@ -258,6 +258,35 @@ Sync your hosts across multiple devices using a private Git repository.
 The sync status is displayed in the footer (e.g., "Sync: 2m ago", "Syncing...", or "Error: ...").
 When you press `Shift+Y`, SSHThing now runs sync asynchronously and shows a live syncing indicator + loading bar in the footer while work is in progress.
 
+## SSHThing Teams Browser Setup
+
+The repo also includes a Next.js + Convex browser surface under `web/` for
+Teams sign-in and CLI auth handoff.
+
+1. From the repo root, start Convex once to create a local deployment and generate `convex/_generated`:
+
+```bash
+./node_modules/.bin/convex dev --once
+```
+
+2. Create a Clerk app, enable the Convex integration in Clerk, and collect:
+   - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
+   - `CLERK_SECRET_KEY`
+   - Clerk Frontend API / issuer domain (`CLERK_FRONTEND_API_URL` or `CLERK_JWT_ISSUER_DOMAIN`)
+
+3. Put those values in the repo-root `.env.local`.
+   `convex dev` already writes `CONVEX_URL` and `CONVEX_DEPLOYMENT` there.
+   The Next app automatically maps `CONVEX_URL` to `NEXT_PUBLIC_CONVEX_URL`, so you do not need to duplicate it in `web/.env.local`.
+
+4. Run the two dev processes:
+
+```bash
+./node_modules/.bin/convex dev
+cd web && ./node_modules/.bin/next dev
+```
+
+5. Open `http://localhost:3000`, sign in with Clerk, switch or create an organization, and then return to the TUI device-flow page.
+
 ## Automation Tokens + `sshthing exec`
 
 Use automation tokens when you want `sshpass`-style command execution for agents/scripts without exposing VPS passwords in plaintext files.

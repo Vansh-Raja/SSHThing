@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/Vansh-Raja/SSHThing/internal/securestore"
 	"github.com/Vansh-Raja/SSHThing/internal/ssh"
 	syncpkg "github.com/Vansh-Raja/SSHThing/internal/sync"
+	"github.com/Vansh-Raja/SSHThing/internal/teams"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
 	"github.com/Vansh-Raja/SSHThing/internal/update"
 	"github.com/atotto/clipboard"
@@ -107,6 +109,23 @@ func hostSearchCorpus(h Host) string {
 		h.GroupName,
 	}
 	for _, tag := range hostSearchTags(h) {
+		parts = append(parts, tag, "#"+tag)
+	}
+	return strings.Join(parts, " ")
+}
+
+func teamHostSearchCorpus(h teams.TeamHost) string {
+	parts := []string{
+		strings.TrimSpace(h.Label),
+		h.Hostname,
+		h.Username,
+		h.Group,
+	}
+	for _, tag := range h.Tags {
+		tag = strings.TrimSpace(strings.ToLower(tag))
+		if tag == "" {
+			continue
+		}
 		parts = append(parts, tag, "#"+tag)
 	}
 	return strings.Join(parts, " ")
@@ -611,6 +630,41 @@ func fuzzyScore(query, candidate string) (int, bool) {
 
 func (m Model) buildSpotlightItems(query string) []SpotlightItem {
 	query = strings.TrimSpace(query)
+	if m.appMode == appModeTeams {
+		if strings.HasPrefix(query, ">") {
+			return m.teamCommandItems(query)
+		}
+		if query == "" {
+			out := make([]SpotlightItem, 0, min(8, len(m.teamsItems)))
+			for _, h := range m.teamsItems {
+				out = append(out, SpotlightItem{Kind: SpotlightItemHost, TeamHost: h, GroupName: h.Group})
+				if len(out) >= 8 {
+					break
+				}
+			}
+			return out
+		}
+
+		out := make([]SpotlightItem, 0, 12)
+		for _, h := range m.teamsItems {
+			score, ok := fuzzyScore(query, teamHostSearchCorpus(h))
+			if !ok {
+				continue
+			}
+			out = append(out, SpotlightItem{
+				Kind:      SpotlightItemHost,
+				TeamHost:  h,
+				GroupName: h.Group,
+				Score:     score,
+			})
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+		if len(out) > 16 {
+			out = out[:16]
+		}
+		return out
+	}
+
 	if query == "" {
 		out := make([]SpotlightItem, 0, min(8, len(m.hosts)))
 		for _, h := range m.hosts {
@@ -814,6 +868,23 @@ func (m *Model) buildSettingsItems() []ui.SettingsItem {
 			return "on"
 		}
 		return "off"
+	}
+
+	if m.appMode == appModeTeams {
+		currentTeamName := "(none)"
+		if team, ok := m.teamsCurrentTeam(); ok {
+			currentTeamName = team.Name
+		}
+		return []ui.SettingsItem{
+			{Category: "ui", Label: "theme", Value: m.cfg.TeamsUI.Theme, Kind: 1, Options: themeNames(), OptIdx: themeIdx(m.cfg.TeamsUI.Theme)},
+			{Category: "ui", Label: "icon set", Value: m.cfg.TeamsUI.IconSet, Kind: 1, Options: iconSetNames(), OptIdx: iconSetIdx(m.cfg.TeamsUI.IconSet)},
+			{Category: "teams", Label: "current team", Value: currentTeamName, Kind: 2},
+			{Category: "teams", Label: "create team", Value: "", Kind: 2},
+			{Category: "teams", Label: "rename team", Value: currentTeamName, Kind: 2, Disabled: !m.profileSignedIn() || len(m.teamsList) == 0},
+			{Category: "teams", Label: "delete team", Value: currentTeamName, Kind: 2, Disabled: !m.profileSignedIn() || len(m.teamsList) == 0},
+			{Category: "teams", Label: "move team earlier", Value: currentTeamName, Kind: 2, Disabled: !m.profileSignedIn() || len(m.teamsList) < 2},
+			{Category: "teams", Label: "move team later", Value: currentTeamName, Kind: 2, Disabled: !m.profileSignedIn() || len(m.teamsList) < 2},
+		}
 	}
 
 	items := []ui.SettingsItem{
@@ -1112,6 +1183,32 @@ func normalizePrivateKey(key string) string {
 // ── Settings mutation ─────────────────────────────────────────────────
 
 func (m *Model) applySettingChange(idx int, action string) {
+	if m.appMode == appModeTeams {
+		switch idx {
+		case 0:
+			names := themeNames()
+			cur := themeIdx(m.cfg.TeamsUI.Theme)
+			if action == "left" {
+				cur = (cur - 1 + len(names)) % len(names)
+			} else {
+				cur = (cur + 1) % len(names)
+			}
+			m.cfg.TeamsUI.Theme = names[cur]
+			m.syncModeAppearance()
+		case 1:
+			iNames := iconSetNames()
+			cur := iconSetIdx(m.cfg.TeamsUI.IconSet)
+			if action == "left" {
+				cur = (cur - 1 + len(iNames)) % len(iNames)
+			} else {
+				cur = (cur + 1) % len(iNames)
+			}
+			m.cfg.TeamsUI.IconSet = iNames[cur]
+			m.syncModeAppearance()
+		}
+		return
+	}
+
 	switch idx {
 	case 0: // vim mode
 		m.cfg.UI.VimMode = !m.cfg.UI.VimMode
@@ -1210,6 +1307,33 @@ func (m *Model) applySettingChange(idx int, action string) {
 
 func (m *Model) applySettingsEditValue(idx int, val string) bool {
 	val = strings.TrimSpace(val)
+	if m.appMode == appModeTeams {
+		ctx := context.Background()
+		switch idx {
+		case 3:
+			if val == "" {
+				m.err = fmt.Errorf("team name cannot be empty")
+				return false
+			}
+			if err := m.createTeam(ctx, val); err != nil {
+				m.err = err
+				return false
+			}
+			m.err = fmt.Errorf("✓ Team created")
+		case 4:
+			if val == "" {
+				m.err = fmt.Errorf("team name cannot be empty")
+				return false
+			}
+			if err := m.renameCurrentTeam(ctx, val); err != nil {
+				m.err = err
+				return false
+			}
+			m.err = fmt.Errorf("✓ Team renamed")
+		}
+		return true
+	}
+
 	switch idx {
 	case 5: // keepalive
 		n, err := strconv.Atoi(val)
@@ -1263,6 +1387,21 @@ func (m *Model) applySettingsEditValue(idx int, val string) bool {
 		m.cfg.Sync.LocalPath = val
 	}
 	return true
+}
+
+func (m Model) buildTeamsViewParams() ui.TeamsViewParams {
+	currentTeam, _ := m.teamsCurrentTeam()
+	return ui.TeamsViewParams{
+		Page:         m.page,
+		ModeLabel:    m.modeLabel(),
+		State:        m.teamsState,
+		Err:          m.err,
+		SessionValid: m.profileSignedIn(),
+		CurrentTeam:  currentTeam,
+		Teams:        m.teamsList,
+		HostCursor:   m.teamsCursor,
+		Hosts:        m.teamsItems,
+	}
 }
 
 // ── View data builders ────────────────────────────────────────────────
@@ -1342,25 +1481,44 @@ func (m Model) buildHomeViewParams() ui.HomeViewParams {
 func (m Model) buildSearchResults() []ui.SearchResultItem {
 	var results []ui.SearchResultItem
 	for _, it := range m.spotlightItems {
-		if it.Kind != SpotlightItemHost {
-			continue
-		}
-		status := 0
-		if m.mountManager != nil {
-			if ok, _ := m.mountManager.IsMounted(it.Host.ID); ok {
-				status = 2
+		switch it.Kind {
+		case SpotlightItemHost:
+			if m.appMode == appModeTeams {
+				lbl := it.TeamHost.Label
+				if lbl == "" {
+					lbl = it.TeamHost.Hostname
+				}
+				results = append(results, ui.SearchResultItem{
+					Label:       lbl,
+					Hostname:    it.TeamHost.Hostname,
+					GroupName:   it.GroupName,
+					CommandMode: false,
+				})
+				continue
 			}
+			status := 0
+			if m.mountManager != nil {
+				if ok, _ := m.mountManager.IsMounted(it.Host.ID); ok {
+					status = 2
+				}
+			}
+			lbl := it.Host.Label
+			if lbl == "" {
+				lbl = it.Host.Hostname
+			}
+			results = append(results, ui.SearchResultItem{
+				Label:     lbl,
+				Hostname:  it.Host.Hostname,
+				GroupName: it.GroupName,
+				Status:    status,
+			})
+		case SpotlightItemCommand:
+			results = append(results, ui.SearchResultItem{
+				Label:       it.Detail,
+				GroupName:   "command",
+				CommandMode: true,
+			})
 		}
-		lbl := it.Host.Label
-		if lbl == "" {
-			lbl = it.Host.Hostname
-		}
-		results = append(results, ui.SearchResultItem{
-			Label:     lbl,
-			Hostname:  it.Host.Hostname,
-			GroupName: it.GroupName,
-			Status:    status,
-		})
 	}
 	return results
 }

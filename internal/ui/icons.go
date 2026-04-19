@@ -6,7 +6,7 @@ import "strings"
 type IconSet struct {
 	Name string
 	// Sidebar
-	Home, Settings, Tokens string
+	Home, Profile, Settings, Tokens, Teams string
 	// Status
 	Connected, Idle, Offline string
 	// Markers
@@ -31,8 +31,10 @@ type IconSet struct {
 var UnicodeIcons = IconSet{
 	Name:           "Unicode",
 	Home:           "\u2302",
+	Profile:        "\u263A",
 	Settings:       "\u25CB",
 	Tokens:         "\u25C7",
+	Teams:          "\u25A4",
 	Connected:      "\u25CF",
 	Idle:           "\u25CB",
 	Offline:        "\u00B7",
@@ -65,8 +67,10 @@ var UnicodeIcons = IconSet{
 var NerdFontIcons = IconSet{
 	Name:           "Nerd Font",
 	Home:           "\uf015",
+	Profile:        "\uf2bd",
 	Settings:       "\uf013",
 	Tokens:         "\uf084",
+	Teams:          "\uf0c0",
 	Connected:      "\uf058",
 	Idle:           "\uf192",
 	Offline:        "\uf10c",

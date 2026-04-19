@@ -57,3 +57,12 @@ temp/
 
 .opencode/
 opencode.json
+
+# Node / web
+node_modules/
+.next/
+dist/
+.turbo/
+coverage/
+.env.local
+.env.*.local

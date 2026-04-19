@@ -11,6 +11,10 @@ import (
 	"github.com/Vansh-Raja/SSHThing/internal/db"
 	"github.com/Vansh-Raja/SSHThing/internal/mount"
 	syncpkg "github.com/Vansh-Raja/SSHThing/internal/sync"
+	"github.com/Vansh-Raja/SSHThing/internal/teamcache"
+	"github.com/Vansh-Raja/SSHThing/internal/teams"
+	"github.com/Vansh-Raja/SSHThing/internal/teamsclient"
+	"github.com/Vansh-Raja/SSHThing/internal/teamssession"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
 	"github.com/Vansh-Raja/SSHThing/internal/update"
 	tea "github.com/charmbracelet/bubbletea"
@@ -27,8 +31,11 @@ type Model struct {
 	collapsed   map[string]bool
 
 	// Navigation
-	page    int // PageHome, PageSettings, PageTokens
-	overlay int // OverlayNone, OverlayLogin, etc.
+	appMode      int
+	page         int // PageHome, PageProfile, PageSettings, PageTokens, PageTeams
+	overlay      int // OverlayNone, OverlayLogin, etc.
+	personalPage int
+	teamsPage    int
 
 	width  int
 	height int
@@ -107,6 +114,25 @@ type Model struct {
 	tokenRevealValue  string
 	tokenRevealCopied bool
 
+	// Teams
+	teamsClient        *teamsclient.Client
+	teamsSession       teamssession.Session
+	teamsCache         teamcache.Cache
+	teamsState         int
+	teamsItems         []teams.TeamHost
+	teamsCursor        int
+	teamsList          []teams.TeamSummary
+	teamsCurrentTeamID string
+
+	// Profile
+	profileState            int
+	profileShowOpenTeamsCTA bool
+	profileLastAuthURL      string
+	profilePendingAuth      *teams.CliAuthStartResponse
+	profileDisplayName      string
+	profileEmail            string
+	profileAuthRunID        int
+
 	// Sync
 	syncManager    *syncpkg.Manager
 	masterPassword string
@@ -135,6 +161,12 @@ func NewModel() Model {
 // NewModelWithVersion creates a new application model with explicit binary version.
 func NewModelWithVersion(version string) Model {
 	cfg, _ := config.Load()
+	teamsSession, _ := teamssession.Load()
+	teamsCache, _ := teamcache.Load()
+	if teamsSession.Valid() && teamsSession.Expired(time.Now()) {
+		teamsSession = teamssession.Session{}
+		teamsCache = teamcache.Cache{}
+	}
 
 	theme, themeIdx := ui.ThemeByName(cfg.UI.Theme)
 	icons, iconIdx := ui.IconSetByName(cfg.UI.IconSet)
@@ -151,14 +183,17 @@ func NewModelWithVersion(version string) Model {
 	setupFields[0] = ui.NewMaskedField("password")
 	setupFields[1] = ui.NewMaskedField("confirm")
 
-	return Model{
+	m := Model{
 		cfg:            cfg,
 		cfgOriginal:    cfg,
 		hosts:          []Host{},
 		groups:         []string{},
 		listItems:      []ListItem{},
 		selectedIdx:    0,
+		appMode:        appModePersonal,
 		page:           PageHome,
+		personalPage:   PageHome,
+		teamsPage:      PageTeams,
 		overlay:        overlay,
 		collapsed:      map[string]bool{},
 		theme:          theme,
@@ -172,9 +207,26 @@ func NewModelWithVersion(version string) Model {
 		tokenSummaries: []authtoken.TokenSummary{},
 		tokenHostPick:  map[int]bool{},
 		tokenMode:      tokenModeList,
+		teamsClient:    teamsclient.New(cloudServiceBaseURL()),
+		teamsSession:   teamsSession,
+		teamsCache:     teamsCache,
+		teamsState:     teamsStateZero,
+		teamsItems:     append([]teams.TeamHost(nil), teamsCache.Hosts...),
+		teamsList:      append([]teams.TeamSummary(nil), teamsCache.Teams...),
+		teamsCurrentTeamID: func() string {
+			if teamsSession.CurrentTeamID != "" {
+				return teamsSession.CurrentTeamID
+			}
+			if cfg.Teams.LastTeamID != "" {
+				return cfg.Teams.LastTeamID
+			}
+			return teamsCache.CurrentTeamID
+		}(),
 		currentVersion: strings.TrimSpace(version),
 		formEditIdx:    -1,
 	}
+	m.syncProfileFromSession()
+	return m
 }
 
 // Init initializes the application
@@ -195,6 +247,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			return m.requestQuit()
 		}
+		if m.overlay == OverlayNone && (msg.String() == "T" || msg.String() == "shift+t") {
+			m.toggleAppMode()
+			return m, m.errorAutoClearCmd(prevErr)
+		}
 		// Dispatch to overlay or page
 		var nextModel tea.Model
 		var nextCmd tea.Cmd
@@ -212,6 +268,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.tick++
 		return m, tickCmd()
+
+	case profileAuthPolledMsg:
+		if msg.runID != m.profileAuthRunID || m.profileState != profileStateSigningIn || m.profilePendingAuth == nil {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.err = msg.err
+			return m, pollProfileAuthCmd(m.profileAuthRunID, m.teamsClient, m.profilePendingAuth.SessionID, m.profilePendingAuth.PollSecret, time.Duration(m.profilePendingAuth.PollIntervalSeconds)*time.Second)
+		}
+		switch msg.result.Status {
+		case "completed":
+			if msg.result.User == nil {
+				m.err = fmt.Errorf("sign-in completed but returned incomplete session data")
+				m.cancelProfileSignIn()
+				return m, m.errorAutoClearCmd(prevErr)
+			}
+			m.completeProfileSignIn(msg.result)
+			m.err = fmt.Errorf("✓ Signed in")
+			return m, m.errorAutoClearCmd(prevErr)
+		case "expired":
+			m.cancelProfileSignIn()
+			m.err = fmt.Errorf("cloud sign-in expired")
+			return m, m.errorAutoClearCmd(prevErr)
+		default:
+			return m, pollProfileAuthCmd(m.profileAuthRunID, m.teamsClient, m.profilePendingAuth.SessionID, m.profilePendingAuth.PollSecret, time.Duration(m.profilePendingAuth.PollIntervalSeconds)*time.Second)
+		}
 
 	case syncAnimTickMsg:
 		if !m.syncing || msg.runID != m.syncRunID {
@@ -395,11 +477,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View renders the UI
 func (m Model) View() string {
 	r := ui.Renderer{
-		Theme: m.theme,
-		Icons: m.icons,
-		W:     m.width,
-		H:     m.height,
-		Tick:  m.tick,
+		Theme:          m.theme,
+		Icons:          m.icons,
+		W:              m.width,
+		H:              m.height,
+		Tick:           m.tick,
+		PageIndicators: m.visiblePageIndicators(),
 	}
 
 	var content string
@@ -434,6 +517,7 @@ func (m Model) View() string {
 			ArmedSFTP:    m.armedSFTP,
 			ArmedMount:   m.armedMount,
 			ArmedUnmount: m.armedUnmount,
+			CommandMode:  strings.HasPrefix(strings.TrimSpace(m.searchQuery), ">"),
 		})
 		return r.WrapFull(content)
 
@@ -520,6 +604,8 @@ func (m Model) View() string {
 	switch m.page {
 	case PageHome:
 		content = r.RenderHomeView(m.buildHomeViewParams())
+	case PageProfile:
+		content = r.RenderProfileView(m.buildProfileViewParams())
 	case PageSettings:
 		if m.settingsEditing && m.settingsCursor < len(m.settingsItems) {
 			item := m.settingsItems[m.settingsCursor]
@@ -581,6 +667,8 @@ func (m Model) View() string {
 			Page:   m.page,
 			Err:    m.err,
 		})
+	case PageTeams:
+		content = r.RenderTeamsView(m.buildTeamsViewParams())
 	default:
 		content = "Unknown page"
 	}

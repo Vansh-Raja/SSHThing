@@ -114,10 +114,11 @@ func (r *Renderer) RenderHelpOverlay() string {
 
 // SearchResultItem represents one row in the search results.
 type SearchResultItem struct {
-	Label     string
-	Hostname  string
-	GroupName string
-	Status    int // 0=offline, 1=idle, 2=connected
+	Label       string
+	Hostname    string
+	GroupName   string
+	Status      int // 0=offline, 1=idle, 2=connected
+	CommandMode bool
 }
 
 // SearchViewParams holds data for the search overlay.
@@ -128,6 +129,7 @@ type SearchViewParams struct {
 	ArmedSFTP    bool
 	ArmedMount   bool
 	ArmedUnmount bool
+	CommandMode  bool
 }
 
 // RenderSearchOverlay renders the search/spotlight overlay.
@@ -142,7 +144,11 @@ func (r *Renderer) RenderSearchOverlay(p SearchViewParams) string {
 
 	bg := r.Theme.Mantle
 	inputStyle := lipgloss.NewStyle().Foreground(r.Theme.Text).Background(bg)
-	placeholder := lipgloss.NewStyle().Foreground(r.Theme.Overlay).Background(bg).Render("search hosts...")
+	placeholderText := "search hosts..."
+	if p.CommandMode {
+		placeholderText = "> commands..."
+	}
+	placeholder := lipgloss.NewStyle().Foreground(r.Theme.Overlay).Background(bg).Render(placeholderText)
 	inputText := p.Query
 	cursor := ""
 	if r.Tick%2 == 0 {
@@ -169,6 +175,16 @@ func (r *Renderer) RenderSearchOverlay(p SearchViewParams) string {
 	var resultLines []string
 	for i, h := range results {
 		sel := i == p.Cursor
+		if h.CommandMode {
+			nameStyle := lipgloss.NewStyle().Foreground(r.Theme.Subtext).Background(bg)
+			prefix := "    "
+			if sel {
+				nameStyle = lipgloss.NewStyle().Foreground(r.Theme.Accent).Background(bg).Bold(true)
+				prefix = lipgloss.NewStyle().Foreground(r.Theme.Accent).Background(bg).Render("  " + r.Icons.Selected + " ")
+			}
+			resultLines = append(resultLines, prefix+nameStyle.Render(h.Label))
+			continue
+		}
 		var dot string
 		switch h.Status {
 		case 2:
@@ -207,6 +223,9 @@ func (r *Renderer) RenderSearchOverlay(p SearchViewParams) string {
 		footerText = "esc close  \u00B7  enter sftp  \u00B7  S disarm"
 	} else {
 		footerText = "esc close  \u00B7  enter connect  \u00B7  S sftp  \u00B7  M mount"
+	}
+	if p.CommandMode {
+		footerText = "esc close  ·  enter run command"
 	}
 	footer := lipgloss.NewStyle().Foreground(r.Theme.Overlay).Background(bg).Render("  " + footerText)
 

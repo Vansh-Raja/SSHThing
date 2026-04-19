@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -50,10 +51,14 @@ func (m Model) handlePageKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.page {
 	case PageHome:
 		return m.handleHomeKeys(msg)
+	case PageProfile:
+		return m.handleProfileKeys(msg)
 	case PageSettings:
 		return m.handleSettingsKeys(msg)
 	case PageTokens:
 		return m.handleTokensKeys(msg)
+	case PageTeams:
+		return m.handleTeamsKeys(msg)
 	}
 	return m, nil
 }
@@ -210,6 +215,9 @@ func (m Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "S":
+		if m.appMode == appModeTeams {
+			return m, nil
+		}
 		item, ok := m.selectedSpotlightItem()
 		if !ok || item.Kind != SpotlightItemHost {
 			m.err = fmt.Errorf("select a host first")
@@ -226,6 +234,9 @@ func (m Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "M":
+		if m.appMode == appModeTeams {
+			return m, nil
+		}
 		if !m.cfg.Mount.Enabled {
 			m.err = fmt.Errorf("\u26A0 mounts are disabled in settings")
 			return m, nil
@@ -265,11 +276,43 @@ func (m Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
+		if item.Kind == SpotlightItemCommand {
+			m.overlay = OverlayNone
+			m.searchQuery = ""
+			m.spotlightItems = nil
+			switch item.Command {
+			case "create_team":
+				m.openTeamsCreateFlow()
+			case "open_settings":
+				m.enterPage(PageSettings)
+			case "open_profile":
+				m.enterPage(PageProfile)
+			case "switch_team":
+				if err := m.switchTeamByID(context.Background(), item.Team.ID); err != nil {
+					m.err = err
+				} else {
+					m.err = fmt.Errorf("✓ %s", item.Team.Name)
+				}
+			}
+			return m, nil
+		}
 		if item.Kind == SpotlightItemGroup {
 			m.overlay = OverlayNone
 			m.searchQuery = ""
 			m.spotlightItems = nil
 			m.selectGroupInList(item.GroupName)
+			return m, nil
+		}
+		if m.appMode == appModeTeams {
+			m.overlay = OverlayNone
+			m.searchQuery = ""
+			m.spotlightItems = nil
+			for idx, host := range m.teamsItems {
+				if host.ID == item.TeamHost.ID {
+					m.teamsCursor = idx
+					break
+				}
+			}
 			return m, nil
 		}
 		host := item.Host
@@ -830,13 +873,7 @@ func (m Model) handleHomeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.requestQuit()
 
 	case "shift+tab":
-		m.page = (m.page + 1) % NumPages
-		if m.page == PageTokens {
-			m.loadTokenSummaries()
-		} else if m.page == PageSettings {
-			m.cfgOriginal = m.cfg
-			m.settingsItems = m.buildSettingsItems()
-		}
+		m.enterPage(m.nextVisiblePage(m.page))
 		return m, nil
 
 	case "S":
@@ -1035,12 +1072,7 @@ func (m Model) handleHomeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.overlay = OverlayHelp
 
 	case ",":
-		m.cfgOriginal = m.cfg
-		m.settingsItems = m.buildSettingsItems()
-		m.settingsCursor = 0
-		m.settingsFilter = ""
-		m.settingsSearching = false
-		m.page = PageSettings
+		m.enterPage(PageSettings)
 		m.err = nil
 
 	case "Y":
@@ -1150,7 +1182,7 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.err = fmt.Errorf("\u2713 Settings saved")
 		}
-		m.page = PageHome
+		m.page = m.modeHomePage()
 		return m, nil
 
 	case "shift+tab":
@@ -1168,13 +1200,7 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.err = fmt.Errorf("\u2713 Settings saved")
 		}
-		m.page = (m.page + 1) % NumPages
-		if m.page == PageTokens {
-			m.loadTokenSummaries()
-		} else if m.page == PageSettings {
-			m.cfgOriginal = m.cfg
-			m.settingsItems = m.buildSettingsItems()
-		}
+		m.enterPage(m.nextVisiblePage(m.page))
 		return m, nil
 
 	case "/":
@@ -1238,6 +1264,52 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		item := m.settingsItems[idx]
 		// Action items that need commands or navigation
 		switch item.Label {
+		case "current team":
+			return m, nil
+		case "create team":
+			m.settingsEditing = true
+			m.settingsEditVal = ""
+			return m, nil
+		case "rename team":
+			if item.Disabled {
+				return m, nil
+			}
+			m.settingsEditing = true
+			m.settingsEditVal = item.Value
+			return m, nil
+		case "delete team":
+			if item.Disabled {
+				return m, nil
+			}
+			if err := m.deleteCurrentTeam(context.Background()); err != nil {
+				m.err = err
+			} else {
+				m.err = fmt.Errorf("✓ Team deleted")
+			}
+			m.settingsItems = m.buildSettingsItems()
+			return m, nil
+		case "move team earlier":
+			if item.Disabled {
+				return m, nil
+			}
+			if err := m.reorderCurrentTeam(context.Background(), -1); err != nil {
+				m.err = err
+			} else {
+				m.err = fmt.Errorf("✓ Team order updated")
+			}
+			m.settingsItems = m.buildSettingsItems()
+			return m, nil
+		case "move team later":
+			if item.Disabled {
+				return m, nil
+			}
+			if err := m.reorderCurrentTeam(context.Background(), 1); err != nil {
+				m.err = err
+			} else {
+				m.err = fmt.Errorf("✓ Team order updated")
+			}
+			m.settingsItems = m.buildSettingsItems()
+			return m, nil
 		case "channel", "version", "PATH health", updateSettingsNoteLabel():
 			return m, nil
 		case "check now":
@@ -1268,8 +1340,7 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "manage tokens":
-			m.page = PageTokens
-			m.loadTokenSummaries()
+			m.enterPage(PageTokens)
 			return m, nil
 		}
 		// Kind=2 editable text fields
@@ -1417,13 +1488,7 @@ func (m Model) handleTokensKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "shift+tab":
-		m.page = (m.page + 1) % NumPages
-		if m.page == PageTokens {
-			m.loadTokenSummaries()
-		} else if m.page == PageSettings {
-			m.cfgOriginal = m.cfg
-			m.settingsItems = m.buildSettingsItems()
-		}
+		m.enterPage(m.nextVisiblePage(m.page))
 		return m, nil
 
 	case "up", "k":
