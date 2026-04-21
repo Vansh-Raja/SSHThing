@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim@sha256:db9a3a15e8e8e2adbaf1e1c3d93dfb04c2e294bdd027490addb2391b8e61cc6a AS base
+FROM node:22-bookworm-slim AS base
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="${PNPM_HOME}:${PATH}"
@@ -38,4 +38,3 @@ COPY --from=builder /app/web ./web
 EXPOSE 3000
 
 CMD ["pnpm", "--dir", "web", "start", "-H", "0.0.0.0", "-p", "3000"]
-
