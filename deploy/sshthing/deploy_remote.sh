@@ -44,16 +44,27 @@ wait_for_url() {
 
 deploy_convex_functions() {
   local admin_key
+  local convex_cli_env_file
   admin_key="$(tr -d '\r\n' < "$admin_key_file")"
+  convex_cli_env_file="$state_dir/convex-cli.env"
 
   if [[ -z "$admin_key" ]]; then
     echo "Convex admin key is empty at $admin_key_file" >&2
     return 1
   fi
 
+  : >"$convex_cli_env_file"
+  if [[ -n "${CLERK_FRONTEND_API_URL:-}" ]]; then
+    printf 'CLERK_FRONTEND_API_URL=%s\n' "$CLERK_FRONTEND_API_URL" >>"$convex_cli_env_file"
+  fi
+  if [[ -n "${CLERK_JWT_ISSUER_DOMAIN:-}" ]]; then
+    printf 'CLERK_JWT_ISSUER_DOMAIN=%s\n' "$CLERK_JWT_ISSUER_DOMAIN" >>"$convex_cli_env_file"
+  fi
+
   docker run --rm \
     --network "${COMPOSE_PROJECT_NAME}_default" \
     -v "$worktree_dir:/app" \
+    -v "$state_dir:/deploy-state" \
     -w /app \
     -e CI=1 \
     -e CONVEX_SELF_HOSTED_URL="http://convex:3210" \
@@ -61,7 +72,7 @@ deploy_convex_functions() {
     -e CLERK_FRONTEND_API_URL="${CLERK_FRONTEND_API_URL:-}" \
     -e CLERK_JWT_ISSUER_DOMAIN="${CLERK_JWT_ISSUER_DOMAIN:-}" \
     node:22-bookworm-slim \
-    sh -lc 'corepack enable >/dev/null 2>&1 && pnpm install --frozen-lockfile && pnpm exec convex deploy --typecheck try'
+    sh -lc 'corepack enable >/dev/null 2>&1 && pnpm install --frozen-lockfile && if [ -s /deploy-state/convex-cli.env ]; then pnpm exec convex env set --force --from-file /deploy-state/convex-cli.env; fi && pnpm exec convex deploy --typecheck try'
 }
 
 branch="main"
