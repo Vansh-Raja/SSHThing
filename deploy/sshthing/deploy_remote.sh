@@ -42,6 +42,28 @@ wait_for_url() {
   return 1
 }
 
+deploy_convex_functions() {
+  local admin_key
+  admin_key="$(tr -d '\r\n' < "$admin_key_file")"
+
+  if [[ -z "$admin_key" ]]; then
+    echo "Convex admin key is empty at $admin_key_file" >&2
+    return 1
+  fi
+
+  docker run --rm \
+    --network "${COMPOSE_PROJECT_NAME}_default" \
+    -v "$worktree_dir:/app" \
+    -w /app \
+    -e CI=1 \
+    -e CONVEX_SELF_HOSTED_URL="http://convex:3210" \
+    -e CONVEX_SELF_HOSTED_ADMIN_KEY="$admin_key" \
+    -e CLERK_FRONTEND_API_URL="${CLERK_FRONTEND_API_URL:-}" \
+    -e CLERK_JWT_ISSUER_DOMAIN="${CLERK_JWT_ISSUER_DOMAIN:-}" \
+    node:22-bookworm-slim \
+    sh -lc 'corepack enable >/dev/null 2>&1 && pnpm install --frozen-lockfile && pnpm exec convex deploy --typecheck try'
+}
+
 branch="main"
 environment="test"
 repo_dir="/home/ubuntu/Code/SSHThing"
@@ -176,6 +198,8 @@ if [[ ! -s "$admin_key_file" ]]; then
     >"$admin_key_file"
   chmod 600 "$admin_key_file"
 fi
+
+deploy_convex_functions
 
 cat <<EOF
 Deploy complete.

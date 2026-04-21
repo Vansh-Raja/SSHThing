@@ -2,10 +2,10 @@ import { auth } from "@clerk/nextjs/server";
 import { SignInButton, SignUpButton } from "@clerk/nextjs";
 
 import TeamsDashboard from "../../components/TeamsDashboard";
-import { hasBrowserTeamsEnv } from "../../lib/env";
+import { hasServerTeamsEnv } from "../../lib/env";
 
 export default async function TeamsPage() {
-  if (!hasBrowserTeamsEnv()) {
+  if (!hasServerTeamsEnv()) {
     return (
       <main className="shell" style={{ padding: "48px 0" }}>
         <div className="block stack" style={{ maxWidth: 640 }}>

@@ -21,8 +21,14 @@ export function getBrowserBaseURL(): string {
 export function hasBrowserTeamsEnv(): boolean {
   return Boolean(
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY &&
+      getConvexURL(),
+  );
+}
+
+export function hasServerTeamsEnv(): boolean {
+  return Boolean(
+    hasBrowserTeamsEnv() &&
       process.env.CLERK_SECRET_KEY &&
-      getConvexURL() &&
       getClerkIssuerDomain(),
   );
 }
