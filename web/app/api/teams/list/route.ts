@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 
-import { listTeamsFromBearer } from "@/lib/teams";
+import { convexApi, convexQuery } from "@/lib/convex";
+import { getActorFromRequest } from "@/lib/teams";
 
 export async function GET(request: Request) {
   try {
-    const teams = await listTeamsFromBearer(request.headers.get("authorization"));
+    const actor = await getActorFromRequest(request.headers.get("authorization"));
+    const teams = await convexQuery<Array<Record<string, unknown>>>(convexApi.teams.listForUser, {
+      clerkUserId: actor.clerkUserId,
+    });
     return NextResponse.json(teams);
   } catch (error) {
     return NextResponse.json(

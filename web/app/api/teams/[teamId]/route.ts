@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { deleteTeamFromBearer, renameTeamFromBearer } from "@/lib/teams";
+import { convexApi, convexMutation } from "@/lib/convex";
+import { getActorFromRequest } from "@/lib/teams";
 
 type Params = {
   params: Promise<{ teamId: string }>;
@@ -14,7 +15,12 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 
   try {
-    const team = await renameTeamFromBearer(request.headers.get("authorization"), teamId, body.name);
+    const actor = await getActorFromRequest(request.headers.get("authorization"));
+    const team = await convexMutation<Record<string, unknown>>(convexApi.teams.rename, {
+      teamId,
+      clerkUserId: actor.clerkUserId,
+      name: body.name,
+    });
     return NextResponse.json(team);
   } catch (error) {
     return NextResponse.json(
@@ -27,7 +33,11 @@ export async function PATCH(request: Request, { params }: Params) {
 export async function DELETE(request: Request, { params }: Params) {
   const { teamId } = await params;
   try {
-    const result = await deleteTeamFromBearer(request.headers.get("authorization"), teamId);
+    const actor = await getActorFromRequest(request.headers.get("authorization"));
+    const result = await convexMutation<{ ok: boolean }>(convexApi.teams.remove, {
+      teamId,
+      clerkUserId: actor.clerkUserId,
+    });
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(

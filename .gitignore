@@ -57,6 +57,7 @@ temp/
 
 .opencode/
 opencode.json
+.local/
 
 # Node / web
 node_modules/
@@ -66,3 +67,7 @@ dist/
 coverage/
 .env.local
 .env.*.local
+.env.selfhosted.test
+.env.selfhosted.prod
+deploy/sshthing/env/test/stack.env
+deploy/sshthing/env/prod/stack.env

@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
 
-import { getSessionContextFromBearer } from "@/lib/teams";
+import { getActorFromRequest } from "@/lib/teams";
 
 export async function GET(request: Request) {
   try {
-    const context = await getSessionContextFromBearer(request.headers.get("authorization"));
+    const actor = await getActorFromRequest(request.headers.get("authorization"));
     return NextResponse.json({
       auth: {
         authenticated: true,
-        hasWorkspace: false,
-        userId: context.session.clerkUserId,
+        userId: actor.clerkUserId,
       },
     });
   } catch (error) {
@@ -17,7 +16,6 @@ export async function GET(request: Request) {
       {
         auth: {
           authenticated: false,
-          hasWorkspace: false,
         },
         error: error instanceof Error ? error.message : "unauthorized",
       },

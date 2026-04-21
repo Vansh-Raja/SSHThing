@@ -16,8 +16,6 @@ type Session struct {
 	AccessToken   string `json:"accessToken"`
 	RefreshToken  string `json:"refreshToken"`
 	ExpiresAt     int64  `json:"expiresAt"`
-	WorkspaceID   string `json:"workspaceId"`
-	WorkspaceName string `json:"workspaceName"`
 	CurrentTeamID string `json:"currentTeamId,omitempty"`
 	UserID        string `json:"userId"`
 	UserName      string `json:"userName"`

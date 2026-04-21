@@ -62,16 +62,21 @@ type Model struct {
 	spotlightItems []SpotlightItem
 
 	// Add/Edit host form
-	formFields   []ui.FormField // [label, tags, hostname, port, username, authDetail]
-	formGroups   []string
-	formGroupIdx int
-	formAuthOpts []string
-	formAuthIdx  int
-	formKeyTypes []string
-	formKeyIdx   int
-	formFocus    int
-	formEditing  bool
-	formEditIdx  int // -1 for add, >=0 for edit index
+	formFields             []ui.FormField // [label, tags, hostname, port, username, authDetail]
+	formGroups             []string
+	formGroupIdx           int
+	formAuthOpts           []string
+	formAuthIdx            int
+	formKeyTypes           []string
+	formKeyIdx             int
+	formFocus              int
+	formEditing            bool
+	formEditIdx            int // -1 for add, >=0 for edit index
+	formScrollOffset       int
+	formSecretRevealed     bool
+	formTeamHostID         string
+	formTeamCredentialMode string
+	formTeamCredentialType string
 
 	// Delete host
 	deleteCursor int // 0=delete, 1=cancel
@@ -115,14 +120,16 @@ type Model struct {
 	tokenRevealCopied bool
 
 	// Teams
-	teamsClient        *teamsclient.Client
-	teamsSession       teamssession.Session
-	teamsCache         teamcache.Cache
-	teamsState         int
-	teamsItems         []teams.TeamHost
-	teamsCursor        int
-	teamsList          []teams.TeamSummary
-	teamsCurrentTeamID string
+	teamsClient         *teamsclient.Client
+	teamsSession        teamssession.Session
+	teamsCache          teamcache.Cache
+	teamsState          int
+	teamsItems          []teams.TeamHost
+	teamsCursor         int
+	teamsList           []teams.TeamSummary
+	teamsCurrentTeamID  string
+	teamsImportMode     bool
+	teamsImportConflict *teamsImportConflictState
 
 	// Profile
 	profileState            int
@@ -408,7 +415,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sshFinishedMsg:
 		m.loadHosts()
 		m.overlay = OverlayNone
-		m.page = PageHome
+		m.enterPage(m.modeHomePage())
 		if msg.keyType == "password" && m.cfg.SSH.PasswordAutoLogin && !m.cfg.SSH.PasswordNoticeShown {
 			m.err = fmt.Errorf("\u2139 password auto-login is enabled \u2014 disable in settings (,) for security")
 			m.cfg.SSH.PasswordNoticeShown = true
@@ -422,7 +429,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case mountFinishedMsg:
 		m.overlay = OverlayNone
-		m.page = PageHome
+		m.enterPage(m.modeHomePage())
 		switch msg.action {
 		case "mount":
 			if m.pendingMount == nil {
@@ -477,8 +484,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View renders the UI
 func (m Model) View() string {
 	r := ui.Renderer{
-		Theme:          m.theme,
-		Icons:          m.icons,
+		Theme: m.theme,
+		Icons: m.icons,
+		WrapLabels: func() bool {
+			if m.appMode == appModeTeams {
+				return m.cfg.TeamsUI.WrapLabels
+			}
+			return m.cfg.UI.WrapLabels
+		}(),
 		W:              m.width,
 		H:              m.height,
 		Tick:           m.tick,
@@ -517,29 +530,50 @@ func (m Model) View() string {
 			ArmedSFTP:    m.armedSFTP,
 			ArmedMount:   m.armedMount,
 			ArmedUnmount: m.armedUnmount,
-			CommandMode:  strings.HasPrefix(strings.TrimSpace(m.searchQuery), ">"),
+			CommandMode:  !m.teamsImportMode && strings.HasPrefix(strings.TrimSpace(m.searchQuery), ">"),
+			ImportMode:   m.teamsImportMode,
 		})
 		return r.WrapFull(content)
 
 	case OverlayAddHost:
 		if m.formFields != nil {
 			content = r.RenderAddHostOverlay(ui.AddHostViewParams{
-				IsEdit:      m.formEditIdx >= 0,
-				Fields:      m.formFields,
-				Focus:       m.formFocus,
-				Editing:     m.formEditing,
-				Groups:      m.formGroups,
-				GroupIdx:    m.formGroupIdx,
-				AuthOptions: m.formAuthOpts,
-				AuthIdx:     m.formAuthIdx,
-				KeyTypes:    m.formKeyTypes,
-				KeyTypeIdx:  m.formKeyIdx,
-				Err:         m.err,
+				IsEdit:         m.formEditIdx >= 0 || m.formTeamHostID != "",
+				Fields:         m.formFields,
+				Focus:          m.formFocus,
+				Editing:        m.formEditing,
+				Groups:         m.formGroups,
+				GroupIdx:       m.formGroupIdx,
+				AuthOptions:    m.formAuthOpts,
+				AuthIdx:        m.formAuthIdx,
+				KeyTypes:       m.formKeyTypes,
+				KeyTypeIdx:     m.formKeyIdx,
+				AllowImport:    m.appMode == appModeTeams && m.formEditIdx < 0 && m.formTeamHostID == "",
+				AuthLocked:     m.appMode == appModeTeams && m.formTeamCredentialMode == "per_member",
+				SecretRevealed: m.formSecretRevealed,
+				ScrollOffset:   m.formScrollOffset,
+				Err:            m.err,
 			})
 			return r.WrapFull(content)
 		}
 
 	case OverlayDeleteHost:
+		if m.appMode == appModeTeams {
+			host, ok := m.teamsCurrentHost()
+			if ok {
+				lbl := host.Label
+				if lbl == "" {
+					lbl = host.Hostname
+				}
+				content = r.RenderDeleteHostOverlay(ui.DeleteHostViewParams{
+					Label:        lbl,
+					Hostname:     host.Hostname,
+					Username:     host.Username,
+					DeleteCursor: m.deleteCursor,
+				})
+				return r.WrapFull(content)
+			}
+		}
 		host, ok := m.selectedHost()
 		if ok {
 			lbl := host.Label
@@ -551,6 +585,24 @@ func (m Model) View() string {
 				Hostname:     host.Hostname,
 				Username:     host.Username,
 				DeleteCursor: m.deleteCursor,
+			})
+			return r.WrapFull(content)
+		}
+
+	case OverlayImportHost:
+		if m.teamsImportConflict != nil {
+			label := strings.TrimSpace(m.teamsImportConflict.ExistingHost.Label)
+			if label == "" {
+				label = m.teamsImportConflict.ExistingHost.Hostname
+			}
+			conn := m.teamsImportConflict.ExistingHost.Hostname
+			if user := strings.TrimSpace(m.teamsImportConflict.ExistingHost.Username); user != "" {
+				conn = user + "@" + conn
+			}
+			content = r.RenderImportConflictOverlay(ui.ImportConflictViewParams{
+				ExistingLabel: label,
+				ExistingConn:  conn,
+				Cursor:        m.teamsImportConflict.Cursor,
 			})
 			return r.WrapFull(content)
 		}

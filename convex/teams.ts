@@ -1,5 +1,8 @@
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
+
+import { normalizeTeamRole, requireTeamPermission } from "./teamAccess";
 
 function normalizeSlug(raw: string, fallback: string): string {
   const slug = raw
@@ -10,36 +13,35 @@ function normalizeSlug(raw: string, fallback: string): string {
   return slug || fallback.toLowerCase();
 }
 
-async function requireOwnedTeam(
-  ctx: QueryCtx | MutationCtx,
-  teamId: string,
-  clerkUserId: string,
-) {
-  const team = await ctx.db.get(teamId);
-  if (!team || team.ownerClerkUserId !== clerkUserId || team.status !== "active") {
-    throw new Error("team_not_found");
-  }
-  return team;
-}
-
 export const listForUser = query({
   args: {
     clerkUserId: v.string(),
   },
   handler: async (ctx, args) => {
-    const teams = await ctx.db
-      .query("teams")
-      .withIndex("by_owner_and_display_order", (q) => q.eq("ownerClerkUserId", args.clerkUserId))
+    const memberships = await ctx.db
+      .query("teamMembers")
+      .withIndex("by_user", (q) => q.eq("clerkUserId", args.clerkUserId))
       .collect();
 
-    return teams
-      .filter((team) => team.status === "active")
-      .map((team) => ({
-        id: team._id,
-        name: team.name,
-        slug: team.slug,
-        displayOrder: team.displayOrder,
-      }));
+    const teams = await Promise.all(
+      memberships
+        .filter((member) => member.status === "active")
+        .map(async (member) => {
+          const team = await ctx.db.get(member.teamId);
+          if (!team || team.status !== "active") {
+            return null;
+          }
+          return {
+            id: team._id,
+            name: team.name,
+            slug: team.slug,
+            displayOrder: team.displayOrder,
+            role: team.ownerClerkUserId === args.clerkUserId ? "owner" : normalizeTeamRole(member.role),
+          };
+        }),
+    );
+
+    return teams.filter(Boolean).sort((a, b) => a.displayOrder - b.displayOrder);
   },
 });
 
@@ -93,6 +95,7 @@ export const create = mutation({
       name,
       slug: normalizeSlug(name, `${args.clerkUserId.slice(0, 8)}-${displayOrder + 1}`),
       displayOrder,
+      role: "owner",
     };
   },
 });
@@ -104,12 +107,12 @@ export const rename = mutation({
     name: v.string(),
   },
   handler: async (ctx, args) => {
-    const team = await requireOwnedTeam(ctx, args.teamId, args.clerkUserId);
+    const access = await requireTeamPermission(ctx, args.teamId, args.clerkUserId, "manage_team");
     const name = args.name.trim();
     if (!name) {
       throw new Error("team_name_required");
     }
-    const slug = normalizeSlug(name, team.slug);
+    const slug = normalizeSlug(name, access.team.slug);
     await ctx.db.patch(args.teamId, {
       name,
       slug,
@@ -119,7 +122,8 @@ export const rename = mutation({
       id: args.teamId,
       name,
       slug,
-      displayOrder: team.displayOrder,
+      displayOrder: access.team.displayOrder,
+      role: access.role,
     };
   },
 });
@@ -130,7 +134,8 @@ export const remove = mutation({
     clerkUserId: v.string(),
   },
   handler: async (ctx, args) => {
-    const team = await requireOwnedTeam(ctx, args.teamId, args.clerkUserId);
+    const access = await requireTeamPermission(ctx, args.teamId, args.clerkUserId, "delete_team");
+    const team = access.team;
     const now = Date.now();
     await ctx.db.patch(args.teamId, {
       status: "deleted",
@@ -148,6 +153,39 @@ export const remove = mutation({
       });
     }
 
+    const invites = await ctx.db
+      .query("teamInvites")
+      .withIndex("by_team", (q) => q.eq("teamId", team._id))
+      .collect();
+    for (const invite of invites) {
+      await ctx.db.patch(invite._id, {
+        status: invite.status === "accepted" ? invite.status : "revoked",
+        updatedAt: now,
+      });
+    }
+
+    const hosts = await ctx.db
+      .query("teamHosts")
+      .withIndex("by_team", (q) => q.eq("teamId", team._id))
+      .collect();
+    for (const host of hosts) {
+      const shared = await ctx.db
+        .query("teamHostSharedCredentials")
+        .withIndex("by_host", (q) => q.eq("hostId", host._id))
+        .first();
+      if (shared) {
+        await ctx.db.delete(shared._id);
+      }
+      const personal = await ctx.db
+        .query("teamHostPersonalCredentials")
+        .withIndex("by_host_and_user", (q) => q.eq("hostId", host._id))
+        .collect();
+      for (const credential of personal) {
+        await ctx.db.delete(credential._id);
+      }
+      await ctx.db.delete(host._id);
+    }
+
     return { ok: true };
   },
 });
@@ -159,8 +197,13 @@ export const reorder = mutation({
   },
   handler: async (ctx, args) => {
     for (let i = 0; i < args.teamIds.length; i += 1) {
-      const team = await requireOwnedTeam(ctx, args.teamIds[i], args.clerkUserId);
-      await ctx.db.patch(team._id, {
+      const access = await requireTeamPermission(
+        ctx,
+        args.teamIds[i] as Id<"teams">,
+        args.clerkUserId,
+        "manage_team",
+      );
+      await ctx.db.patch(access.team._id, {
         displayOrder: i,
         updatedAt: Date.now(),
       });
@@ -175,39 +218,13 @@ export const getSummary = query({
     clerkUserId: v.string(),
   },
   handler: async (ctx, args) => {
-    const team = await requireOwnedTeam(ctx, args.teamId, args.clerkUserId);
+    const access = await requireTeamPermission(ctx, args.teamId, args.clerkUserId, "read");
     return {
-      id: team._id,
-      name: team.name,
-      slug: team.slug,
-      displayOrder: team.displayOrder,
+      id: access.team._id,
+      name: access.team.name,
+      slug: access.team.slug,
+      displayOrder: access.team.displayOrder,
+      role: access.role,
     };
-  },
-});
-
-export const listHosts = query({
-  args: {
-    teamId: v.id("teams"),
-    clerkUserId: v.string(),
-  },
-  handler: async (ctx, args) => {
-    await requireOwnedTeam(ctx, args.teamId, args.clerkUserId);
-    const hosts = await ctx.db
-      .query("teamHosts")
-      .withIndex("by_team", (q) => q.eq("teamId", args.teamId))
-      .collect();
-
-    return hosts.map((host) => ({
-      id: host._id,
-      teamId: host.teamId,
-      label: host.label,
-      hostname: host.hostname,
-      username: host.username,
-      port: host.port,
-      group: host.group,
-      tags: host.tags,
-      authMode: host.authMode ?? "",
-      lastConnectedAt: host.lastConnectedAt ?? null,
-    }));
   },
 });

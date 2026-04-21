@@ -38,78 +38,55 @@ export default defineSchema({
     group: v.string(),
     tags: v.array(v.string()),
     authMode: v.optional(v.string()),
+    credentialMode: v.string(),
+    credentialType: v.string(),
+    secretVisibility: v.string(),
+    createdByClerkUserId: v.string(),
+    updatedByClerkUserId: v.string(),
     lastConnectedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_team", ["teamId"]),
 
-  workspaces: defineTable({
-    clerkOrganizationId: v.string(),
-    name: v.string(),
-    slug: v.string(),
+  teamInvites: defineTable({
+    teamId: v.id("teams"),
+    emailLower: v.string(),
+    role: v.string(),
+    invitedByClerkUserId: v.string(),
     status: v.string(),
-    createdByUserId: v.string(),
+    tokenHash: v.string(),
+    tokenCiphertext: v.string(),
+    expiresAt: v.number(),
+    acceptedAt: v.optional(v.number()),
+    acceptedByClerkUserId: v.optional(v.string()),
     createdAt: v.number(),
+    updatedAt: v.number(),
   })
-    .index("by_clerk_org", ["clerkOrganizationId"])
-    .index("by_slug", ["slug"]),
+    .index("by_team", ["teamId"])
+    .index("by_email_lower_and_status", ["emailLower", "status"])
+    .index("by_token_hash", ["tokenHash"])
+    .index("by_invited_by_and_status", ["invitedByClerkUserId", "status"]),
 
-  workspaceMembers: defineTable({
-    workspaceId: v.id("workspaces"),
+  teamHostSharedCredentials: defineTable({
+    hostId: v.id("teamHosts"),
+    credentialType: v.string(),
+    ciphertext: v.string(),
+    updatedByClerkUserId: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_host", ["hostId"]),
+
+  teamHostPersonalCredentials: defineTable({
+    hostId: v.id("teamHosts"),
     clerkUserId: v.string(),
-    email: v.string(),
-    displayName: v.string(),
-    workspaceRole: v.string(),
-    status: v.string(),
-    invitationId: v.optional(v.string()),
-    joinedAt: v.optional(v.number()),
-    lastSeenAt: v.optional(v.number()),
+    username: v.optional(v.string()),
+    credentialType: v.string(),
+    ciphertext: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_workspace", ["workspaceId"])
-    .index("by_workspace_user", ["workspaceId", "clerkUserId"])
-    .index("by_clerk_user", ["clerkUserId"]),
-
-  vaults: defineTable({
-    workspaceId: v.id("workspaces"),
-    name: v.string(),
-    slug: v.string(),
-    description: v.string(),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_workspace", ["workspaceId"])
-    .index("by_workspace_slug", ["workspaceId", "slug"]),
-
-  vaultMembers: defineTable({
-    workspaceId: v.id("workspaces"),
-    vaultId: v.id("vaults"),
-    clerkUserId: v.string(),
-    vaultRole: v.string(),
-    status: v.string(),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_vault", ["vaultId"])
-    .index("by_vault_user", ["vaultId", "clerkUserId"])
-    .index("by_workspace_user", ["workspaceId", "clerkUserId"]),
-
-  resources: defineTable({
-    vaultId: v.id("vaults"),
-    label: v.string(),
-    group: v.string(),
-    tags: v.array(v.string()),
-    hostname: v.string(),
-    username: v.string(),
-    port: v.number(),
-    shareMode: v.string(),
-    notes: v.array(v.string()),
-    createdBy: v.string(),
-    createdAt: v.number(),
-    updatedBy: v.string(),
-    updatedAt: v.number(),
-  }).index("by_vault", ["vaultId"]),
+    .index("by_host_and_user", ["hostId", "clerkUserId"])
+    .index("by_user", ["clerkUserId"]),
 
   cliAuthSessions: defineTable({
     deviceName: v.string(),
@@ -119,15 +96,11 @@ export default defineSchema({
     requestedAt: v.number(),
     completedAt: v.optional(v.number()),
     clerkUserId: v.optional(v.string()),
-    workspaceId: v.optional(v.id("workspaces")),
-    teamId: v.optional(v.id("teams")),
     expiresAt: v.number(),
   }).index("by_device_code", ["deviceCode"]),
 
   tuiSessions: defineTable({
     clerkUserId: v.string(),
-    workspaceId: v.optional(v.id("workspaces")),
-    teamId: v.optional(v.id("teams")),
     accessTokenHash: v.string(),
     refreshTokenHash: v.string(),
     deviceName: v.string(),
@@ -138,16 +111,5 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_access_hash", ["accessTokenHash"])
-    .index("by_refresh_hash", ["refreshTokenHash"])
-    .index("by_workspace", ["workspaceId"]),
-
-  auditEvents: defineTable({
-    workspaceId: v.id("workspaces"),
-    actorUserId: v.string(),
-    eventType: v.string(),
-    targetType: v.string(),
-    targetId: v.string(),
-    metadata: v.any(),
-    createdAt: v.number(),
-  }).index("by_workspace", ["workspaceId"]),
+    .index("by_refresh_hash", ["refreshTokenHash"]),
 });

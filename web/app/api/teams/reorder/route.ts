@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { reorderTeamsFromBearer } from "@/lib/teams";
+import { convexApi, convexMutation } from "@/lib/convex";
+import { getActorFromRequest } from "@/lib/teams";
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as { teamIds?: string[] };
@@ -9,7 +10,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await reorderTeamsFromBearer(request.headers.get("authorization"), body.teamIds);
+    const actor = await getActorFromRequest(request.headers.get("authorization"));
+    const result = await convexMutation<{ ok: boolean }>(convexApi.teams.reorder, {
+      clerkUserId: actor.clerkUserId,
+      teamIds: body.teamIds,
+    });
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(

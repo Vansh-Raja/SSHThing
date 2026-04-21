@@ -47,7 +47,6 @@ export const getCliAuthStatus = query({
     }
     return {
       status: session.status,
-      workspaceId: session.workspaceId ?? null,
       clerkUserId: session.clerkUserId ?? null,
       deviceName: session.deviceName,
       expiresAt: session.expiresAt,
@@ -132,8 +131,6 @@ export const getTuiSessionByAccessHash = query({
     return {
       _id: session._id,
       clerkUserId: session.clerkUserId,
-      workspaceId: session.workspaceId ?? null,
-      teamId: session.teamId ?? null,
       deviceName: session.deviceName,
       accessExpiresAt: session.accessExpiresAt,
       refreshExpiresAt: session.refreshExpiresAt,
@@ -159,8 +156,6 @@ export const getTuiSessionByRefreshHash = query({
     return {
       _id: session._id,
       clerkUserId: session.clerkUserId,
-      workspaceId: session.workspaceId ?? null,
-      teamId: session.teamId ?? null,
       deviceName: session.deviceName,
       accessExpiresAt: session.accessExpiresAt,
       refreshExpiresAt: session.refreshExpiresAt,

@@ -1,63 +1,124 @@
 import type { Metadata } from "next";
-import { ClerkProvider, Show, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
+import Link from "next/link";
+import { JetBrains_Mono } from "next/font/google";
+import { ClerkProvider, Show, SignInButton, UserButton } from "@clerk/nextjs";
 
 import ConvexClientProvider from "../components/ConvexClientProvider";
+import { hasBrowserTeamsEnv } from "../lib/env";
+import ThemeScript from "../components/ThemeScript";
+import ThemeToggle from "../components/ThemeToggle";
+import TerminalBackground from "../components/TerminalBackground";
+import Brand from "../components/Brand";
 import "./globals.css";
 
+const jetbrains = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-jetbrains",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "SSHThing Teams",
-  description: "Browser auth handoff and team management for SSHThing Teams.",
+  title: "SSHThing Teams — cloud-backed SSH access",
+  description:
+    "Browser authentication, team management, and host handoff for the SSHThing terminal app.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+// Intentionally minimal. Hardcoded colors in `variables` would render
+// black-on-black (or cream-on-cream) in the opposite theme; we rely on
+// globals.css `!important` overrides keyed to our CSS variables so Clerk
+// elements flip with the theme automatically.
+const clerkAppearance = {
+  variables: {
+    borderRadius: "2px",
+    fontFamily: "var(--font-jetbrains), ui-monospace, monospace",
+  },
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   const hasConvexURL = Boolean(process.env.NEXT_PUBLIC_CONVEX_URL);
+  const hasBrowserEnv = hasBrowserTeamsEnv();
 
-  const content = publishableKey && hasConvexURL
-    ? <ConvexClientProvider>{children}</ConvexClientProvider>
-    : children;
+  const inner = publishableKey && hasConvexURL ? (
+    <ConvexClientProvider>{children}</ConvexClientProvider>
+  ) : (
+    children
+  );
 
-  if (!publishableKey) {
-    return (
-      <html lang="en">
-        <body>{content}</body>
-      </html>
-    );
-  }
-
-  return (
-    <html lang="en">
-      <body>
-        <ClerkProvider publishableKey={publishableKey}>
-          <header className="shell" style={{ paddingTop: 24, paddingBottom: 0 }}>
-            <div className="card" style={{ padding: 16 }}>
-              <div className="actionRow" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                <div className="pillRow">
-                  <span className="pill">SSHThing Teams</span>
-                  <span className="pill">Clerk</span>
-                </div>
-                <div className="actionRow">
+  const chrome = (
+    <>
+      <TerminalBackground />
+      <div className="site">
+        <header className="site__header">
+          <div className="shell site__header-inner">
+            <Brand />
+            <nav className="site__nav" aria-label="Primary">
+              {hasBrowserEnv ? (
+                <>
                   <Show when="signed-out">
                     <SignInButton mode="modal">
-                      <button className="buttonLink buttonSecondary" type="button">
-                        Sign in
+                      <button className="btn btn--ghost hide-sm" type="button">
+                        Log in
                       </button>
                     </SignInButton>
-                    <SignUpButton mode="modal">
-                      <button className="buttonLink buttonPrimary" type="button">
-                        Sign up
-                      </button>
-                    </SignUpButton>
+                    <Link className="btn btn--primary" href="/signup">
+                      Start
+                    </Link>
                   </Show>
                   <Show when="signed-in">
-                    <UserButton />
+                    <Link className="btn btn--ghost hide-sm" href="/teams">
+                      Teams
+                    </Link>
+                    <UserButton
+                      appearance={{
+                        elements: {
+                          avatarBox: "cl-userButtonAvatarBox",
+                        },
+                      }}
+                    />
                   </Show>
-                </div>
-              </div>
-            </div>
-          </header>
-          {content}
-        </ClerkProvider>
+                </>
+              ) : null}
+              <ThemeToggle />
+            </nav>
+          </div>
+        </header>
+
+        {inner}
+
+        <footer className="site__footer">
+          <div className="shell site__footer-inner">
+            <span className="mono">
+              © {new Date().getFullYear()} SSHTHING · ALL SYSTEMS NOMINAL
+            </span>
+            <span className="mono muted">v2 · teams</span>
+          </div>
+        </footer>
+      </div>
+    </>
+  );
+
+  return (
+    <html lang="en" className={jetbrains.variable} suppressHydrationWarning>
+      <head>
+        <ThemeScript />
+      </head>
+      <body>
+        {publishableKey ? (
+          <ClerkProvider
+            publishableKey={publishableKey}
+            appearance={clerkAppearance}
+          >
+            {chrome}
+          </ClerkProvider>
+        ) : (
+          chrome
+        )}
       </body>
     </html>
   );

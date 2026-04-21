@@ -45,6 +45,37 @@ func TestBuildSettingsItemsOmitsTeamsRows(t *testing.T) {
 	}
 }
 
+func TestBuildSettingsItemsTeamsModeOmitsTeamManagementRows(t *testing.T) {
+	m := NewModel()
+	m.teamsSession = teamSessionForTests(time.Now().Add(time.Hour))
+	m.appMode = appModeTeams
+	items := m.buildSettingsItems()
+
+	unexpected := map[string]bool{
+		"current team":      true,
+		"create team":       true,
+		"rename team":       true,
+		"delete team":       true,
+		"move team earlier": true,
+		"move team later":   true,
+	}
+	for _, item := range items {
+		if unexpected[item.Label] {
+			t.Fatalf("did not expect teams management settings row %q", item.Label)
+		}
+	}
+	foundWrap := false
+	for _, item := range items {
+		if item.Label == "wrap labels" {
+			foundWrap = true
+			break
+		}
+	}
+	if !foundWrap {
+		t.Fatalf("expected teams settings to include wrap labels")
+	}
+}
+
 func TestVisiblePagesPersonalModeOmitsTeams(t *testing.T) {
 	m := NewModel()
 	for _, page := range m.visiblePages() {

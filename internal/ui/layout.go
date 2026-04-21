@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -13,6 +14,7 @@ const SidebarW = 4
 type Renderer struct {
 	Theme          Theme
 	Icons          IconSet
+	WrapLabels     bool
 	W, H           int
 	Tick           int
 	PageIndicators []PageIndicator
@@ -173,13 +175,75 @@ func (r *Renderer) RenderSidebar(bodyH int, activePage int) string {
 
 // TruncStr truncates a string to width, adding an ellipsis if needed.
 func (r *Renderer) TruncStr(s string, w int) string {
-	if w <= 0 || len(s) <= w {
+	if w <= 0 || utf8.RuneCountInString(s) <= w {
 		return s
 	}
 	if w <= 1 {
 		return r.Icons.Truncation
 	}
-	return s[:w-1] + r.Icons.Truncation
+	runes := []rune(s)
+	return string(runes[:w-1]) + r.Icons.Truncation
+}
+
+func wrapPlainTextLines(text string, width int) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return []string{""}
+	}
+	if width <= 1 {
+		return []string{text}
+	}
+
+	paragraphs := strings.Split(text, "\n")
+	lines := make([]string, 0, len(paragraphs))
+	for _, paragraph := range paragraphs {
+		paragraph = strings.TrimSpace(paragraph)
+		if paragraph == "" {
+			lines = append(lines, "")
+			continue
+		}
+
+		runes := []rune(paragraph)
+		for len(runes) > 0 {
+			if len(runes) <= width {
+				lines = append(lines, string(runes))
+				break
+			}
+
+			cut := width
+			for i := cut; i > 0; i-- {
+				if i < len(runes) && runes[i] == ' ' {
+					cut = i
+					break
+				}
+				if i > 0 && runes[i-1] == ' ' {
+					cut = i - 1
+					break
+				}
+			}
+			if cut <= 0 {
+				cut = width
+			}
+
+			line := strings.TrimSpace(string(runes[:cut]))
+			if line == "" {
+				line = string(runes[:min(width, len(runes))])
+				cut = len([]rune(line))
+			}
+			lines = append(lines, line)
+
+			next := cut
+			for next < len(runes) && runes[next] == ' ' {
+				next++
+			}
+			runes = runes[next:]
+		}
+	}
+
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
 }
 
 // RemoveLastRune removes the last rune from a string.

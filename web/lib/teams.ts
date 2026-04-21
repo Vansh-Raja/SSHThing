@@ -1,65 +1,40 @@
 import { auth, clerkClient, currentUser } from "@clerk/nextjs/server";
 
 import { convexApi, convexMutation, convexQuery } from "./convex";
-import { createAccessToken, createDeviceCode, createPollSecret, createRefreshToken, hashToken } from "./tokens";
 import { getBrowserBaseURL } from "./env";
-
-type ClerkOrg = {
-  id: string;
-  name: string;
-  slug: string | null;
-};
+import { createAccessToken, createDeviceCode, createPollSecret, createRefreshToken, hashToken } from "./tokens";
 
 type TuiSessionRecord = {
   _id: string;
   clerkUserId: string;
-  workspaceId?: string | null;
-  teamId?: string | null;
   deviceName: string;
   accessExpiresAt: number;
   refreshExpiresAt: number;
   revokedAt?: number | null;
 };
 
-function normalizeSlug(name: string, fallback: string): string {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-  return slug || fallback.toLowerCase();
-}
+export type BrowserIdentity = {
+  userId: string;
+  email: string;
+  displayName: string;
+};
 
-function personalWorkspaceName(displayName: string, email: string, userId: string): string {
-  if (displayName) {
-    return `${displayName}'s Workspace`;
-  }
-  if (email) {
-    return `${email}'s Workspace`;
-  }
-  return `Workspace ${userId.slice(0, 8)}`;
-}
+export type RequestActor = {
+  clerkUserId: string;
+  email: string;
+  displayName: string;
+  source: "browser" | "bearer";
+};
 
-export async function requireBrowserIdentity() {
-  const { isAuthenticated, userId, orgId, orgRole } = await auth();
+export async function requireBrowserIdentity(): Promise<BrowserIdentity> {
+  const { isAuthenticated, userId } = await auth();
   if (!isAuthenticated || !userId) {
     throw new Error("not_authenticated");
   }
 
-  const client = await clerkClient();
   const user = await currentUser();
   if (!user) {
     throw new Error("missing_user");
-  }
-
-  let organization: ClerkOrg | null = null;
-  if (orgId) {
-    const org = await client.organizations.getOrganization({ organizationId: orgId });
-    organization = {
-      id: org.id,
-      name: org.name,
-      slug: org.slug ?? null,
-    };
   }
 
   const primaryEmail = user.emailAddresses.find((email) => email.id === user.primaryEmailAddressId)?.emailAddress
@@ -68,11 +43,22 @@ export async function requireBrowserIdentity() {
 
   return {
     userId,
-    orgId,
-    orgRole: orgRole ?? null,
-    organization,
-    email: primaryEmail,
+    email: primaryEmail.toLowerCase(),
     displayName: [user.firstName, user.lastName].filter(Boolean).join(" ") || user.username || primaryEmail || userId,
+  };
+}
+
+async function getClerkUserSummary(clerkUserId: string): Promise<BrowserIdentity> {
+  const client = await clerkClient();
+  const user = await client.users.getUser(clerkUserId);
+  const primaryEmail = user.emailAddresses.find((email) => email.id === user.primaryEmailAddressId)?.emailAddress
+    ?? user.emailAddresses[0]?.emailAddress
+    ?? "";
+
+  return {
+    userId: user.id,
+    email: primaryEmail.toLowerCase(),
+    displayName: [user.firstName, user.lastName].filter(Boolean).join(" ") || user.username || primaryEmail || user.id,
   };
 }
 
@@ -130,13 +116,7 @@ export async function pollCliAuth(sessionId: string, pollSecret: string) {
     };
   }
 
-  const client = await clerkClient();
-  const user = await client.users.getUser(record.clerkUserId);
-  const primaryEmail = user.emailAddresses.find((email) => email.id === user.primaryEmailAddressId)?.emailAddress
-    ?? user.emailAddresses[0]?.emailAddress
-    ?? "";
-  const displayName = [user.firstName, user.lastName].filter(Boolean).join(" ") || user.username || primaryEmail || user.id;
-
+  const user = await getClerkUserSummary(record.clerkUserId);
   const accessToken = createAccessToken();
   const refreshToken = createRefreshToken();
   const session = await convexMutation<{
@@ -159,8 +139,8 @@ export async function pollCliAuth(sessionId: string, pollSecret: string) {
     expiresAt: session.accessExpiresAt,
     user: {
       id: record.clerkUserId,
-      name: displayName,
-      email: primaryEmail,
+      name: user.displayName,
+      email: user.email,
     },
   };
 }
@@ -226,133 +206,33 @@ export async function getTuiSessionFromBearer(authHeader: string | null) {
 
 export async function getSessionContextFromBearer(authHeader: string | null) {
   const session = await getTuiSessionFromBearer(authHeader);
-  return {
-    session,
-  };
+  return { session };
 }
 
-export async function ensureWorkspaceForCurrentOrg() {
-  const identity = await requireBrowserIdentity();
-
-  const organizationId = identity.organization?.id ?? `personal:${identity.userId}`;
-  const organizationName =
-    identity.organization?.name ?? personalWorkspaceName(identity.displayName, identity.email, identity.userId);
-  const organizationSlug =
-    identity.organization?.slug ?? normalizeSlug(identity.displayName || identity.email || identity.userId, identity.userId);
-  const clerkRole = identity.organization ? (identity.orgRole ?? "org:member") : "owner";
-
-  return convexMutation<{ workspaceId: string; defaultVaultId: string }>(
-    convexApi.workspaces.bootstrapForClerkOrganization,
-    {
-      clerkOrganizationId: organizationId,
-      organizationName,
-      organizationSlug,
-      clerkUserId: identity.userId,
-      userEmail: identity.email,
-      displayName: identity.displayName,
-      clerkRole,
-    },
-  );
-}
-
-export async function getWorkspaceContextFromBearer(authHeader: string | null) {
-  const { session } = await getSessionContextFromBearer(authHeader);
-  if (!session.workspaceId) {
-    throw new Error("workspace_context_unavailable");
+export async function getActorFromRequest(authHeader: string | null): Promise<RequestActor> {
+  const trimmed = authHeader?.trim() ?? "";
+  if (trimmed.startsWith("Bearer ")) {
+    const session = await getTuiSessionFromBearer(authHeader);
+    const user = await getClerkUserSummary(session.clerkUserId);
+    return {
+      clerkUserId: user.userId,
+      email: user.email,
+      displayName: user.displayName,
+      source: "bearer",
+    };
   }
-  const workspace = await convexQuery<{
-    id: string;
-    name: string;
-    slug: string;
-    clerkOrganizationId: string;
-  }>(convexApi.workspaces.getWorkspaceSummary, {
-    workspaceId: session.workspaceId,
-  });
+
+  const identity = await requireBrowserIdentity();
   return {
-    session,
-    workspace,
+    clerkUserId: identity.userId,
+    email: identity.email,
+    displayName: identity.displayName,
+    source: "browser",
   };
 }
 
-export async function listTeamsFromBearer(authHeader: string | null) {
-  const { session } = await getSessionContextFromBearer(authHeader);
-  return convexQuery<Array<{
-    id: string;
-    name: string;
-    slug: string;
-    displayOrder: number;
-  }>>(convexApi.teams.listForUser, {
-    clerkUserId: session.clerkUserId,
-  });
-}
-
-export async function createTeamFromBearer(authHeader: string | null, name: string) {
-  const { session } = await getSessionContextFromBearer(authHeader);
-  const client = await clerkClient();
-  const user = await client.users.getUser(session.clerkUserId);
-  const primaryEmail = user.emailAddresses.find((email) => email.id === user.primaryEmailAddressId)?.emailAddress
-    ?? user.emailAddresses[0]?.emailAddress
-    ?? "";
-  const displayName = [user.firstName, user.lastName].filter(Boolean).join(" ") || user.username || primaryEmail || user.id;
-
-  return convexMutation<{
-    id: string;
-    name: string;
-    slug: string;
-    displayOrder: number;
-  }>(convexApi.teams.create, {
-    clerkUserId: session.clerkUserId,
-    userEmail: primaryEmail,
-    displayName,
-    name,
-  });
-}
-
-export async function renameTeamFromBearer(authHeader: string | null, teamId: string, name: string) {
-  const { session } = await getSessionContextFromBearer(authHeader);
-  return convexMutation<{
-    id: string;
-    name: string;
-    slug: string;
-    displayOrder: number;
-  }>(convexApi.teams.rename, {
-    teamId,
-    clerkUserId: session.clerkUserId,
-    name,
-  });
-}
-
-export async function deleteTeamFromBearer(authHeader: string | null, teamId: string) {
-  const { session } = await getSessionContextFromBearer(authHeader);
-  return convexMutation<{ ok: boolean }>(convexApi.teams.remove, {
-    teamId,
-    clerkUserId: session.clerkUserId,
-  });
-}
-
-export async function reorderTeamsFromBearer(authHeader: string | null, teamIds: string[]) {
-  const { session } = await getSessionContextFromBearer(authHeader);
-  return convexMutation<{ ok: boolean }>(convexApi.teams.reorder, {
-    clerkUserId: session.clerkUserId,
-    teamIds,
-  });
-}
-
-export async function listTeamHostsFromBearer(authHeader: string | null, teamId: string) {
-  const { session } = await getSessionContextFromBearer(authHeader);
-  return convexQuery<Array<{
-    id: string;
-    teamId: string;
-    label: string;
-    hostname: string;
-    username: string;
-    port: number;
-    group: string;
-    tags: string[];
-    authMode: string;
-    lastConnectedAt: number | null;
-  }>>(convexApi.teams.listHosts, {
-    teamId,
-    clerkUserId: session.clerkUserId,
-  });
+export function buildInviteLink(inviteId: string, token: string): string {
+  const inviteUrl = new URL(`/teams/invites/${inviteId}`, getBrowserBaseURL());
+  inviteUrl.searchParams.set("token", token);
+  return inviteUrl.toString();
 }

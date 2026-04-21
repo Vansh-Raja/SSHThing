@@ -3,10 +3,9 @@
 This package hosts the SSHThing Teams backend model:
 
 - Clerk-backed auth integration
-- workspace, vault, resource, and membership state
+- team, member, host, and invite state
 - CLI device-flow session issuance
 - TUI session storage
-- audit event writes
 
 Run `pnpm convex:dev` from the repo root after configuring your Convex environment.
 

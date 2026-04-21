@@ -50,6 +50,7 @@ const (
 	OverlayRenameGroup = 8
 	OverlayDeleteGroup = 9
 	OverlayQuit        = 10
+	OverlayImportHost  = 11
 )
 
 // ── List types ────────────────────────────────────────────────────────
@@ -89,6 +90,12 @@ type SpotlightItem struct {
 	Team      teams.TeamSummary
 	Score     int
 	Indent    int
+}
+
+type teamsImportConflictState struct {
+	PersonalHost Host
+	ExistingHost teams.TeamHostDetail
+	Cursor       int
 }
 
 // ── Token mode constants ──────────────────────────────────────────────

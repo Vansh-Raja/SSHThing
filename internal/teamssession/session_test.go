@@ -9,14 +9,12 @@ func TestSessionSaveLoadClear(t *testing.T) {
 	t.Setenv("SSHTHING_DATA_DIR", t.TempDir())
 
 	session := Session{
-		AccessToken:   "access",
-		RefreshToken:  "refresh",
-		ExpiresAt:     time.Now().Add(5 * time.Minute).UnixMilli(),
-		WorkspaceID:   "ws_123",
-		WorkspaceName: "Acme",
-		UserID:        "user_123",
-		UserName:      "Test User",
-		UserEmail:     "user@example.com",
+		AccessToken:  "access",
+		RefreshToken: "refresh",
+		ExpiresAt:    time.Now().Add(5 * time.Minute).UnixMilli(),
+		UserID:       "user_123",
+		UserName:     "Test User",
+		UserEmail:    "user@example.com",
 	}
 	if err := Save(session); err != nil {
 		t.Fatalf("save session: %v", err)

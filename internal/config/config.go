@@ -50,15 +50,17 @@ type Config struct {
 	Version int `json:"version"`
 
 	UI struct {
-		VimMode   bool   `json:"vim_mode"`
-		ShowIcons bool   `json:"show_icons"`
-		Theme     string `json:"theme"`
-		IconSet   string `json:"icon_set"`
+		VimMode    bool   `json:"vim_mode"`
+		ShowIcons  bool   `json:"show_icons"`
+		WrapLabels bool   `json:"wrap_labels"`
+		Theme      string `json:"theme"`
+		IconSet    string `json:"icon_set"`
 	} `json:"ui"`
 
 	TeamsUI struct {
-		Theme   string `json:"theme"`
-		IconSet string `json:"icon_set"`
+		WrapLabels bool   `json:"wrap_labels"`
+		Theme      string `json:"theme"`
+		IconSet    string `json:"icon_set"`
 	} `json:"teams_ui"`
 
 	SSH struct {
@@ -110,11 +112,13 @@ type Config struct {
 
 func Default() Config {
 	var c Config
-	c.Version = 4
+	c.Version = 5
 	c.UI.VimMode = true
 	c.UI.ShowIcons = true
+	c.UI.WrapLabels = false
 	c.UI.Theme = "Catppuccin Mocha"
 	c.UI.IconSet = "Unicode"
+	c.TeamsUI.WrapLabels = false
 	c.TeamsUI.Theme = "Catppuccin Latte"
 	c.TeamsUI.IconSet = "ASCII"
 
@@ -233,6 +237,11 @@ func withDefaults(c Config) Config {
 			c.TeamsUI.IconSet = "ASCII"
 		}
 		c.Version = 4
+	}
+	if c.Version < 5 {
+		c.UI.WrapLabels = false
+		c.TeamsUI.WrapLabels = false
+		c.Version = 5
 	}
 
 	// Enums / ints: normalize invalid values.

@@ -8,13 +8,12 @@
  * @module
  */
 
-import type * as audit from "../audit.js";
-import type * as memberships from "../memberships.js";
-import type * as resources from "../resources.js";
 import type * as sessions from "../sessions.js";
+import type * as teamAccess from "../teamAccess.js";
+import type * as teamHosts from "../teamHosts.js";
+import type * as teamInvites from "../teamInvites.js";
+import type * as teamMembers from "../teamMembers.js";
 import type * as teams from "../teams.js";
-import type * as vaults from "../vaults.js";
-import type * as workspaces from "../workspaces.js";
 
 import type {
   ApiFromModules,
@@ -23,13 +22,12 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  audit: typeof audit;
-  memberships: typeof memberships;
-  resources: typeof resources;
   sessions: typeof sessions;
+  teamAccess: typeof teamAccess;
+  teamHosts: typeof teamHosts;
+  teamInvites: typeof teamInvites;
+  teamMembers: typeof teamMembers;
   teams: typeof teams;
-  vaults: typeof vaults;
-  workspaces: typeof workspaces;
 }>;
 
 /**

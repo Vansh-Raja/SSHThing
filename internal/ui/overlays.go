@@ -130,6 +130,7 @@ type SearchViewParams struct {
 	ArmedMount   bool
 	ArmedUnmount bool
 	CommandMode  bool
+	ImportMode   bool
 }
 
 // RenderSearchOverlay renders the search/spotlight overlay.
@@ -147,6 +148,8 @@ func (r *Renderer) RenderSearchOverlay(p SearchViewParams) string {
 	placeholderText := "search hosts..."
 	if p.CommandMode {
 		placeholderText = "> commands..."
+	} else if p.ImportMode {
+		placeholderText = "search personal hosts to import..."
 	}
 	placeholder := lipgloss.NewStyle().Foreground(r.Theme.Overlay).Background(bg).Render(placeholderText)
 	inputText := p.Query
@@ -226,6 +229,8 @@ func (r *Renderer) RenderSearchOverlay(p SearchViewParams) string {
 	}
 	if p.CommandMode {
 		footerText = "esc close  ·  enter run command"
+	} else if p.ImportMode {
+		footerText = "esc back to add host  ·  enter import personal host"
 	}
 	footer := lipgloss.NewStyle().Foreground(r.Theme.Overlay).Background(bg).Render("  " + footerText)
 
@@ -256,17 +261,21 @@ func (r *Renderer) RenderSearchOverlay(p SearchViewParams) string {
 
 // AddHostViewParams holds data for the add/edit host form overlay.
 type AddHostViewParams struct {
-	IsEdit      bool
-	Fields      []FormField // [label, tags, hostname, port, username, authDetail]
-	Focus       int
-	Editing     bool
-	Groups      []string
-	GroupIdx    int
-	AuthOptions []string
-	AuthIdx     int
-	KeyTypes    []string
-	KeyTypeIdx  int
-	Err         error
+	IsEdit         bool
+	Fields         []FormField // [label, tags, hostname, port, username, authDetail]
+	Focus          int
+	Editing        bool
+	Groups         []string
+	GroupIdx       int
+	AuthOptions    []string
+	AuthIdx        int
+	KeyTypes       []string
+	KeyTypeIdx     int
+	AllowImport    bool
+	AuthLocked     bool
+	SecretRevealed bool
+	ScrollOffset   int
+	Err            error
 }
 
 // Form field indices for add host.
@@ -314,29 +323,27 @@ func (r *Renderer) RenderAddHostOverlay(p AddHostViewParams) string {
 		return "\n"
 	}
 
-	var lines []string
-	lines = append(lines, headerLine)
-	lines = append(lines, rule)
+	var bodyLines []string
 
 	// label
-	lines = append(lines, spacer()+r.RenderFormLabel("label", p.Focus == FFLabel))
-	lines = append(lines, r.RenderInput(p.Fields[FFLabel], p.Focus == FFLabel, formW-4, blink, p.Editing))
+	bodyLines = append(bodyLines, spacer()+r.RenderFormLabel("label", p.Focus == FFLabel))
+	bodyLines = append(bodyLines, r.RenderInput(p.Fields[FFLabel], p.Focus == FFLabel, formW-4, blink, p.Editing))
 
 	// group selector
-	lines = append(lines, spacer()+r.RenderFormLabel("group", p.Focus == FFGroup))
+	bodyLines = append(bodyLines, spacer()+r.RenderFormLabel("group", p.Focus == FFGroup))
 	gName := ""
 	if len(p.Groups) > 0 {
 		gName = p.Groups[p.GroupIdx]
 	}
 	gCount := fmt.Sprintf("[%d/%d]", p.GroupIdx+1, len(p.Groups))
 	if p.Focus == FFGroup {
-		lines = append(lines, "  "+
+		bodyLines = append(bodyLines, "  "+
 			lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(r.Icons.LeftArrow)+
 			" "+lipgloss.NewStyle().Foreground(r.Theme.Text).Render(gName)+
 			" "+lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(r.Icons.RightArrow)+
 			"  "+lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(gCount))
 	} else {
-		lines = append(lines, "  "+
+		bodyLines = append(bodyLines, "  "+
 			lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(r.Icons.LeftArrow)+
 			" "+lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render(gName)+
 			" "+lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(r.Icons.RightArrow)+
@@ -344,10 +351,10 @@ func (r *Renderer) RenderAddHostOverlay(p AddHostViewParams) string {
 	}
 
 	// tags
-	lines = append(lines, spacer()+r.RenderFormLabel("tags", p.Focus == FFTags))
-	lines = append(lines, r.RenderInput(p.Fields[FFTags], p.Focus == FFTags, formW-4, blink, p.Editing))
+	bodyLines = append(bodyLines, spacer()+r.RenderFormLabel("tags", p.Focus == FFTags))
+	bodyLines = append(bodyLines, r.RenderInput(p.Fields[FFTags], p.Focus == FFTags, formW-4, blink, p.Editing))
 	if !compact {
-		lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("  comma-separated"))
+		bodyLines = append(bodyLines, lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("  comma-separated"))
 	}
 
 	// hostname + port side by side
@@ -362,71 +369,88 @@ func (r *Renderer) RenderAddHostOverlay(p AddHostViewParams) string {
 
 	if r.W >= 60 {
 		if !compact {
-			lines = append(lines, "")
+			bodyLines = append(bodyLines, "")
 		}
 		labelRow := lipgloss.NewStyle().Width(hostW).Render(hostLabel) +
 			lipgloss.NewStyle().Width(portW).Render(portLabel)
-		lines = append(lines, labelRow)
+		bodyLines = append(bodyLines, labelRow)
 
 		hostInput := r.RenderInput(p.Fields[FFHostname], p.Focus == FFHostname, hostW-4, blink, p.Editing)
 		portInput := r.RenderInput(p.Fields[FFPort], p.Focus == FFPort, portW-4, blink, p.Editing)
 		inputRow := lipgloss.NewStyle().Width(hostW).Render(hostInput) +
 			lipgloss.NewStyle().Width(portW).Render(portInput)
-		lines = append(lines, inputRow)
+		bodyLines = append(bodyLines, inputRow)
 	} else {
-		lines = append(lines, spacer()+hostLabel)
-		lines = append(lines, r.RenderInput(p.Fields[FFHostname], p.Focus == FFHostname, formW-4, blink, p.Editing))
-		lines = append(lines, spacer()+portLabel)
-		lines = append(lines, r.RenderInput(p.Fields[FFPort], p.Focus == FFPort, formW-4, blink, p.Editing))
+		bodyLines = append(bodyLines, spacer()+hostLabel)
+		bodyLines = append(bodyLines, r.RenderInput(p.Fields[FFHostname], p.Focus == FFHostname, formW-4, blink, p.Editing))
+		bodyLines = append(bodyLines, spacer()+portLabel)
+		bodyLines = append(bodyLines, r.RenderInput(p.Fields[FFPort], p.Focus == FFPort, formW-4, blink, p.Editing))
 	}
 
 	// username
-	lines = append(lines, spacer()+r.RenderFormLabel("username", p.Focus == FFUsername))
-	lines = append(lines, r.RenderInput(p.Fields[FFUsername], p.Focus == FFUsername, formW-4, blink, p.Editing))
+	bodyLines = append(bodyLines, spacer()+r.RenderFormLabel("username", p.Focus == FFUsername))
+	bodyLines = append(bodyLines, r.RenderInput(p.Fields[FFUsername], p.Focus == FFUsername, formW-4, blink, p.Editing))
 
 	// auth method selector
-	lines = append(lines, spacer()+r.RenderFormLabel("authentication", p.Focus == FFAuthMeth))
+	bodyLines = append(bodyLines, spacer()+r.RenderFormLabel("authentication", p.Focus == FFAuthMeth))
 	aName := ""
 	if len(p.AuthOptions) > 0 {
 		aName = p.AuthOptions[p.AuthIdx]
 	}
+	if p.AuthLocked && aName != "" {
+		aName += " (locked)"
+	}
 	if p.Focus == FFAuthMeth {
-		lines = append(lines, "  "+
-			lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(r.Icons.LeftArrow)+
-			" "+lipgloss.NewStyle().Foreground(r.Theme.Text).Render(aName)+
-			" "+lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(r.Icons.RightArrow))
+		if p.AuthLocked {
+			bodyLines = append(bodyLines, "  "+lipgloss.NewStyle().Foreground(r.Theme.Text).Render(aName))
+		} else {
+			bodyLines = append(bodyLines, "  "+
+				lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(r.Icons.LeftArrow)+
+				" "+lipgloss.NewStyle().Foreground(r.Theme.Text).Render(aName)+
+				" "+lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(r.Icons.RightArrow))
+		}
 	} else {
-		lines = append(lines, "  "+
-			lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(r.Icons.LeftArrow)+
-			" "+lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render(aName)+
-			" "+lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(r.Icons.RightArrow))
+		if p.AuthLocked {
+			bodyLines = append(bodyLines, "  "+lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render(aName))
+		} else {
+			bodyLines = append(bodyLines, "  "+
+				lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(r.Icons.LeftArrow)+
+				" "+lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render(aName)+
+				" "+lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(r.Icons.RightArrow))
+		}
 	}
 
 	// auth detail based on method
 	switch p.AuthIdx {
 	case 0: // password
-		lines = append(lines, spacer()+r.RenderFormLabel("password", p.Focus == FFAuthDet))
-		lines = append(lines, r.RenderInput(p.Fields[FFAuthDet], p.Focus == FFAuthDet, formW-4, blink, p.Editing))
+		bodyLines = append(bodyLines, spacer()+r.RenderFormLabel("password", p.Focus == FFAuthDet))
+		bodyLines = append(bodyLines, r.RenderInput(p.Fields[FFAuthDet], p.Focus == FFAuthDet, formW-4, blink, p.Editing))
 	case 1: // paste key
-		lines = append(lines, spacer()+r.RenderFormLabel("private key", p.Focus == FFAuthDet))
-		lines = append(lines, r.RenderInput(p.Fields[FFAuthDet], p.Focus == FFAuthDet, formW-4, blink, p.Editing))
+		bodyLines = append(bodyLines, spacer()+r.RenderFormLabel("private key", p.Focus == FFAuthDet))
+		bodyLines = append(bodyLines, r.RenderSecretPreview(p.Fields[FFAuthDet].Value, formW-4, p.SecretRevealed, 4)...)
 		if !compact {
-			lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("  paste your private key"))
+			hint := "  paste your private key"
+			if p.SecretRevealed {
+				hint = "  v hide key  ·  c copy key"
+			} else {
+				hint = "  v reveal key  ·  c copy key"
+			}
+			bodyLines = append(bodyLines, lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(hint))
 		}
 	case 2: // generate
-		lines = append(lines, spacer()+r.RenderFormLabel("key type", false))
+		bodyLines = append(bodyLines, spacer()+r.RenderFormLabel("key type", false))
 		kt := ""
 		if len(p.KeyTypes) > 0 {
 			kt = p.KeyTypes[p.KeyTypeIdx]
 		}
-		lines = append(lines, "  "+lipgloss.NewStyle().Foreground(r.Theme.Text).Render(kt)+
+		bodyLines = append(bodyLines, "  "+lipgloss.NewStyle().Foreground(r.Theme.Text).Render(kt)+
 			"  "+lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("(space to cycle)"))
 	}
 
 	// error line
 	if p.Err != nil {
-		lines = append(lines, "")
-		lines = append(lines, r.renderErrLine(p.Err))
+		bodyLines = append(bodyLines, "")
+		bodyLines = append(bodyLines, r.renderErrLine(p.Err))
 	}
 
 	// save button
@@ -434,30 +458,97 @@ func (r *Renderer) RenderAddHostOverlay(p AddHostViewParams) string {
 	if p.IsEdit {
 		saveLabel = "update host"
 	}
-	lines = append(lines, "")
+	bodyLines = append(bodyLines, "")
 	if p.Focus == FFSave {
-		lines = append(lines, "  "+lipgloss.NewStyle().Foreground(r.Theme.Accent).Bold(true).Render(r.Icons.Save+" "+saveLabel))
+		bodyLines = append(bodyLines, "  "+lipgloss.NewStyle().Foreground(r.Theme.Accent).Bold(true).Render(r.Icons.Save+" "+saveLabel))
 	} else {
-		lines = append(lines, "  "+lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("  "+saveLabel))
+		bodyLines = append(bodyLines, "  "+lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("  "+saveLabel))
 	}
 
 	// footer
-	if !compact {
-		lines = append(lines, "")
-	}
 	var footerText string
 	if p.Editing {
-		footerText = "type to edit  \u00B7  \u2191\u2193 leave  \u00B7  \u2190\u2192 cursor  \u00B7  esc done  \u00B7  tab next"
+		footerText = "type to edit  ·  ↑↓ leave  ·  ←→ cursor  ·  esc done  ·  tab next"
 	} else {
-		footerText = "\u2191\u2193\u2190\u2192 navigate  \u00B7  enter edit  \u00B7  tab next  \u00B7  esc cancel"
+		footerText = "↑↓←→ navigate  ·  enter edit  ·  tab next  ·  esc cancel"
+		if p.AllowImport {
+			footerText += "  ·  I import personal host"
+		}
+	}
+	if p.AuthIdx == 1 {
+		if p.SecretRevealed {
+			footerText += "  ·  v hide key  ·  c copy key"
+		} else {
+			footerText += "  ·  v reveal key  ·  c copy key"
+		}
 	}
 	footer := r.RenderFooter(footerText)
-	lines = append(lines, footer)
 
-	inner := strings.Join(lines, "\n")
-	padded := r.PadContent(inner, pad)
+	bodyH := r.H - 8
+	if bodyH < 8 {
+		bodyH = 8
+	}
+	scroll := p.ScrollOffset
+	if scroll < 0 {
+		scroll = 0
+	}
+	if scroll > max(0, len(bodyLines)-bodyH) {
+		scroll = max(0, len(bodyLines)-bodyH)
+	}
+	visible := append([]string(nil), bodyLines...)
+	if len(visible) > bodyH {
+		visible = bodyLines[scroll:min(len(bodyLines), scroll+bodyH)]
+		if scroll > 0 && len(visible) > 0 {
+			visible[0] = lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("  ↑ more")
+		}
+		if scroll+bodyH < len(bodyLines) && len(visible) > 0 {
+			visible[len(visible)-1] = lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("  ↓ more")
+		}
+	}
 
-	return padded
+	innerLines := []string{headerLine, rule}
+	innerLines = append(innerLines, visible...)
+	if !compact {
+		innerLines = append(innerLines, "")
+	}
+	innerLines = append(innerLines, footer)
+
+	return r.PadContent(strings.Join(innerLines, "\n"), pad)
+}
+
+type ImportConflictViewParams struct {
+	ExistingLabel string
+	ExistingConn  string
+	Cursor        int
+}
+
+func (r *Renderer) RenderImportConflictOverlay(p ImportConflictViewParams) string {
+	bg := r.Theme.Mantle
+	title := lipgloss.NewStyle().Foreground(r.Theme.Yellow).Background(bg).Bold(true).
+		Render(r.Icons.Warning + " host already exists in this team")
+	body := lipgloss.NewStyle().Foreground(r.Theme.Subtext).Background(bg).
+		Render("A host with the same hostname already exists, but its settings or credentials differ.")
+	existing := lipgloss.NewStyle().Foreground(r.Theme.Text).Background(bg).Bold(true).Render(p.ExistingLabel)
+	conn := lipgloss.NewStyle().Foreground(r.Theme.Subtext).Background(bg).Render(p.ExistingConn)
+
+	button := func(label string, idx int, danger bool) string {
+		style := lipgloss.NewStyle().Foreground(r.Theme.Subtext).Background(bg).Padding(0, 2)
+		if p.Cursor == idx {
+			color := r.Theme.Accent
+			if danger {
+				color = r.Theme.Red
+			}
+			style = style.Foreground(r.Theme.Base).Background(color).Bold(true)
+		}
+		return style.Render(label)
+	}
+
+	buttons := button("update existing", 0, false) + "  " + button("create duplicate", 1, true) + "  " + button("cancel", 2, false)
+	footer := lipgloss.NewStyle().Foreground(r.Theme.Overlay).Background(bg).
+		Render("←→ select · enter confirm · esc cancel")
+	content := strings.Join([]string{title, "", body, "", existing, conn, "", buttons, "", footer}, "\n")
+	box := lipgloss.NewStyle().Width(64).Background(bg).Padding(1, 2).Align(lipgloss.Center).Render(content)
+	return lipgloss.Place(r.W, r.H, lipgloss.Center, lipgloss.Center, box, lipgloss.WithWhitespaceBackground(r.Theme.Base))
 }
 
 // ── Login overlay ─────────────────────────────────────────────────────

@@ -3,139 +3,269 @@ package ui
 import (
 	"fmt"
 	"strings"
-	"time"
 
-	"github.com/Vansh-Raja/SSHThing/internal/teams"
 	"github.com/charmbracelet/lipgloss"
 )
 
-type TeamsViewParams struct {
-	Page         int
-	ModeLabel    string
-	State        int
-	Err          error
-	SessionValid bool
-	CurrentTeam  teams.TeamSummary
-	Teams        []teams.TeamSummary
-	HostCursor   int
-	Hosts        []teams.TeamHost
+type TeamsHomeStatusLine struct {
+	Kind    string
+	Message string
 }
 
-func (r *Renderer) RenderTeamsView(p TeamsViewParams) string {
-	cw := r.PageContentWidth()
-	pad := r.LeftPad()
+type TeamsHomeTeamSummary struct {
+	Name      string
+	Slug      string
+	Role      string
+	HostCount int
+	TeamCount int
+}
 
-	var lines []string
-	subtitle := "teams"
-	if strings.TrimSpace(p.ModeLabel) != "" {
-		subtitle = p.ModeLabel
+type TeamsHomeListItem struct {
+	IsGroup            bool
+	GroupName          string
+	HostCount          int
+	Selected           bool
+	Label              string
+	Hostname           string
+	Username           string
+	Port               int
+	Group              string
+	CredentialMode     string
+	CredentialType     string
+	LastConnectedLabel string
+	Tags               []string
+}
+
+type TeamsHomeViewParams struct {
+	Page         int
+	SessionValid bool
+	HasTeams     bool
+	CurrentTeam  TeamsHomeTeamSummary
+	Items        []TeamsHomeListItem
+	StatusLines  []TeamsHomeStatusLine
+	FooterText   string
+}
+
+func (r *Renderer) RenderTeamsView(p TeamsHomeViewParams) string {
+	layout := r.buildHomeFrameLayout(len(p.StatusLines))
+	listBlock := lipgloss.NewStyle().Width(layout.listW).Render(r.padListLines(r.renderTeamsListLines(p, layout), layout.bodyH))
+	detailBlock := lipgloss.NewStyle().Width(layout.detailW).Foreground(r.Theme.Subtext).
+		Render(r.renderTeamsDetail(p, layout.detailW, layout.bodyH))
+	body := r.renderHomeBody(listBlock, detailBlock, layout, p.Page)
+
+	headerLine := r.RenderHeader(r.renderTeamsHeaderSummary(p), 0, 0)
+	return r.renderHomeFrame(headerLine, body, r.renderTeamsStatusLines(p.StatusLines), r.teamsFooterText(p))
+}
+
+func (r *Renderer) renderTeamsHeaderSummary(p TeamsHomeViewParams) string {
+	return fmt.Sprintf("%d teams  %d hosts", p.CurrentTeam.TeamCount, p.CurrentTeam.HostCount)
+}
+
+func (r *Renderer) teamsFooterText(p TeamsHomeViewParams) string {
+	if strings.TrimSpace(p.FooterText) != "" {
+		return p.FooterText
 	}
-	lines = append(lines, r.RenderHeader(subtitle, len(p.Hosts), 0))
-	lines = append(lines, "")
+	if !p.SessionValid || !p.HasTeams {
+		return "enter create team  / search  ? commands  , settings  shift+tab cycle  T personal mode  q quit"
+	}
+	return "\u2191\u2193 nav  \u23CE connect  a add  e edit  d del  ctrl+1..9 switch team  / search  r refresh  , settings  shift+tab cycle  T personal mode  q quit"
+}
 
-	switch {
-	case !p.SessionValid:
-		lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("Cloud session unavailable. Return to Profile to sign in again."))
-	case p.State == 0:
-		lines = append(lines,
+func (r *Renderer) renderTeamsStatusLines(lines []TeamsHomeStatusLine) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		message := strings.TrimSpace(line.Message)
+		if message == "" {
+			continue
+		}
+		switch line.Kind {
+		case "success":
+			out = append(out, lipgloss.NewStyle().Foreground(r.Theme.Green).Render(message))
+		case "warning":
+			out = append(out, lipgloss.NewStyle().Foreground(r.Theme.Yellow).Render(message))
+		case "info":
+			out = append(out, lipgloss.NewStyle().Foreground(r.Theme.Sky).Render(message))
+		default:
+			out = append(out, lipgloss.NewStyle().Foreground(r.Theme.Red).Render(message))
+		}
+	}
+	return out
+}
+
+func (r *Renderer) renderTeamsListLines(p TeamsHomeViewParams, layout homeFrameLayout) []string {
+	if !p.SessionValid {
+		return []string{
+			lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render("Teams"),
+			"",
+			lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("Cloud session unavailable."),
+			lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("Return to Profile to sign in again."),
+		}
+	}
+
+	if !p.HasTeams {
+		return []string{
 			lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render("Teams"),
 			"",
 			lipgloss.NewStyle().Foreground(r.Theme.Text).Render("No teams yet."),
-			lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("SSHThing stays fully local in personal mode. Create a team when you want a shared shell."),
+			lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("Create a team when you want a shared shell."),
+		}
+	}
+
+	if len(p.Items) == 0 {
+		return []string{
+			lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render("Hosts"),
 			"",
-			lipgloss.NewStyle().Foreground(r.Theme.Accent).Render("Press Enter to create a team."),
-		)
-	default:
-		lines = append(lines, r.renderCurrentTeamHeader(p)...)
-		lines = append(lines, "")
-		lines = append(lines, r.renderTeamHosts(p)...)
+			lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("No hosts in this team yet."),
+		}
 	}
 
-	if p.Err != nil {
-		lines = append(lines, "")
-		lines = append(lines, r.renderErrLine(p.Err))
+	var lines []string
+	for _, item := range p.Items {
+		if item.IsGroup {
+			lines = append(lines, "")
+			arrowR := lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(r.Icons.Expanded)
+			nameStyle := lipgloss.NewStyle().Foreground(r.Theme.Subtext)
+			countStr := lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(fmt.Sprintf(" %d", item.HostCount))
+			groupPrefix := arrowR + " "
+			groupLines := r.renderListEntry(groupPrefix, item.GroupName, nameStyle, layout.listW-lipgloss.Width(groupPrefix)-4)
+			if len(groupLines) > 0 {
+				groupLines[0] += countStr
+			}
+			lines = append(lines, groupLines...)
+			continue
+		}
+
+		prefix := "    "
+		nameStyle := lipgloss.NewStyle().Foreground(r.Theme.Subtext)
+		if item.Selected {
+			prefix = lipgloss.NewStyle().Foreground(r.Theme.Accent).Render("  " + r.Icons.Focused + " ")
+			nameStyle = lipgloss.NewStyle().Foreground(r.Theme.Accent).Bold(true)
+		}
+
+		maxLblW := layout.listW - 10
+		if layout.narrowMode {
+			maxLblW = r.W - 16
+		}
+		label := strings.TrimSpace(item.Label)
+		if label == "" {
+			label = item.Hostname
+		}
+		lines = append(lines, r.renderListEntry(prefix, label, nameStyle, maxLblW)...)
 	}
 
-	lines = append(lines, "")
-	lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Surface0).Render(strings.Repeat(r.Icons.Rule, min(cw, 40))))
-	footer := "enter create team  / search  ? commands  , settings  shift+tab cycle  T personal mode"
-	if p.SessionValid && p.State != 0 {
-		footer = "↑↓ hosts  ctrl+1..9 switch team  / search  ? commands  r refresh  , settings  shift+tab cycle  T personal mode"
-	}
-	lines = append(lines, r.RenderFooter(footer))
-
-	inner := strings.Join(lines, "\n")
-	if r.ShowSidebar() {
-		bodyH := max(8, len(lines))
-		sidebar := r.RenderSidebar(bodyH, p.Page)
-		sideGap := lipgloss.NewStyle().Width(2).Render(strings.Repeat("\n", bodyH))
-		inner = lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Width(cw).Render(inner), sideGap, sidebar)
-	}
-	return r.PadContent(inner, pad)
+	return lines
 }
 
-func (r *Renderer) renderCurrentTeamHeader(p TeamsViewParams) []string {
-	teamName := strings.TrimSpace(p.CurrentTeam.Name)
-	if teamName == "" {
-		teamName = "Current Team"
+func (r *Renderer) renderTeamsDetail(p TeamsHomeViewParams, _ int, _ int) string {
+	if !p.SessionValid {
+		return strings.Join([]string{
+			lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render("Teams"),
+			lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("Sign in to browse shared hosts."),
+			"",
+			lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("Use the Profile page to authenticate and return to Teams mode."),
+		}, "\n")
 	}
+
+	if !p.HasTeams {
+		return strings.Join([]string{
+			lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render("Create your first team"),
+			lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("SSHThing stays local in personal mode until you want shared access."),
+			"",
+			lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("Press Enter to create a team."),
+		}, "\n")
+	}
+
+	selected, ok := r.selectedTeamsHost(p.Items)
+	if !ok {
+		return r.renderTeamsSummaryDetail(p, "Select a host to see connection details.")
+	}
+
+	kStyle := lipgloss.NewStyle().Foreground(r.Theme.Subtext)
+	vStyle := lipgloss.NewStyle().Foreground(r.Theme.Text)
+	dimStyle := lipgloss.NewStyle().Foreground(r.Theme.Subtext)
+
+	label := strings.TrimSpace(selected.Label)
+	if label == "" {
+		label = selected.Hostname
+	}
+	connStr := selected.Hostname
+	if selected.Username != "" {
+		connStr = selected.Username + "@" + selected.Hostname
+	}
+	if selected.Port > 0 && selected.Port != 22 {
+		connStr += fmt.Sprintf(":%d", selected.Port)
+	}
+
+	tagStr := lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("no tags")
+	if len(selected.Tags) > 0 {
+		parts := make([]string, 0, len(selected.Tags))
+		for _, tag := range selected.Tags {
+			tag = strings.TrimSpace(tag)
+			if tag == "" {
+				continue
+			}
+			parts = append(parts, lipgloss.NewStyle().Foreground(r.Theme.Pink).Render(tag))
+		}
+		if len(parts) > 0 {
+			tagStr = strings.Join(parts, "  ")
+		}
+	}
+
+	lastSeen := selected.LastConnectedLabel
+	if lastSeen == "" {
+		lastSeen = "never"
+	}
+
 	lines := []string{
-		lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render(teamName),
+		lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render(label),
+		lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(connStr),
+		"",
+		kStyle.Render("team        ") + vStyle.Render(p.CurrentTeam.Name),
+		kStyle.Render("slug        ") + dimStyle.Render(orFallback(p.CurrentTeam.Slug, "(none)")),
+		kStyle.Render("role        ") + dimStyle.Render(orFallback(p.CurrentTeam.Role, "(unknown)")),
+		kStyle.Render("auth        ") + vStyle.Render(orFallback(selected.CredentialType, "none")),
+		kStyle.Render("mode        ") + dimStyle.Render(orFallback(selected.CredentialMode, "shared")),
+		kStyle.Render("group       ") + dimStyle.Render(orFallback(selected.Group, "Ungrouped")),
+		kStyle.Render("last seen   ") + dimStyle.Render(lastSeen),
+		"",
+		kStyle.Render("tags        ") + tagStr,
+		"",
+		lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("enter connect  \u00B7  a add host  \u00B7  e edit  \u00B7  d delete"),
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (r *Renderer) renderTeamsSummaryDetail(p TeamsHomeViewParams, hint string) string {
+	lines := []string{
+		lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render(orFallback(p.CurrentTeam.Name, "Current Team")),
+		lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render(fmt.Sprintf("%d hosts  \u00B7  %d teams", p.CurrentTeam.HostCount, p.CurrentTeam.TeamCount)),
 	}
 	if slug := strings.TrimSpace(p.CurrentTeam.Slug); slug != "" {
 		lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("slug: "+slug))
 	}
-	if len(p.Teams) > 0 {
-		teamNames := make([]string, 0, len(p.Teams))
-		for _, team := range p.Teams {
-			teamNames = append(teamNames, team.Name)
-		}
-		lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("teams: "+strings.Join(teamNames, "  •  ")))
+	if role := strings.TrimSpace(p.CurrentTeam.Role); role != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("role: "+role))
 	}
-	return lines
+	lines = append(lines, "", lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(hint))
+	if p.CurrentTeam.HostCount == 0 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("Press 'a' to add a team host here."))
+	}
+	return strings.Join(lines, "\n")
 }
 
-func (r *Renderer) renderTeamHosts(p TeamsViewParams) []string {
-	if len(p.Hosts) == 0 {
-		return []string{
-			lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("No hosts in this team yet."),
-			lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("Host management for teams is the next piece of the shell."),
+func (r *Renderer) selectedTeamsHost(items []TeamsHomeListItem) (TeamsHomeListItem, bool) {
+	for _, item := range items {
+		if item.IsGroup || !item.Selected {
+			continue
 		}
+		return item, true
 	}
+	return TeamsHomeListItem{}, false
+}
 
-	lines := []string{lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render("Hosts"), ""}
-	for i, host := range p.Hosts {
-		prefix := "    "
-		nameStyle := lipgloss.NewStyle().Foreground(r.Theme.Subtext)
-		if i == p.HostCursor {
-			prefix = lipgloss.NewStyle().Foreground(r.Theme.Accent).Render("  " + r.Icons.Focused + " ")
-			nameStyle = lipgloss.NewStyle().Foreground(r.Theme.Accent).Bold(true)
-		}
-		label := strings.TrimSpace(host.Label)
-		if label == "" {
-			label = host.Hostname
-		}
-		lines = append(lines, prefix+nameStyle.Render(label))
-		if i == p.HostCursor {
-			detail := []string{}
-			if host.Username != "" {
-				detail = append(detail, host.Username+"@"+host.Hostname)
-			} else {
-				detail = append(detail, host.Hostname)
-			}
-			if host.Port > 0 {
-				detail = append(detail, fmt.Sprintf("port:%d", host.Port))
-			}
-			if host.Group != "" {
-				detail = append(detail, "group:"+host.Group)
-			}
-			if host.LastConnectedAt != nil {
-				detail = append(detail, "last:"+FormatTimeAgo(time.UnixMilli(*host.LastConnectedAt)))
-			}
-			if len(detail) > 0 {
-				lines = append(lines, "      "+lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(strings.Join(detail, "  ")))
-			}
-		}
+func orFallback(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
 	}
-	return lines
+	return value
 }

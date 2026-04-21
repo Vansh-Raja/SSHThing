@@ -1,0 +1,107 @@
+name: ${COMPOSE_PROJECT_NAME}
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  convex:
+    image: ${CONVEX_BACKEND_IMAGE}
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_URL: ${POSTGRES_URL}
+      DO_NOT_REQUIRE_SSL: ${DO_NOT_REQUIRE_SSL}
+      INSTANCE_NAME: ${INSTANCE_NAME}
+      INSTANCE_SECRET: ${INSTANCE_SECRET}
+      CONVEX_CLOUD_ORIGIN: ${CONVEX_CLOUD_ORIGIN}
+      CONVEX_SITE_ORIGIN: ${CONVEX_SITE_ORIGIN}
+      NEXT_PUBLIC_DEPLOYMENT_URL: ${NEXT_PUBLIC_DEPLOYMENT_URL}
+      RUST_LOG: ${RUST_LOG}
+      DISABLE_BEACON: ${DISABLE_BEACON}
+      DISABLE_METRICS_ENDPOINT: ${DISABLE_METRICS_ENDPOINT}
+      DOCUMENT_RETENTION_DELAY: ${DOCUMENT_RETENTION_DELAY}
+    ports:
+      - "127.0.0.1:${CONVEX_API_PORT}:3210"
+      - "127.0.0.1:${CONVEX_SITE_PORT}:3211"
+    volumes:
+      - convex_data:/convex/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3210/version >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  convex-dashboard:
+    image: ${CONVEX_DASHBOARD_IMAGE}
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    depends_on:
+      convex:
+        condition: service_healthy
+    environment:
+      NEXT_PUBLIC_DEPLOYMENT_URL: ${NEXT_PUBLIC_DEPLOYMENT_URL}
+      NEXT_PUBLIC_LOAD_MONACO_INTERNALLY: ${NEXT_PUBLIC_LOAD_MONACO_INTERNALLY}
+    ports:
+      - "127.0.0.1:${CONVEX_DASHBOARD_PORT}:6791"
+
+  web:
+    build:
+      context: ../..
+      dockerfile: web/Dockerfile
+      args:
+        NEXT_PUBLIC_CONVEX_URL: ${NEXT_PUBLIC_CONVEX_URL}
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+    image: ${WEB_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      convex:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_CONVEX_URL: ${NEXT_PUBLIC_CONVEX_URL}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+      CLERK_FRONTEND_API_URL: ${CLERK_FRONTEND_API_URL}
+      CLERK_JWT_ISSUER_DOMAIN: ${CLERK_JWT_ISSUER_DOMAIN}
+      SSHTHING_BROWSER_BASE_URL: ${SSHTHING_BROWSER_BASE_URL}
+      SSHTHING_TEAM_SECRET_KEY: ${SSHTHING_TEAM_SECRET_KEY}
+    ports:
+      - "127.0.0.1:${WEB_PORT}:3000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  postgres_data:
+    name: ${POSTGRES_VOLUME_NAME}
+  convex_data:
+    name: ${CONVEX_DATA_VOLUME_NAME}
+

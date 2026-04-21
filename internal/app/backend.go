@@ -373,6 +373,17 @@ func (m *Model) buildSSHConn(host Host) (ssh.Connection, string, string) {
 	return conn, privateKey, password
 }
 
+func (m *Model) currentSSHSessionTerm() string {
+	switch m.cfg.SSH.TermMode {
+	case config.TermXterm:
+		return "xterm-256color"
+	case config.TermCustom:
+		return strings.TrimSpace(m.cfg.SSH.TermCustom)
+	default:
+		return ""
+	}
+}
+
 func (m Model) connectToHost(host Host) (tea.Model, tea.Cmd) {
 	m.armedSFTP = false
 	m.armedMount = false
@@ -437,6 +448,80 @@ func (m Model) connectToHost(host Host) (tea.Model, tea.Cmd) {
 				tempKey.Cleanup()
 			}
 			return sshFinishedMsg{err: err, hostname: host.Hostname, proto: "SSH", keyType: host.KeyType}
+		}),
+	)
+}
+
+func (m Model) connectToTeamHost(host teams.TeamHost) (tea.Model, tea.Cmd) {
+	m.armedSFTP = false
+	m.armedMount = false
+	m.armedUnmount = false
+
+	ctx := context.Background()
+	accessToken, err := m.teamsAccessToken(ctx)
+	if err != nil {
+		m.err = err
+		return m, nil
+	}
+
+	connectConfig, err := m.teamsClient.GetTeamHostConnectConfig(ctx, accessToken, host.ID)
+	if err != nil {
+		switch err.Error() {
+		case "personal_credential_not_configured":
+			m.err = fmt.Errorf("personal credential not configured for %s. Add it in the browser teams UI first.", hostDisplayName(Host{Label: host.Label, Hostname: host.Hostname}))
+		case "shared_credential_not_configured":
+			m.err = fmt.Errorf("shared credential not configured for %s", hostDisplayName(Host{Label: host.Label, Hostname: host.Hostname}))
+		default:
+			m.err = err
+		}
+		return m, nil
+	}
+
+	conn := ssh.Connection{
+		Hostname:            connectConfig.Hostname,
+		Username:            connectConfig.Username,
+		Port:                connectConfig.Port,
+		PasswordBackendUnix: string(m.cfg.SSH.PasswordBackendUnix),
+		HostKeyPolicy:       string(m.cfg.SSH.HostKeyPolicy),
+		KeepAliveSeconds:    m.cfg.SSH.KeepAliveSeconds,
+		Term:                m.currentSSHSessionTerm(),
+	}
+
+	switch connectConfig.CredentialType {
+	case "private_key":
+		if strings.TrimSpace(connectConfig.Secret) == "" {
+			m.err = fmt.Errorf("private key not configured for %s", connectConfig.Label)
+			return m, nil
+		}
+		if err := ssh.ValidatePrivateKey(connectConfig.Secret); err != nil {
+			m.err = fmt.Errorf("team private key is invalid format: %v", err)
+			return m, nil
+		}
+		conn.PrivateKey = connectConfig.Secret
+	case "password":
+		if m.cfg.SSH.PasswordAutoLogin {
+			conn.Password = connectConfig.Secret
+		}
+	}
+
+	cmd, tempKey, err := ssh.Connect(conn)
+	if err != nil {
+		m.err = fmt.Errorf("failed to prepare SSH connection: %v", err)
+		return m, nil
+	}
+
+	return m, tea.Sequence(
+		tea.ShowCursor,
+		tea.ExecProcess(cmd, func(err error) tea.Msg {
+			if tempKey != nil {
+				tempKey.Cleanup()
+			}
+			return sshFinishedMsg{
+				err:      err,
+				hostname: connectConfig.Hostname,
+				proto:    "SSH",
+				keyType:  connectConfig.CredentialType,
+			}
 		}),
 	)
 }
@@ -630,6 +715,38 @@ func fuzzyScore(query, candidate string) (int, bool) {
 
 func (m Model) buildSpotlightItems(query string) []SpotlightItem {
 	query = strings.TrimSpace(query)
+	if m.teamsImportMode {
+		if query == "" {
+			out := make([]SpotlightItem, 0, min(8, len(m.hosts)))
+			for _, h := range m.hosts {
+				out = append(out, SpotlightItem{Kind: SpotlightItemHost, Host: h, GroupName: h.GroupName})
+				if len(out) >= 8 {
+					break
+				}
+			}
+			return out
+		}
+
+		out := make([]SpotlightItem, 0, 16)
+		for _, h := range m.hosts {
+			score, ok := fuzzyScore(query, hostSearchCorpus(h))
+			if !ok {
+				continue
+			}
+			out = append(out, SpotlightItem{
+				Kind:      SpotlightItemHost,
+				Host:      h,
+				GroupName: h.GroupName,
+				Score:     score,
+			})
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+		if len(out) > 16 {
+			out = out[:16]
+		}
+		return out
+	}
+
 	if m.appMode == appModeTeams {
 		if strings.HasPrefix(query, ">") {
 			return m.teamCommandItems(query)
@@ -871,19 +988,10 @@ func (m *Model) buildSettingsItems() []ui.SettingsItem {
 	}
 
 	if m.appMode == appModeTeams {
-		currentTeamName := "(none)"
-		if team, ok := m.teamsCurrentTeam(); ok {
-			currentTeamName = team.Name
-		}
 		return []ui.SettingsItem{
+			{Category: "ui", Label: "wrap labels", Value: boolVal(m.cfg.TeamsUI.WrapLabels), Kind: 0},
 			{Category: "ui", Label: "theme", Value: m.cfg.TeamsUI.Theme, Kind: 1, Options: themeNames(), OptIdx: themeIdx(m.cfg.TeamsUI.Theme)},
 			{Category: "ui", Label: "icon set", Value: m.cfg.TeamsUI.IconSet, Kind: 1, Options: iconSetNames(), OptIdx: iconSetIdx(m.cfg.TeamsUI.IconSet)},
-			{Category: "teams", Label: "current team", Value: currentTeamName, Kind: 2},
-			{Category: "teams", Label: "create team", Value: "", Kind: 2},
-			{Category: "teams", Label: "rename team", Value: currentTeamName, Kind: 2, Disabled: !m.profileSignedIn() || len(m.teamsList) == 0},
-			{Category: "teams", Label: "delete team", Value: currentTeamName, Kind: 2, Disabled: !m.profileSignedIn() || len(m.teamsList) == 0},
-			{Category: "teams", Label: "move team earlier", Value: currentTeamName, Kind: 2, Disabled: !m.profileSignedIn() || len(m.teamsList) < 2},
-			{Category: "teams", Label: "move team later", Value: currentTeamName, Kind: 2, Disabled: !m.profileSignedIn() || len(m.teamsList) < 2},
 		}
 	}
 
@@ -891,6 +999,7 @@ func (m *Model) buildSettingsItems() []ui.SettingsItem {
 		// UI
 		{Category: "ui", Label: "vim mode", Value: boolVal(m.cfg.UI.VimMode), Kind: 0},
 		{Category: "ui", Label: "show icons", Value: boolVal(m.cfg.UI.ShowIcons), Kind: 0},
+		{Category: "ui", Label: "wrap labels", Value: boolVal(m.cfg.UI.WrapLabels), Kind: 0},
 		{Category: "ui", Label: "theme", Value: m.cfg.UI.Theme, Kind: 1, Options: themeNames(), OptIdx: themeIdx(m.cfg.UI.Theme)},
 		{Category: "ui", Label: "icon set", Value: m.cfg.UI.IconSet, Kind: 1, Options: iconSetNames(), OptIdx: iconSetIdx(m.cfg.UI.IconSet)},
 		// SSH
@@ -1082,17 +1191,32 @@ func (m Model) modalGroupOptions(current string) []string {
 	options := []string{"Ungrouped"}
 	seen := map[string]bool{"ungrouped": true}
 
-	for _, g := range m.groups {
-		name := strings.TrimSpace(g)
-		if name == "" {
-			continue
+	if m.appMode == appModeTeams {
+		for _, host := range m.teamsItems {
+			name := strings.TrimSpace(host.Group)
+			if name == "" {
+				continue
+			}
+			key := strings.ToLower(name)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			options = append(options, name)
 		}
-		key := strings.ToLower(name)
-		if seen[key] {
-			continue
+	} else {
+		for _, g := range m.groups {
+			name := strings.TrimSpace(g)
+			if name == "" {
+				continue
+			}
+			key := strings.ToLower(name)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			options = append(options, name)
 		}
-		seen[key] = true
-		options = append(options, name)
 	}
 
 	current = strings.TrimSpace(current)
@@ -1151,6 +1275,9 @@ func (m Model) validateForm() error {
 	switch m.formAuthIdx {
 	case 0: // password - optional
 	case 1: // paste key
+		if m.appMode == appModeTeams && m.formTeamHostID != "" && m.formTeamCredentialMode == "per_member" {
+			return nil
+		}
 		pastedKey := strings.TrimSpace(m.formFields[ui.FFAuthDet].Value)
 		if pastedKey == "" {
 			return fmt.Errorf("\u26A0 Please paste your SSH private key or switch auth method")
@@ -1186,6 +1313,8 @@ func (m *Model) applySettingChange(idx int, action string) {
 	if m.appMode == appModeTeams {
 		switch idx {
 		case 0:
+			m.cfg.TeamsUI.WrapLabels = !m.cfg.TeamsUI.WrapLabels
+		case 1:
 			names := themeNames()
 			cur := themeIdx(m.cfg.TeamsUI.Theme)
 			if action == "left" {
@@ -1195,7 +1324,7 @@ func (m *Model) applySettingChange(idx int, action string) {
 			}
 			m.cfg.TeamsUI.Theme = names[cur]
 			m.syncModeAppearance()
-		case 1:
+		case 2:
 			iNames := iconSetNames()
 			cur := iconSetIdx(m.cfg.TeamsUI.IconSet)
 			if action == "left" {
@@ -1214,7 +1343,9 @@ func (m *Model) applySettingChange(idx int, action string) {
 		m.cfg.UI.VimMode = !m.cfg.UI.VimMode
 	case 1: // show icons
 		m.cfg.UI.ShowIcons = !m.cfg.UI.ShowIcons
-	case 2: // theme
+	case 2: // wrap labels
+		m.cfg.UI.WrapLabels = !m.cfg.UI.WrapLabels
+	case 3: // theme
 		names := themeNames()
 		cur := themeIdx(m.cfg.UI.Theme)
 		if action == "left" {
@@ -1224,7 +1355,7 @@ func (m *Model) applySettingChange(idx int, action string) {
 		}
 		m.cfg.UI.Theme = names[cur]
 		m.theme, m.themeIdx = ui.ThemeByName(m.cfg.UI.Theme)
-	case 3: // icon set
+	case 4: // icon set
 		iNames := iconSetNames()
 		cur := iconSetIdx(m.cfg.UI.IconSet)
 		if action == "left" {
@@ -1234,7 +1365,7 @@ func (m *Model) applySettingChange(idx int, action string) {
 		}
 		m.cfg.UI.IconSet = iNames[cur]
 		m.icons, m.iconIdx = ui.IconSetByName(m.cfg.UI.IconSet)
-	case 4: // host key policy
+	case 5: // host key policy
 		switch m.cfg.SSH.HostKeyPolicy {
 		case config.HostKeyAcceptNew:
 			m.cfg.SSH.HostKeyPolicy = config.HostKeyStrict
@@ -1243,13 +1374,13 @@ func (m *Model) applySettingChange(idx int, action string) {
 		default:
 			m.cfg.SSH.HostKeyPolicy = config.HostKeyAcceptNew
 		}
-	case 5: // keepalive - editable
+	case 6: // keepalive - editable
 		if action == "left" {
 			m.cfg.SSH.KeepAliveSeconds = max(10, m.cfg.SSH.KeepAliveSeconds-5)
 		} else if action == "right" {
 			m.cfg.SSH.KeepAliveSeconds = min(300, m.cfg.SSH.KeepAliveSeconds+5)
 		}
-	case 6: // TERM mode
+	case 7: // TERM mode
 		switch m.cfg.SSH.TermMode {
 		case config.TermAuto:
 			m.cfg.SSH.TermMode = config.TermXterm
@@ -1258,15 +1389,15 @@ func (m *Model) applySettingChange(idx int, action string) {
 		default:
 			m.cfg.SSH.TermMode = config.TermAuto
 		}
-	case 7: // TERM custom - editable
-	case 8: // password auto login
+	case 8: // TERM custom - editable
+	case 9: // password auto login
 		m.cfg.SSH.PasswordAutoLogin = !m.cfg.SSH.PasswordAutoLogin
 		if m.cfg.SSH.PasswordAutoLogin && (runtime.GOOS == "linux" || runtime.GOOS == "darwin") {
 			if err := ssh.CheckSSHPass(); err != nil {
 				m.err = fmt.Errorf("Tip: install sshpass for best password auto-login on %s", runtime.GOOS)
 			}
 		}
-	case 9: // password backend
+	case 10: // password backend
 		if runtime.GOOS != "windows" && m.cfg.SSH.PasswordAutoLogin {
 			switch m.cfg.SSH.PasswordBackendUnix {
 			case config.PasswordBackendSSHPassFirst:
@@ -1275,11 +1406,11 @@ func (m *Model) applySettingChange(idx int, action string) {
 				m.cfg.SSH.PasswordBackendUnix = config.PasswordBackendSSHPassFirst
 			}
 		}
-	case 10: // mount enabled
+	case 11: // mount enabled
 		m.cfg.Mount.Enabled = !m.cfg.Mount.Enabled
-	case 11: // mount remote path - editable
-	case 12: // mount local path - editable
-	case 13: // mount quit behavior
+	case 12: // mount remote path - editable
+	case 13: // mount local path - editable
+	case 14: // mount quit behavior
 		switch m.cfg.Mount.QuitBehavior {
 		case config.MountQuitPrompt:
 			m.cfg.Mount.QuitBehavior = config.MountQuitAlwaysUnmount
@@ -1288,7 +1419,7 @@ func (m *Model) applySettingChange(idx int, action string) {
 		default:
 			m.cfg.Mount.QuitBehavior = config.MountQuitPrompt
 		}
-	case 14: // sync enabled
+	case 15: // sync enabled
 		m.cfg.Sync.Enabled = !m.cfg.Sync.Enabled
 		if m.store != nil {
 			syncMgr, err := syncpkg.NewManager(&m.cfg, m.store, m.masterPassword)
@@ -1296,9 +1427,9 @@ func (m *Model) applySettingChange(idx int, action string) {
 				m.syncManager = syncMgr
 			}
 		}
-	case 15, 16, 17, 18: // sync repo/key/branch/local - editable
-	case 26: // manage tokens (opens token page)
-	case 27: // sync token definitions
+	case 16, 17, 18, 19: // sync repo/key/branch/local - editable
+	case 27: // manage tokens (opens token page)
+	case 28: // sync token definitions
 		if m.cfg.Sync.Enabled {
 			m.cfg.Automation.SyncTokenDefinitions = !m.cfg.Automation.SyncTokenDefinitions
 		}
@@ -1335,7 +1466,7 @@ func (m *Model) applySettingsEditValue(idx int, val string) bool {
 	}
 
 	switch idx {
-	case 5: // keepalive
+	case 6: // keepalive
 		n, err := strconv.Atoi(val)
 		if err != nil {
 			m.err = fmt.Errorf("keepalive must be a number")
@@ -1348,15 +1479,15 @@ func (m *Model) applySettingsEditValue(idx int, val string) bool {
 			n = 600
 		}
 		m.cfg.SSH.KeepAliveSeconds = n
-	case 7: // TERM custom
+	case 8: // TERM custom
 		m.cfg.SSH.TermCustom = val
-	case 11: // mount remote path
+	case 12: // mount remote path
 		if val != "" && !strings.HasPrefix(val, "/") {
 			m.err = fmt.Errorf("\u26A0 remote path must be absolute (start with /)")
 			return false
 		}
 		m.cfg.Mount.DefaultRemotePath = val
-	case 12: // local mount path
+	case 13: // local mount path
 		if val != "" {
 			if !strings.HasPrefix(val, "/") {
 				m.err = fmt.Errorf("\u26A0 mount path must be absolute (start with /)")
@@ -1374,33 +1505,147 @@ func (m *Model) applySettingsEditValue(idx int, val string) bool {
 			}
 		}
 		m.cfg.Mount.LocalMountPath = val
-	case 15: // sync repo
+	case 16: // sync repo
 		m.cfg.Sync.RepoURL = val
-	case 16: // sync key path
+	case 17: // sync key path
 		m.cfg.Sync.SSHKeyPath = val
-	case 17: // sync branch
+	case 18: // sync branch
 		if val == "" {
 			val = "main"
 		}
 		m.cfg.Sync.Branch = val
-	case 18: // sync local path
+	case 19: // sync local path
 		m.cfg.Sync.LocalPath = val
 	}
 	return true
 }
 
-func (m Model) buildTeamsViewParams() ui.TeamsViewParams {
-	currentTeam, _ := m.teamsCurrentTeam()
-	return ui.TeamsViewParams{
+func (m Model) buildTeamsViewParams() ui.TeamsHomeViewParams {
+	currentTeam, hasCurrentTeam := m.teamsCurrentTeam()
+	selectedHostID := ""
+	if host, ok := m.teamsCurrentHost(); ok {
+		selectedHostID = host.ID
+	}
+
+	type groupedHosts struct {
+		name  string
+		hosts []teams.TeamHost
+	}
+
+	groupMap := make(map[string][]teams.TeamHost)
+	groupNames := make([]string, 0)
+	seenGroups := make(map[string]bool)
+	for _, host := range m.teamsItems {
+		name := strings.TrimSpace(host.Group)
+		if name == "" {
+			name = "Ungrouped"
+		}
+		key := strings.ToLower(name)
+		if !seenGroups[key] {
+			seenGroups[key] = true
+			groupNames = append(groupNames, name)
+		}
+		groupMap[name] = append(groupMap[name], host)
+	}
+	sort.Slice(groupNames, func(i, j int) bool {
+		left := groupNames[i]
+		right := groupNames[j]
+		if left == "Ungrouped" {
+			return false
+		}
+		if right == "Ungrouped" {
+			return true
+		}
+		return strings.ToLower(left) < strings.ToLower(right)
+	})
+
+	items := make([]ui.TeamsHomeListItem, 0, len(m.teamsItems)+len(groupNames))
+	for _, groupName := range groupNames {
+		hosts := append([]teams.TeamHost(nil), groupMap[groupName]...)
+		sort.Slice(hosts, func(i, j int) bool {
+			leftLabel := strings.TrimSpace(hosts[i].Label)
+			if leftLabel == "" {
+				leftLabel = strings.TrimSpace(hosts[i].Hostname)
+			}
+			rightLabel := strings.TrimSpace(hosts[j].Label)
+			if rightLabel == "" {
+				rightLabel = strings.TrimSpace(hosts[j].Hostname)
+			}
+			if strings.EqualFold(leftLabel, rightLabel) {
+				return strings.ToLower(hosts[i].Hostname) < strings.ToLower(hosts[j].Hostname)
+			}
+			return strings.ToLower(leftLabel) < strings.ToLower(rightLabel)
+		})
+
+		items = append(items, ui.TeamsHomeListItem{
+			IsGroup:   true,
+			GroupName: groupName,
+			HostCount: len(hosts),
+		})
+		for _, host := range hosts {
+			lastConnected := ""
+			if host.LastConnectedAt != nil {
+				lastConnected = ui.FormatTimeAgo(time.UnixMilli(*host.LastConnectedAt))
+			}
+			items = append(items, ui.TeamsHomeListItem{
+				Label:              strings.TrimSpace(host.Label),
+				Hostname:           host.Hostname,
+				Username:           host.Username,
+				Port:               host.Port,
+				Group:              groupName,
+				CredentialMode:     strings.TrimSpace(host.CredentialMode),
+				CredentialType:     strings.TrimSpace(host.CredentialType),
+				LastConnectedLabel: lastConnected,
+				Tags:               append([]string(nil), host.Tags...),
+				Selected:           host.ID == selectedHostID,
+			})
+		}
+	}
+
+	summary := ui.TeamsHomeTeamSummary{
+		HostCount: len(m.teamsItems),
+		TeamCount: len(m.teamsList),
+	}
+	if hasCurrentTeam {
+		summary.Name = strings.TrimSpace(currentTeam.Name)
+		summary.Slug = strings.TrimSpace(currentTeam.Slug)
+		summary.Role = strings.TrimSpace(string(currentTeam.Role))
+	}
+
+	statusLines := make([]ui.TeamsHomeStatusLine, 0, 1)
+	if m.err != nil {
+		message := m.err.Error()
+		kind := "error"
+		switch {
+		case strings.HasPrefix(message, "\u2713"):
+			kind = "success"
+		case strings.HasPrefix(message, "\u26A0"):
+			kind = "warning"
+		case strings.HasPrefix(message, "\u2139"):
+			kind = "info"
+		}
+		statusLines = append(statusLines, ui.TeamsHomeStatusLine{
+			Kind:    kind,
+			Message: message,
+		})
+	}
+
+	footer := "enter create team  / search  ? commands  , settings  shift+tab cycle  T personal mode  q quit"
+	if m.profileSignedIn() && len(m.teamsList) > 0 {
+		footer = "a add  ctrl+1..9 switch team  / search  r refresh  , settings  shift+tab cycle  T personal mode  q quit"
+		if len(m.teamsItems) > 0 {
+			footer = "\u2191\u2193 nav  \u23CE connect  a add  e edit  d del  ctrl+1..9 switch team  / search  r refresh  , settings  shift+tab cycle  T personal mode  q quit"
+		}
+	}
+
+	return ui.TeamsHomeViewParams{
 		Page:         m.page,
-		ModeLabel:    m.modeLabel(),
-		State:        m.teamsState,
-		Err:          m.err,
 		SessionValid: m.profileSignedIn(),
-		CurrentTeam:  currentTeam,
-		Teams:        m.teamsList,
-		HostCursor:   m.teamsCursor,
-		Hosts:        m.teamsItems,
+		HasTeams:     len(m.teamsList) > 0,
+		CurrentTeam:  summary,
+		Items:        items,
+		StatusLines:  statusLines,
+		FooterText:   footer,
 	}
 }
 
@@ -1483,7 +1728,7 @@ func (m Model) buildSearchResults() []ui.SearchResultItem {
 	for _, it := range m.spotlightItems {
 		switch it.Kind {
 		case SpotlightItemHost:
-			if m.appMode == appModeTeams {
+			if m.appMode == appModeTeams && !m.teamsImportMode {
 				lbl := it.TeamHost.Label
 				if lbl == "" {
 					lbl = it.TeamHost.Hostname

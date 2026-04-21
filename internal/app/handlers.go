@@ -12,6 +12,7 @@ import (
 	"github.com/Vansh-Raja/SSHThing/internal/db"
 	"github.com/Vansh-Raja/SSHThing/internal/ssh"
 	syncpkg "github.com/Vansh-Raja/SSHThing/internal/sync"
+	"github.com/Vansh-Raja/SSHThing/internal/teams"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
 	"github.com/Vansh-Raja/SSHThing/internal/unlock"
 	tea "github.com/charmbracelet/bubbletea"
@@ -41,6 +42,8 @@ func (m Model) handleOverlayKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleDeleteGroupKeys(msg)
 	case OverlayQuit:
 		return m.handleQuitKeys(msg)
+	case OverlayImportHost:
+		return m.handleImportConflictKeys(msg)
 	}
 	return m, nil
 }
@@ -206,12 +209,17 @@ func (m Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		m.overlay = OverlayNone
+		if m.teamsImportMode {
+			m.overlay = OverlayAddHost
+		} else {
+			m.overlay = OverlayNone
+		}
 		m.searchQuery = ""
 		m.spotlightItems = nil
 		m.armedSFTP = false
 		m.armedMount = false
 		m.armedUnmount = false
+		m.teamsImportMode = false
 		return m, nil
 
 	case "S":
@@ -275,6 +283,12 @@ func (m Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		item, ok := m.selectedSpotlightItem()
 		if !ok {
 			return m, nil
+		}
+		if m.teamsImportMode {
+			if item.Kind != SpotlightItemHost {
+				return m, nil
+			}
+			return m.importPersonalHostToCurrentTeam(item.Host)
 		}
 		if item.Kind == SpotlightItemCommand {
 			m.overlay = OverlayNone
@@ -472,11 +486,87 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		groupName := m.modalSelectedGroupName()
 		tags := db.ParseTagInput(m.formFields[ui.FFTags].Value)
-		if groupName != "" {
+		if m.appMode != appModeTeams && groupName != "" {
 			if err := m.store.UpsertGroup(groupName); err != nil {
 				m.err = err
 				return m, nil
 			}
+		}
+
+		if m.appMode == appModeTeams {
+			team, ok := m.teamsCurrentTeam()
+			if !ok {
+				m.err = fmt.Errorf("no team selected")
+				return m, nil
+			}
+			accessToken, err := m.teamsAccessToken(context.Background())
+			if err != nil {
+				m.err = err
+				return m, nil
+			}
+
+			credentialType := "none"
+			sharedCredential := ""
+			switch m.formAuthIdx {
+			case 0:
+				credentialType = "password"
+				sharedCredential = plainKey
+			case 1, 2:
+				credentialType = "private_key"
+				sharedCredential = plainKey
+			}
+
+			if m.formTeamHostID != "" {
+				req := teams.UpdateTeamHostRequest{
+					Label:            strings.TrimSpace(m.formFields[ui.FFLabel].Value),
+					Hostname:         m.formFields[ui.FFHostname].Value,
+					Username:         m.formFields[ui.FFUsername].Value,
+					Port:             portInt,
+					Group:            groupName,
+					Tags:             tags,
+					CredentialMode:   m.formTeamCredentialMode,
+					CredentialType:   m.formTeamCredentialType,
+					SecretVisibility: "revealed_to_access_holders",
+				}
+				if m.formTeamCredentialMode != "per_member" {
+					req.CredentialType = credentialType
+					req.CredentialMode = "shared"
+					req.SharedCredential = sharedCredential
+				}
+				err = m.teamsClient.UpdateTeamHost(context.Background(), accessToken, m.formTeamHostID, req)
+			} else {
+				_, err = m.teamsClient.CreateTeamHost(context.Background(), accessToken, team.ID, teams.CreateTeamHostRequest{
+					Label:            strings.TrimSpace(m.formFields[ui.FFLabel].Value),
+					Hostname:         m.formFields[ui.FFHostname].Value,
+					Username:         m.formFields[ui.FFUsername].Value,
+					Port:             portInt,
+					Group:            groupName,
+					Tags:             tags,
+					CredentialMode:   "shared",
+					CredentialType:   credentialType,
+					SecretVisibility: "revealed_to_access_holders",
+					SharedCredential: sharedCredential,
+				})
+			}
+			if err != nil {
+				m.err = err
+				return m, nil
+			}
+			label := strings.TrimSpace(m.formFields[ui.FFLabel].Value)
+			if label == "" {
+				label = m.formFields[ui.FFHostname].Value
+			}
+			if err := m.loadCurrentTeamHosts(context.Background()); err != nil {
+				m.err = err
+				return m, nil
+			}
+			if m.formTeamHostID != "" {
+				m.err = fmt.Errorf("\u2713 Team host '%s' updated", label)
+			} else {
+				m.err = fmt.Errorf("\u2713 Team host '%s' added", label)
+			}
+			m.closeAddHostOverlay()
+			return m, nil
 		}
 
 		if m.formEditIdx < 0 {
@@ -535,8 +625,7 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.loadHosts()
 		m.loadGroups()
 		m.rebuildListItems()
-		m.overlay = OverlayNone
-		m.formFields = nil
+		m.closeAddHostOverlay()
 		return m, nil
 	}
 
@@ -554,7 +643,11 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	cycleAuth := func(dir int) {
+		if m.appMode == appModeTeams && m.formTeamCredentialMode == "per_member" {
+			return
+		}
 		m.formAuthIdx = (m.formAuthIdx + dir + len(m.formAuthOpts)) % len(m.formAuthOpts)
+		m.formSecretRevealed = false
 	}
 
 	formOrder := []int{ui.FFLabel, ui.FFGroup, ui.FFTags, ui.FFHostname, ui.FFPort, ui.FFUsername, ui.FFAuthMeth, ui.FFAuthDet, ui.FFSave}
@@ -574,8 +667,7 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.formEditing = false
 			return m, nil
 		}
-		m.overlay = OverlayNone
-		m.formFields = nil
+		m.closeAddHostOverlay()
 		return m, nil
 
 	case tea.KeyTab, tea.KeyDown:
@@ -583,6 +675,7 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		idx := findIdx(m.formFocus)
 		idx = (idx + 1) % len(formOrder)
 		m.formFocus = formOrder[idx]
+		m.ensureFormFocusVisible()
 		return m, nil
 
 	case tea.KeyShiftTab, tea.KeyUp:
@@ -590,6 +683,7 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		idx := findIdx(m.formFocus)
 		idx = (idx - 1 + len(formOrder)) % len(formOrder)
 		m.formFocus = formOrder[idx]
+		m.ensureFormFocusVisible()
 		return m, nil
 
 	case tea.KeyLeft:
@@ -617,11 +711,16 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return submitAndClose()
 		}
 		if isTextField(m.formFocus) {
+			if m.appMode == appModeTeams && m.formTeamCredentialMode == "per_member" && m.formFocus == ui.FFAuthDet {
+				m.err = fmt.Errorf("ℹ per-member credentials are not editable from Teams TUI yet")
+				return m, nil
+			}
 			if m.formEditing {
 				m.formEditing = false
 			} else {
 				m.formEditing = true
 			}
+			m.ensureFormFocusVisible()
 			return m, nil
 		}
 		// For group/auth selectors, enter could submit
@@ -631,6 +730,7 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.formEditing && isTextField(m.formFocus) {
 			m.formFields[m.formFocus].DeleteBack()
 		}
+		m.ensureFormFocusVisible()
 		return m, nil
 	}
 
@@ -639,11 +739,30 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		for _, r := range msg.Runes {
 			m.formFields[m.formFocus].InsertRune(r)
 		}
+		m.ensureFormFocusVisible()
 		return m, nil
 	}
 
 	// Spacebar for key gen type cycling
 	str := msg.String()
+	if str == "v" && m.formAuthIdx == 1 && !m.formEditing {
+		m.formSecretRevealed = !m.formSecretRevealed
+		m.ensureFormFocusVisible()
+		return m, nil
+	}
+	if str == "c" && m.formAuthIdx == 1 && !m.formEditing {
+		secret := strings.TrimSpace(m.formFields[ui.FFAuthDet].Value)
+		if secret == "" {
+			m.err = fmt.Errorf("no private key to copy")
+			return m, nil
+		}
+		if err := copyTokenToClipboard(secret); err != nil {
+			m.err = fmt.Errorf("failed to copy private key: %v", err)
+		} else {
+			m.err = fmt.Errorf("\u2713 private key copied to clipboard")
+		}
+		return m, nil
+	}
 	if str == " " && m.formFocus == ui.FFAuthDet && m.formAuthIdx == 2 {
 		m.formKeyIdx = (m.formKeyIdx + 1) % len(m.formKeyTypes)
 		return m, nil
@@ -666,13 +785,102 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.appMode == appModeTeams && !m.formEditing && m.formTeamHostID == "" && str == "I" {
+		m.teamsImportMode = true
+		m.overlay = OverlaySearch
+		m.searchQuery = ""
+		m.spotlightItems = m.buildSpotlightItems("")
+		m.selectedIdx = 0
+		m.err = fmt.Errorf("select a personal host to import into this team")
+		return m, nil
+	}
+
 	return m, nil
+}
+
+func (m *Model) closeAddHostOverlay() {
+	m.overlay = OverlayNone
+	m.formFields = nil
+	m.formEditIdx = -1
+	m.formScrollOffset = 0
+	m.formSecretRevealed = false
+	m.formTeamHostID = ""
+	m.formTeamCredentialMode = ""
+	m.formTeamCredentialType = ""
+	m.teamsImportMode = false
+	m.teamsImportConflict = nil
+}
+
+func (m *Model) ensureFormFocusVisible() {
+	available := m.height - 8
+	if available < 8 {
+		available = 8
+	}
+
+	lineForFocus := 0
+	switch m.formFocus {
+	case ui.FFLabel:
+		lineForFocus = 0
+	case ui.FFGroup:
+		lineForFocus = 2
+	case ui.FFTags:
+		lineForFocus = 4
+	case ui.FFHostname, ui.FFPort:
+		lineForFocus = 7
+	case ui.FFUsername:
+		lineForFocus = 10
+	case ui.FFAuthMeth:
+		lineForFocus = 12
+	case ui.FFAuthDet:
+		lineForFocus = 14
+		if m.formAuthIdx == 1 && m.formSecretRevealed {
+			lineForFocus += 3
+		}
+	case ui.FFSave:
+		lineForFocus = 18
+	}
+
+	if m.formScrollOffset > lineForFocus {
+		m.formScrollOffset = lineForFocus
+	}
+	if lineForFocus >= m.formScrollOffset+available {
+		m.formScrollOffset = lineForFocus - available + 1
+	}
+	if m.formScrollOffset < 0 {
+		m.formScrollOffset = 0
+	}
 }
 
 // ── Delete host overlay ───────────────────────────────────────────────
 
 func (m Model) handleDeleteHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	doDelete := func() Model {
+		if m.appMode == appModeTeams {
+			host, ok := m.teamsCurrentHost()
+			if !ok {
+				m.overlay = OverlayNone
+				return m
+			}
+			accessToken, err := m.teamsAccessToken(context.Background())
+			if err != nil {
+				m.err = err
+				return m
+			}
+			if err := m.teamsClient.DeleteTeamHost(context.Background(), accessToken, host.ID); err != nil {
+				m.err = err
+				return m
+			}
+			m.err = fmt.Errorf("\u2713 Host '%s' deleted", host.Hostname)
+			if err := m.loadCurrentTeamHosts(context.Background()); err != nil {
+				m.err = err
+				return m
+			}
+			if m.teamsCursor >= len(m.teamsItems) && len(m.teamsItems) > 0 {
+				m.teamsCursor = len(m.teamsItems) - 1
+			}
+			m.overlay = OverlayNone
+			return m
+		}
 		if host, ok := m.selectedHost(); ok {
 			if err := m.store.DeleteHost(host.ID); err != nil {
 				m.err = err
@@ -1644,7 +1852,7 @@ func (m *Model) initAddHostForm(label, groupName, tags, hostname, username, port
 	if authIdx == 0 {
 		m.formFields[ui.FFAuthDet] = ui.NewMaskedField("password")
 	} else {
-		m.formFields[ui.FFAuthDet] = ui.NewFormField("key")
+		m.formFields[ui.FFAuthDet] = ui.NewMaskedField("key")
 		m.formFields[ui.FFAuthDet].SetValue(existingKey)
 	}
 
@@ -1663,4 +1871,9 @@ func (m *Model) initAddHostForm(label, groupName, tags, hostname, username, port
 	m.formKeyIdx = keyIdx
 	m.formFocus = ui.FFLabel
 	m.formEditing = false
+	m.formScrollOffset = 0
+	m.formSecretRevealed = false
+	m.formTeamHostID = ""
+	m.formTeamCredentialMode = ""
+	m.formTeamCredentialType = ""
 }

@@ -4,8 +4,8 @@ import "testing"
 
 func TestDefaultTeamsSettings(t *testing.T) {
 	cfg := Default()
-	if cfg.Version != 4 {
-		t.Fatalf("expected version 4, got %d", cfg.Version)
+	if cfg.Version != 5 {
+		t.Fatalf("expected version 5, got %d", cfg.Version)
 	}
 	if cfg.Teams.Enabled {
 		t.Fatalf("expected teams disabled by default")
@@ -18,6 +18,12 @@ func TestDefaultTeamsSettings(t *testing.T) {
 	}
 	if cfg.TeamsUI.Theme == "" || cfg.TeamsUI.IconSet == "" {
 		t.Fatalf("expected teams UI defaults")
+	}
+	if cfg.UI.WrapLabels {
+		t.Fatalf("expected personal wrap labels off by default")
+	}
+	if cfg.TeamsUI.WrapLabels {
+		t.Fatalf("expected teams wrap labels off by default")
 	}
 }
 
@@ -57,8 +63,8 @@ func TestWithDefaultsMigratesTeamsVersion(t *testing.T) {
 	cfg.Version = 2
 
 	got := withDefaults(cfg)
-	if got.Version != 4 {
-		t.Fatalf("expected migration to version 4, got %d", got.Version)
+	if got.Version != 5 {
+		t.Fatalf("expected migration to version 5, got %d", got.Version)
 	}
 	if !got.Teams.SessionCacheEnabled {
 		t.Fatalf("expected session cache enabled after migration")

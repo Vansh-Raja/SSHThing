@@ -115,47 +115,45 @@ func (c *Client) ListTeamHosts(ctx context.Context, accessToken, teamID string) 
 	return out, err
 }
 
-func (c *Client) CurrentWorkspace(ctx context.Context, accessToken string) (teams.WorkspaceSummary, error) {
-	var out teams.WorkspaceSummary
-	err := c.doJSON(ctx, http.MethodGet, "/api/teams/workspaces/current", accessToken, nil, &out)
+func (c *Client) CreateTeamHost(ctx context.Context, accessToken, teamID string, req teams.CreateTeamHostRequest) (teams.TeamHost, error) {
+	var out teams.TeamHost
+	err := c.doJSON(ctx, http.MethodPost, "/api/teams/"+url.PathEscape(teamID)+"/hosts", accessToken, req, &out)
 	return out, err
 }
 
-func (c *Client) ListVaults(ctx context.Context, accessToken string) ([]teams.Vault, error) {
-	var out []teams.Vault
-	err := c.doJSON(ctx, http.MethodGet, "/api/teams/vaults", accessToken, nil, &out)
+func (c *Client) GetTeamHost(ctx context.Context, accessToken, hostID string) (teams.TeamHostDetail, error) {
+	var out teams.TeamHostDetail
+	err := c.doJSON(ctx, http.MethodGet, "/api/teams/hosts/"+url.PathEscape(hostID), accessToken, nil, &out)
 	return out, err
 }
 
-func (c *Client) ListResources(ctx context.Context, accessToken, vaultID string) ([]teams.Resource, error) {
-	var out []teams.Resource
-	path := "/api/teams/resources?vaultId=" + url.QueryEscape(vaultID)
-	err := c.doJSON(ctx, http.MethodGet, path, accessToken, nil, &out)
-	return out, err
+func (c *Client) UpdateTeamHost(ctx context.Context, accessToken, hostID string, req teams.UpdateTeamHostRequest) error {
+	body := map[string]any{
+		"label":            req.Label,
+		"hostname":         req.Hostname,
+		"username":         req.Username,
+		"port":             req.Port,
+		"group":            req.Group,
+		"tags":             req.Tags,
+		"credentialMode":   req.CredentialMode,
+		"credentialType":   req.CredentialType,
+		"secretVisibility": req.SecretVisibility,
+	}
+	if req.ClearSharedCredential {
+		body["sharedCredential"] = nil
+	} else if req.SharedCredential != "" {
+		body["sharedCredential"] = req.SharedCredential
+	}
+	return c.doJSON(ctx, http.MethodPatch, "/api/teams/hosts/"+url.PathEscape(hostID), accessToken, body, nil)
 }
 
-func (c *Client) ListMembers(ctx context.Context, accessToken, vaultID string) ([]teams.Member, error) {
-	var out []teams.Member
-	path := "/api/teams/members?vaultId=" + url.QueryEscape(vaultID)
-	err := c.doJSON(ctx, http.MethodGet, path, accessToken, nil, &out)
-	return out, err
+func (c *Client) DeleteTeamHost(ctx context.Context, accessToken, hostID string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/api/teams/hosts/"+url.PathEscape(hostID), accessToken, nil, nil)
 }
 
-func (c *Client) InviteMember(ctx context.Context, accessToken string, req teams.InviteRequest) error {
-	return c.doJSON(ctx, http.MethodPost, "/api/teams/invites", accessToken, req, nil)
-}
-
-func (c *Client) UpdateMemberRole(ctx context.Context, accessToken, memberID string, req teams.UpdateMemberRoleRequest) error {
-	return c.doJSON(ctx, http.MethodPatch, "/api/teams/vault-members/"+url.PathEscape(memberID), accessToken, req, nil)
-}
-
-func (c *Client) RemoveMember(ctx context.Context, accessToken, memberID string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/api/teams/members/"+url.PathEscape(memberID), accessToken, nil, nil)
-}
-
-func (c *Client) ConnectResource(ctx context.Context, accessToken, resourceID string) (teams.ConnectResponse, error) {
-	var out teams.ConnectResponse
-	err := c.doJSON(ctx, http.MethodPost, "/api/teams/resources/"+url.PathEscape(resourceID)+"/connect", accessToken, map[string]any{}, &out)
+func (c *Client) GetTeamHostConnectConfig(ctx context.Context, accessToken, hostID string) (teams.TeamHostConnectConfig, error) {
+	var out teams.TeamHostConnectConfig
+	err := c.doJSON(ctx, http.MethodPost, "/api/teams/hosts/"+url.PathEscape(hostID)+"/connect-config", accessToken, map[string]any{}, &out)
 	return out, err
 }
 

@@ -48,10 +48,42 @@ type HomeListItem struct {
 	LastConnected *time.Time
 }
 
-// RenderHomeView renders the three-panel home layout (list + detail + sidebar).
-func (r *Renderer) RenderHomeView(p HomeViewParams) string {
+func (r *Renderer) renderListEntry(prefix string, label string, style lipgloss.Style, width int) []string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return []string{prefix}
+	}
+	if width <= 0 {
+		width = 1
+	}
+	if !r.WrapLabels {
+		return []string{prefix + style.Render(r.TruncStr(label, width))}
+	}
+
+	rawLines := wrapPlainTextLines(label, width)
+	indent := strings.Repeat(" ", lipgloss.Width(prefix))
+	lines := make([]string, 0, len(rawLines))
+	for i, line := range rawLines {
+		line = style.Render(strings.TrimRight(line, " "))
+		if i == 0 {
+			lines = append(lines, prefix+line)
+		} else {
+			lines = append(lines, indent+line)
+		}
+	}
+	return lines
+}
+
+type homeFrameLayout struct {
+	listW      int
+	gapW       int
+	detailW    int
+	bodyH      int
+	narrowMode bool
+}
+
+func (r *Renderer) buildHomeFrameLayout(notifCount int) homeFrameLayout {
 	cw := r.PageContentWidth()
-	pad := r.LeftPad()
 
 	listW := cw * 30 / 100
 	if listW < 24 {
@@ -67,7 +99,66 @@ func (r *Renderer) RenderHomeView(p HomeViewParams) string {
 		bodyH = 4
 	}
 
-	// Pre-calculate notification lines so body can shrink to fit
+	bodyH -= notifCount
+	if bodyH < 4 {
+		bodyH = 4
+	}
+
+	return homeFrameLayout{
+		listW:      listW,
+		gapW:       gapW,
+		detailW:    detailW,
+		bodyH:      bodyH,
+		narrowMode: r.W < 70,
+	}
+}
+
+func (r *Renderer) renderHomeBody(listBlock string, detailBlock string, layout homeFrameLayout, page int) string {
+	body := listBlock
+	if !layout.narrowMode {
+		gapBlock := lipgloss.NewStyle().Width(layout.gapW).Render(strings.Repeat("\n", layout.bodyH))
+		body = lipgloss.JoinHorizontal(lipgloss.Top, listBlock, gapBlock, detailBlock)
+	}
+
+	if r.ShowSidebar() {
+		sidebar := r.RenderSidebar(layout.bodyH, page)
+		sideGap := lipgloss.NewStyle().Width(2).Render(strings.Repeat("\n", layout.bodyH))
+		body = lipgloss.JoinHorizontal(lipgloss.Top, body, sideGap, sidebar)
+	}
+	return body
+}
+
+func (r *Renderer) renderHomeFrame(header string, body string, notifLines []string, footerText string) string {
+	pad := r.LeftPad()
+	filtered := make([]string, 0, len(notifLines))
+	for _, line := range notifLines {
+		line = strings.TrimRight(line, "\n")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+
+	inner := header + "\n\n" + body + "\n\n"
+	if len(filtered) > 0 {
+		inner += strings.Join(filtered, "\n") + "\n"
+	}
+	inner += r.RenderFooter(footerText)
+	return r.PadContent(inner, pad)
+}
+
+func (r *Renderer) padListLines(lines []string, bodyH int) string {
+	for len(lines) < bodyH {
+		lines = append(lines, "")
+	}
+	if len(lines) > bodyH {
+		lines = lines[:bodyH]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// RenderHomeView renders the three-panel home layout (list + detail + sidebar).
+func (r *Renderer) RenderHomeView(p HomeViewParams) string {
 	notifCount := 0
 	if p.Err != nil {
 		notifCount++
@@ -75,9 +166,7 @@ func (r *Renderer) RenderHomeView(p HomeViewParams) string {
 	if p.SyncActivity != nil && p.SyncActivity.Active {
 		notifCount++
 	}
-	bodyH -= notifCount
-
-	narrowMode := r.W < 70
+	layout := r.buildHomeFrameLayout(notifCount)
 
 	// list column
 	var listLines []string
@@ -91,7 +180,7 @@ func (r *Renderer) RenderHomeView(p HomeViewParams) string {
 				prefix = lipgloss.NewStyle().Foreground(r.Theme.Accent).Render("  " + r.Icons.Focused + " ")
 			}
 			listLines = append(listLines, "")
-			listLines = append(listLines, prefix+nameStyle.Render(r.Icons.Add+" new group"))
+			listLines = append(listLines, r.renderListEntry(prefix, r.Icons.Add+" new group", nameStyle, layout.listW-6)...)
 		} else if item.IsGroup {
 			arrow := r.Icons.Expanded
 			if item.Collapsed {
@@ -107,7 +196,12 @@ func (r *Renderer) RenderHomeView(p HomeViewParams) string {
 				arrowR = lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(arrow)
 			}
 			listLines = append(listLines, "")
-			listLines = append(listLines, arrowR+" "+nameStyle.Render(item.GroupName)+countStr)
+			groupPrefix := arrowR + " "
+			groupLines := r.renderListEntry(groupPrefix, item.GroupName, nameStyle, layout.listW-lipgloss.Width(groupPrefix)-4)
+			if len(groupLines) > 0 {
+				groupLines[0] += countStr
+			}
+			listLines = append(listLines, groupLines...)
 		} else {
 			prefix := "    "
 			nameStyle := lipgloss.NewStyle().Foreground(r.Theme.Subtext)
@@ -127,63 +221,36 @@ func (r *Renderer) RenderHomeView(p HomeViewParams) string {
 				prefix = lipgloss.NewStyle().Foreground(r.Theme.Accent).Render("  " + r.Icons.Focused + " ")
 			}
 
-			maxLblW := listW - 10
-			if narrowMode {
+			maxLblW := layout.listW - 10
+			if layout.narrowMode {
 				maxLblW = r.W - 16
 			}
-			lbl := r.TruncStr(item.Label, maxLblW)
+			lbl := strings.TrimSpace(item.Label)
 			if lbl == "" {
-				lbl = r.TruncStr(item.Hostname, maxLblW)
+				lbl = item.Hostname
 			}
-
-			listLines = append(listLines, prefix+dot+" "+nameStyle.Render(lbl))
+			entryPrefix := prefix + dot + " "
+			listLines = append(listLines, r.renderListEntry(entryPrefix, lbl, nameStyle, maxLblW)...)
 		}
 	}
 
-	for len(listLines) < bodyH {
-		listLines = append(listLines, "")
-	}
-	if len(listLines) > bodyH {
-		listLines = listLines[:bodyH]
-	}
-
-	listBlock := lipgloss.NewStyle().Width(listW).Render(strings.Join(listLines, "\n"))
-
-	// body
-	var body string
-	if narrowMode {
-		body = listBlock
-	} else {
-		detailBlock := lipgloss.NewStyle().Width(detailW).Foreground(r.Theme.Subtext).
-			Render(r.renderDetail(p, detailW, bodyH))
-		gapBlock := lipgloss.NewStyle().Width(gapW).Render(strings.Repeat("\n", bodyH))
-		body = lipgloss.JoinHorizontal(lipgloss.Top, listBlock, gapBlock, detailBlock)
-	}
-
-	// sidebar
-	if r.ShowSidebar() {
-		sidebar := r.RenderSidebar(bodyH, p.Page)
-		sideGap := lipgloss.NewStyle().Width(2).Render(strings.Repeat("\n", bodyH))
-		body = lipgloss.JoinHorizontal(lipgloss.Top, body, sideGap, sidebar)
-	}
-
-	// footer keybind bar — always visible
-	footerText := r.RenderFooter("\u2191\u2193 nav  \u23CE connect  S sftp  M mount  Y sync  / search  a add  e edit  d del  , settings  ? help  q quit")
+	listBlock := lipgloss.NewStyle().Width(layout.listW).Render(r.padListLines(listLines, layout.bodyH))
+	detailBlock := lipgloss.NewStyle().Width(layout.detailW).Foreground(r.Theme.Subtext).
+		Render(r.renderDetail(p, layout.detailW, layout.bodyH))
+	body := r.renderHomeBody(listBlock, detailBlock, layout, p.Page)
 
 	// notification area above footer (err + sync status)
-	var notifLine string
+	var notifLines []string
 	if p.Err != nil {
-		notifLine += r.renderErrLine(p.Err) + "\n"
+		notifLines = append(notifLines, r.renderErrLine(p.Err))
 	}
 	if p.SyncActivity != nil && p.SyncActivity.Active {
-		notifLine += r.renderSyncFooter(p.SyncActivity) + "\n"
+		notifLines = append(notifLines, r.renderSyncFooter(p.SyncActivity))
 	}
 
 	headerLine := r.RenderHeader("", p.HostCount, p.Connected)
-	inner := headerLine + "\n\n" + body + "\n\n" + notifLine + footerText
-	padded := r.PadContent(inner, pad)
-
-	return padded
+	footerText := "\u2191\u2193 nav  \u23CE connect  S sftp  M mount  Y sync  / search  a add  e edit  d del  , settings  ? help  q quit"
+	return r.renderHomeFrame(headerLine, body, notifLines, footerText)
 }
 
 func (r *Renderer) renderDetail(p HomeViewParams, w, h int) string {

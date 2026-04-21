@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -90,6 +91,7 @@ func (r *Renderer) RenderInput(f FormField, focused bool, width int, blink bool,
 	}
 
 	isEditing := focused && editing
+	contentWidth := max(1, width-3)
 
 	if isEditing {
 		runes := []rune(val)
@@ -97,14 +99,36 @@ func (r *Renderer) RenderInput(f FormField, focused bool, width int, blink bool,
 		if cur > len(runes) {
 			cur = len(runes)
 		}
-		before := lipgloss.NewStyle().Foreground(textColor).Render(string(runes[:cur]))
-		cursorChar := " "
-		afterStart := cur
-		if cur < len(runes) {
-			cursorChar = string(runes[cur])
-			afterStart = cur + 1
+		start := 0
+		if cur > contentWidth-1 {
+			start = cur - (contentWidth - 1)
 		}
-		after := lipgloss.NewStyle().Foreground(textColor).Render(string(runes[afterStart:]))
+		if start > len(runes) {
+			start = len(runes)
+		}
+		end := min(len(runes), start+contentWidth)
+		view := runes[start:end]
+		localCur := cur - start
+		if localCur < 0 {
+			localCur = 0
+		}
+		if localCur > len(view) {
+			localCur = len(view)
+		}
+		before := lipgloss.NewStyle().Foreground(textColor).Render(string(view[:localCur]))
+		cursorChar := " "
+		afterStart := localCur
+		if localCur < len(view) {
+			cursorChar = string(view[localCur])
+			afterStart = localCur + 1
+		}
+		after := lipgloss.NewStyle().Foreground(textColor).Render(string(view[afterStart:]))
+		if start > 0 {
+			before = lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(r.Icons.Truncation) + before
+		}
+		if end < len(runes) {
+			after += lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(r.Icons.Truncation)
+		}
 		var cursorStyled string
 		if blink {
 			cursorStyled = lipgloss.NewStyle().Foreground(r.Theme.Base).Background(r.Theme.Accent).Render(cursorChar)
@@ -114,13 +138,65 @@ func (r *Renderer) RenderInput(f FormField, focused bool, width int, blink bool,
 		return "  " + bar + before + cursorStyled + after
 	}
 
-	displayVal := lipgloss.NewStyle().Foreground(textColor).Render(val)
+	display := val
+	if utf8.RuneCountInString(display) > contentWidth {
+		display = r.TruncStr(display, contentWidth)
+	}
+	displayVal := lipgloss.NewStyle().Foreground(textColor).Render(display)
 	if focused {
 		underline := lipgloss.NewStyle().Foreground(r.Theme.Accent).Render("_")
 		return "  " + bar + displayVal + underline
 	}
 
 	return "  " + bar + displayVal
+}
+
+func (r *Renderer) RenderSecretPreview(value string, width int, revealed bool, maxLines int) []string {
+	if width < 12 {
+		width = 12
+	}
+	if maxLines < 1 {
+		maxLines = 1
+	}
+	if strings.TrimSpace(value) == "" {
+		return []string{"  " + lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("[empty key]")}
+	}
+	if !revealed {
+		runeCount := utf8.RuneCountInString(value)
+		message := fmt.Sprintf("[private key hidden · %d chars]", runeCount)
+		if utf8.RuneCountInString(message) > width {
+			message = r.TruncStr(message, width)
+		}
+		return []string{"  " + lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(message)}
+	}
+
+	rawLines := strings.Split(strings.TrimRight(value, "\n"), "\n")
+	lines := make([]string, 0, maxLines)
+	truncated := false
+	for lineIdx, raw := range rawLines {
+		wrappedLines := wrapPlainTextLines(raw, width)
+		for wrapIdx, wrapped := range wrappedLines {
+			if len(lines) >= maxLines {
+				truncated = true
+				break
+			}
+			lines = append(lines, "  "+lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render(wrapped))
+			if len(lines) == maxLines && (wrapIdx < len(wrappedLines)-1 || lineIdx < len(rawLines)-1) {
+				truncated = true
+				break
+			}
+		}
+		if len(lines) >= maxLines {
+			break
+		}
+	}
+	if len(lines) == 0 {
+		lines = append(lines, "  "+lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("[empty key]"))
+	}
+	if truncated && len(lines) > 0 {
+		lines[maxLines-1] = lines[maxLines-1] + lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(" "+r.Icons.Truncation)
+	}
+	return lines
 }
 
 // RenderModalField renders a field for modal overlays (always-editing when focused).
