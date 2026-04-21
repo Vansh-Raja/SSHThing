@@ -115,7 +115,7 @@ mkdir -p "$worktrees_root" "$state_dir"
 
 git -C "$repo_dir" fetch origin "$branch"
 
-if [[ ! -d "$worktree_dir/.git" ]]; then
+if [[ ! -e "$worktree_dir/.git" ]]; then
   git -C "$repo_dir" worktree add -B "$deploy_branch" "$worktree_dir" "origin/$branch"
 else
   git -C "$worktree_dir" fetch origin "$branch"
