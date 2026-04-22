@@ -161,7 +161,7 @@ gh attestation verify sshthing-windows-amd64.zip --repo Vansh-Raja/SSHThing
 SSHThing now supports an opt-in `beta` release feed alongside the default stable feed.
 
 - Stable releases continue to use normal GitHub releases from tags like `v2.0.3`
-- Beta releases use GitHub prereleases from tags like `v2.1.0-beta.1`
+- Beta releases use GitHub prereleases from tags like `v2.1.0-beta.3`
 - Stable remains the default for all users
 
 To opt in from the TUI:
@@ -199,13 +199,13 @@ That formula intentionally conflicts with the stable `sshthing` formula so your 
 
 To install a beta build manually, use the prerelease tag URL instead of the stable `latest` release endpoint:
 
-- Release page: `https://github.com/Vansh-Raja/SSHThing/releases/tag/v2.1.0-beta.1`
-- Windows installer: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.1/sshthing-setup-windows-amd64.exe`
-- Windows portable zip: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.1/sshthing-windows-amd64.zip`
-- macOS Apple Silicon zip: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.1/sshthing-macos-arm64.zip`
-- macOS Intel zip: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.1/sshthing-macos-amd64.zip`
-- Linux amd64 tarball: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.1/sshthing-linux-amd64.tar.gz`
-- Linux arm64 tarball: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.1/sshthing-linux-arm64.tar.gz`
+- Release page: `https://github.com/Vansh-Raja/SSHThing/releases/tag/v2.1.0-beta.3`
+- Windows installer: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.3/sshthing-setup-windows-amd64.exe`
+- Windows portable zip: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.3/sshthing-windows-amd64.zip`
+- macOS Apple Silicon zip: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.3/sshthing-macos-arm64.zip`
+- macOS Intel zip: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.3/sshthing-macos-amd64.zip`
+- Linux amd64 tarball: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.3/sshthing-linux-amd64.tar.gz`
+- Linux arm64 tarball: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.3/sshthing-linux-arm64.tar.gz`
 
 Recommended beta install path for coworkers:
 
@@ -220,8 +220,8 @@ Recommended beta install path for coworkers:
 To publish a beta build from GitHub Actions, push an explicit beta tag:
 
 ```bash
-git tag v2.1.0-beta.1
-git push origin v2.1.0-beta.1
+git tag v2.1.0-beta.3
+git push origin v2.1.0-beta.3
 ```
 
 That tag runs `.github/workflows/release-beta.yml` and publishes a GitHub prerelease with the same platform asset names the updater already expects.
