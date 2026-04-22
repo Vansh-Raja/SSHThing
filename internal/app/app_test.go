@@ -143,6 +143,18 @@ func TestCloudServiceBaseURLSupportsEnvOverride(t *testing.T) {
 	}
 }
 
+func TestCloudServiceBaseURLUsesEmbeddedDefaultWhenEnvMissing(t *testing.T) {
+	original := defaultCloudBaseURL
+	defaultCloudBaseURL = "https://testsshthing.vanshraja.me/"
+	t.Cleanup(func() {
+		defaultCloudBaseURL = original
+	})
+
+	if got := cloudServiceBaseURL(); got != "https://testsshthing.vanshraja.me" {
+		t.Fatalf("expected embedded default, got %q", got)
+	}
+}
+
 func teamSessionForTests(expiresAt time.Time) teamssession.Session {
 	return teamssession.Session{
 		AccessToken:  "access",

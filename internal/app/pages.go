@@ -8,8 +8,13 @@ import (
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
 )
 
+var defaultCloudBaseURL = "http://localhost:3000"
+
 func cloudServiceBaseURL() string {
 	if value := strings.TrimRight(strings.TrimSpace(os.Getenv("SSHTHING_CLOUD_BASE_URL")), "/"); value != "" {
+		return value
+	}
+	if value := strings.TrimRight(strings.TrimSpace(defaultCloudBaseURL), "/"); value != "" {
 		return value
 	}
 	return "http://localhost:3000"
