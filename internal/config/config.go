@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type HostKeyPolicy string
@@ -90,10 +91,14 @@ type Config struct {
 	} `json:"sync"`
 
 	Updates struct {
-		LastCheckedAt   string `json:"last_checked_at,omitempty"`
-		LastSeenVersion string `json:"last_seen_version,omitempty"`
-		LastSeenTag     string `json:"last_seen_tag,omitempty"`
-		ETagLatest      string `json:"etag_latest,omitempty"`
+		LastCheckedAt    string `json:"last_checked_at,omitempty"`
+		LastSeenVersion  string `json:"last_seen_version,omitempty"`
+		LastSeenTag      string `json:"last_seen_tag,omitempty"`
+		ETagLatest       string `json:"etag_latest,omitempty"`
+		ReleaseChannel   string `json:"release_channel,omitempty"`
+		AutoApplyUpdates bool   `json:"auto_apply_updates,omitempty"`
+		ETagStable       string `json:"etag_stable,omitempty"`
+		ETagBeta         string `json:"etag_beta,omitempty"`
 	} `json:"updates"`
 
 	Automation struct {
@@ -112,7 +117,7 @@ type Config struct {
 
 func Default() Config {
 	var c Config
-	c.Version = 5
+	c.Version = 6
 	c.UI.VimMode = true
 	c.UI.ShowIcons = true
 	c.UI.WrapLabels = false
@@ -147,6 +152,10 @@ func Default() Config {
 	c.Teams.APIBaseURL = ""
 	c.Teams.BrowserBaseURL = ""
 	c.Teams.SessionCacheEnabled = true
+	c.Updates.ReleaseChannel = "stable"
+	c.Updates.AutoApplyUpdates = false
+	c.Updates.ETagStable = ""
+	c.Updates.ETagBeta = ""
 	return c
 }
 
@@ -243,6 +252,16 @@ func withDefaults(c Config) Config {
 		c.TeamsUI.WrapLabels = false
 		c.Version = 5
 	}
+	if c.Version < 6 {
+		if strings.TrimSpace(c.Updates.ReleaseChannel) == "" {
+			c.Updates.ReleaseChannel = "stable"
+		}
+		c.Updates.AutoApplyUpdates = false
+		if c.Updates.ETagStable == "" {
+			c.Updates.ETagStable = c.Updates.ETagLatest
+		}
+		c.Version = 6
+	}
 
 	// Enums / ints: normalize invalid values.
 	switch c.SSH.HostKeyPolicy {
@@ -282,6 +301,17 @@ func withDefaults(c Config) Config {
 
 	if c.Automation.SessionTTLSeconds <= 0 || c.Automation.SessionTTLSeconds > 86400 {
 		c.Automation.SessionTTLSeconds = def.Automation.SessionTTLSeconds
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Updates.ReleaseChannel)) {
+	case "", "stable":
+		c.Updates.ReleaseChannel = "stable"
+	case "beta":
+		c.Updates.ReleaseChannel = "beta"
+	default:
+		c.Updates.ReleaseChannel = def.Updates.ReleaseChannel
+	}
+	if c.Updates.ETagStable == "" && c.Updates.ETagLatest != "" {
+		c.Updates.ETagStable = c.Updates.ETagLatest
 	}
 
 	if c.Teams.APIBaseURL == "" {

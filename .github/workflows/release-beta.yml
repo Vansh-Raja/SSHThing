@@ -1,9 +1,9 @@
-name: Release
+name: Release Beta
 
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*-beta.*'
 
 permissions:
   contents: write
@@ -12,7 +12,6 @@ permissions:
 
 jobs:
   build-windows:
-    if: ${{ !contains(github.ref_name, '-beta.') }}
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -113,7 +112,6 @@ jobs:
             sshthing-setup-windows-amd64.exe
 
   build-macos:
-    if: ${{ !contains(github.ref_name, '-beta.') }}
     runs-on: macos-15-intel
     steps:
       - name: Checkout
@@ -160,7 +158,6 @@ jobs:
           path: sshthing-macos-amd64.zip
 
   build-macos-arm64:
-    if: ${{ !contains(github.ref_name, '-beta.') }}
     runs-on: macos-14
     steps:
       - name: Checkout
@@ -207,7 +204,6 @@ jobs:
           path: sshthing-macos-arm64.zip
 
   build-linux:
-    if: ${{ !contains(github.ref_name, '-beta.') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -271,7 +267,6 @@ jobs:
             sshthing-linux-amd64.rpm
 
   build-linux-arm64:
-    if: ${{ !contains(github.ref_name, '-beta.') }}
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
@@ -326,7 +321,6 @@ jobs:
             sshthing-linux-arm64.rpm
 
   release:
-    if: ${{ !contains(github.ref_name, '-beta.') }}
     needs: [build-windows, build-macos, build-macos-arm64, build-linux, build-linux-arm64]
     runs-on: ubuntu-latest
     env:
@@ -381,7 +375,7 @@ jobs:
             dist/sshthing-linux-arm64.rpm
             dist/SHA256SUMS
 
-      - name: Create or validate draft release
+      - name: Create or validate draft prerelease
         shell: bash
         run: |
           set -euo pipefail
@@ -396,10 +390,10 @@ jobs:
             fi
             echo "Reusing existing draft release: $tag"
           else
-            gh release create "$tag" --repo "$repo" --draft --verify-tag --generate-notes --title "$tag"
+            gh release create "$tag" --repo "$repo" --draft --prerelease --verify-tag --generate-notes --title "$tag"
           fi
 
-      - name: Upload release assets to draft
+      - name: Upload release assets to draft prerelease
         shell: bash
         run: |
           set -euo pipefail
@@ -455,7 +449,7 @@ jobs:
             fi
           done
 
-      - name: Publish release
+      - name: Publish prerelease
         shell: bash
         run: |
           set -euo pipefail
@@ -463,88 +457,5 @@ jobs:
           repo="${{ github.repository }}"
           is_draft="$(gh release view "$tag" --repo "$repo" --json isDraft -q .isDraft)"
           if [ "$is_draft" = "true" ]; then
-            gh release edit "$tag" --repo "$repo" --draft=false
+            gh release edit "$tag" --repo "$repo" --draft=false --prerelease
           fi
-
-  update-homebrew-tap:
-    if: ${{ !contains(github.ref_name, '-beta.') }}
-    needs: [release]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Compute version and SHA256
-        id: meta
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${{ github.ref_name }}"
-          version="${tag#v}"
-          tarball_url="https://github.com/${{ github.repository }}/archive/refs/tags/${tag}.tar.gz"
-
-          curl -sL -o source.tar.gz "$tarball_url"
-          sha256="$(sha256sum source.tar.gz | awk '{print $1}')"
-
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
-          echo "tarball_url=${tarball_url}" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout Homebrew tap
-        uses: actions/checkout@v4
-        with:
-          repository: Vansh-Raja/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-tap
-
-      - name: Update formula
-        shell: bash
-        run: |
-          set -euo pipefail
-          FORMULA="homebrew-tap/Formula/sshthing.rb"
-
-          cat > "$FORMULA" << 'RUBY'
-          class Sshthing < Formula
-            desc "Secure SSH manager TUI (SQLCipher + AES-GCM) with SSH/SFTP and Finder mounts"
-            homepage "https://github.com/Vansh-Raja/SSHThing"
-
-            url "TARBALL_URL_PLACEHOLDER"
-            sha256 "SHA256_PLACEHOLDER"
-            head "https://github.com/Vansh-Raja/SSHThing.git", branch: "main"
-
-            depends_on "go" => :build
-            depends_on "sqlcipher"
-
-            def install
-              ENV["CGO_ENABLED"] = "1"
-              ENV.append "CGO_CPPFLAGS", "-I#{Formula["sqlcipher"].opt_include}"
-              ENV.append "CGO_LDFLAGS", "-L#{Formula["sqlcipher"].opt_lib}"
-
-              ldflags = %W[
-                -s -w
-                -X main.version=#{version}
-              ]
-
-              system "go", "build", *std_go_args(output: bin/"sshthing", ldflags: ldflags), "./cmd/sshthing"
-            end
-
-            test do
-              assert_match "sshthing", shell_output("#{bin}/sshthing --version")
-            end
-          end
-          RUBY
-
-          # Strip leading whitespace from heredoc
-          sed -i 's/^          //' "$FORMULA"
-
-          # Replace placeholders with actual values
-          sed -i "s|TARBALL_URL_PLACEHOLDER|${{ steps.meta.outputs.tarball_url }}|" "$FORMULA"
-          sed -i "s|SHA256_PLACEHOLDER|${{ steps.meta.outputs.sha256 }}|" "$FORMULA"
-
-      - name: Commit and push
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd homebrew-tap
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/sshthing.rb
-          git commit -m "sshthing ${{ github.ref_name }}"
-          git push

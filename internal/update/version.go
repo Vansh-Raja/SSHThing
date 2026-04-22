@@ -7,29 +7,35 @@ import (
 	"strings"
 )
 
-var semverCoreRe = regexp.MustCompile(`(?i)^v?(\d+)\.(\d+)\.(\d+)`)
+var semverFullRe = regexp.MustCompile(`(?i)^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$`)
 
-type semverCore struct {
-	major int
-	minor int
-	patch int
+type semverVersion struct {
+	major      int
+	minor      int
+	patch      int
+	prerelease string
 }
 
-func parseSemverCore(s string) (semverCore, error) {
+func parseSemverVersion(s string) (semverVersion, error) {
 	s = strings.TrimSpace(s)
-	m := semverCoreRe.FindStringSubmatch(s)
-	if len(m) != 4 {
-		return semverCore{}, fmt.Errorf("invalid semver core: %q", s)
+	m := semverFullRe.FindStringSubmatch(s)
+	if len(m) != 5 {
+		return semverVersion{}, fmt.Errorf("invalid semver: %q", s)
 	}
 	maj, _ := strconv.Atoi(m[1])
 	min, _ := strconv.Atoi(m[2])
 	pat, _ := strconv.Atoi(m[3])
-	return semverCore{major: maj, minor: min, patch: pat}, nil
+	return semverVersion{
+		major:      maj,
+		minor:      min,
+		patch:      pat,
+		prerelease: strings.TrimSpace(m[4]),
+	}, nil
 }
 
 func compareVersions(a, b string) int {
-	va, ea := parseSemverCore(a)
-	vb, eb := parseSemverCore(b)
+	va, ea := parseSemverVersion(a)
+	vb, eb := parseSemverVersion(b)
 	if ea != nil || eb != nil {
 		return strings.Compare(strings.TrimSpace(a), strings.TrimSpace(b))
 	}
@@ -50,6 +56,54 @@ func compareVersions(a, b string) int {
 			return -1
 		}
 		return 1
+	}
+	return comparePrerelease(va.prerelease, vb.prerelease)
+}
+
+func comparePrerelease(a, b string) int {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == b {
+		return 0
+	}
+	if a == "" {
+		return 1
+	}
+	if b == "" {
+		return -1
+	}
+
+	aParts := strings.Split(a, ".")
+	bParts := strings.Split(b, ".")
+	for i := 0; i < len(aParts) || i < len(bParts); i++ {
+		if i >= len(aParts) {
+			return -1
+		}
+		if i >= len(bParts) {
+			return 1
+		}
+		if aParts[i] == bParts[i] {
+			continue
+		}
+
+		aNum, aErr := strconv.Atoi(aParts[i])
+		bNum, bErr := strconv.Atoi(bParts[i])
+		switch {
+		case aErr == nil && bErr == nil:
+			if aNum < bNum {
+				return -1
+			}
+			return 1
+		case aErr == nil:
+			return -1
+		case bErr == nil:
+			return 1
+		default:
+			if aParts[i] < bParts[i] {
+				return -1
+			}
+			return 1
+		}
 	}
 	return 0
 }

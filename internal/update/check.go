@@ -13,9 +13,26 @@ import (
 )
 
 func Check(ctx context.Context, currentVersion string, cfg *config.Config) (CheckResult, error) {
+	releaseChannel := ReleaseChannelStable
+	etag := ""
+	if cfg != nil {
+		if strings.EqualFold(strings.TrimSpace(cfg.Updates.ReleaseChannel), string(ReleaseChannelBeta)) {
+			releaseChannel = ReleaseChannelBeta
+		}
+		if releaseChannel == ReleaseChannelBeta {
+			etag = strings.TrimSpace(cfg.Updates.ETagBeta)
+		} else {
+			etag = strings.TrimSpace(cfg.Updates.ETagStable)
+			if etag == "" {
+				etag = strings.TrimSpace(cfg.Updates.ETagLatest)
+			}
+		}
+	}
+
 	result := CheckResult{
 		CheckedAt:      time.Now(),
 		CurrentVersion: normalizeVersionString(currentVersion),
+		ReleaseChannel: releaseChannel,
 		Channel:        ChannelUnknown,
 		ApplyMode:      ApplyModeNone,
 	}
@@ -38,11 +55,7 @@ func Check(ctx context.Context, currentVersion string, cfg *config.Config) (Chec
 	}
 	result.PathHealth = pathHealth
 
-	etag := ""
-	if cfg != nil {
-		etag = strings.TrimSpace(cfg.Updates.ETagLatest)
-	}
-	rel, newETag, notModified, err := fetchLatestRelease(ctx, etag)
+	rel, newETag, notModified, err := fetchReleaseForChannel(ctx, releaseChannel, etag)
 	if err != nil {
 		return result, err
 	}
@@ -64,7 +77,12 @@ func Check(ctx context.Context, currentVersion string, cfg *config.Config) (Chec
 		result.Checksums = findAsset(rel.Assets, "SHA256SUMS")
 		result.Asset = resolveReleaseAsset(rel.Assets)
 		if cfg != nil {
-			cfg.Updates.ETagLatest = newETag
+			if releaseChannel == ReleaseChannelBeta {
+				cfg.Updates.ETagBeta = newETag
+			} else {
+				cfg.Updates.ETagStable = newETag
+				cfg.Updates.ETagLatest = newETag
+			}
 			cfg.Updates.LastSeenTag = result.LatestTag
 			cfg.Updates.LastSeenVersion = result.LatestVersion
 			cfg.Updates.LastCheckedAt = result.CheckedAt.Format(time.RFC3339)
@@ -118,6 +136,11 @@ func selectApplyMode(result *CheckResult) {
 
 	switch runtime.GOOS {
 	case "windows":
+		if result.ReleaseChannel == ReleaseChannelBeta && result.Channel != ChannelWindowsInstaller && (hasTool("winget") || hasTool("choco")) {
+			result.ApplyMode = ApplyModeGuidance
+			result.Guidance = []string{"Beta updates require a standalone install. Download the prerelease asset from GitHub Releases."}
+			return
+		}
 		if hasTool("winget") {
 			result.ApplyMode = ApplyModeCommand
 			result.ApplyCommand = []string{"winget", "upgrade", "--name", "sshthing", "--silent", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"}
@@ -136,6 +159,11 @@ func selectApplyMode(result *CheckResult) {
 		result.Guidance = []string{"Download latest Windows installer from GitHub Releases and run it."}
 	case "darwin":
 		if isBrewManaged() {
+			if result.ReleaseChannel == ReleaseChannelBeta {
+				result.ApplyMode = ApplyModeGuidance
+				result.Guidance = []string{"Beta updates require a standalone install. Download the prerelease asset from GitHub Releases."}
+				return
+			}
 			result.ApplyMode = ApplyModeCommand
 			result.ApplyCommand = []string{"brew", "upgrade", "sshthing"}
 			return

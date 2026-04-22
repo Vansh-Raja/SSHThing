@@ -11,6 +11,13 @@ const (
 	ChannelStandalone       Channel = "standalone"
 )
 
+type ReleaseChannel string
+
+const (
+	ReleaseChannelStable ReleaseChannel = "stable"
+	ReleaseChannelBeta   ReleaseChannel = "beta"
+)
+
 type ApplyMode string
 
 const (
@@ -42,6 +49,7 @@ type CheckResult struct {
 	LatestTag       string
 	ReleaseURL      string
 	UpdateAvailable bool
+	ReleaseChannel  ReleaseChannel
 	Channel         Channel
 	ChannelDetail   string
 	PathHealth      PathHealth

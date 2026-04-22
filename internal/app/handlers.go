@@ -1518,7 +1518,7 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.settingsItems = m.buildSettingsItems()
 			return m, nil
-		case "channel", "version", "PATH health", updateSettingsNoteLabel():
+		case "feed", "channel", "version", "PATH health", updateSettingsNoteLabel():
 			return m, nil
 		case "check now":
 			if !m.updateChecking {

@@ -354,11 +354,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cfg.Updates.LastCheckedAt = msg.result.CheckedAt.Format(time.RFC3339)
 		m.cfg.Updates.LastSeenVersion = msg.result.LatestVersion
 		m.cfg.Updates.LastSeenTag = msg.result.LatestTag
-		m.cfg.Updates.ETagLatest = msg.result.ETag
+		if msg.result.ReleaseChannel == update.ReleaseChannelBeta {
+			m.cfg.Updates.ETagBeta = msg.result.ETag
+		} else {
+			m.cfg.Updates.ETagStable = msg.result.ETag
+			m.cfg.Updates.ETagLatest = msg.result.ETag
+		}
+		m.settingsItems = m.buildSettingsItems()
 		if msg.result.UpdateAvailable {
+			if m.cfg.Updates.AutoApplyUpdates && (msg.result.ApplyMode == update.ApplyModeInstaller || msg.result.ApplyMode == update.ApplyModeReplaceBin) {
+				m.updateRunID++
+				m.updateApplying = true
+				if msg.result.ReleaseChannel == update.ReleaseChannelBeta {
+					m.err = fmt.Errorf("\u2139 Applying beta update...")
+				} else {
+					m.err = fmt.Errorf("\u2139 Applying update...")
+				}
+				m.settingsItems = m.buildSettingsItems()
+				return m, runUpdateApplyCmd(m.updateRunID, *msg.result)
+			}
+			if m.cfg.Updates.AutoApplyUpdates && msg.result.ReleaseChannel == update.ReleaseChannelBeta && msg.result.ApplyMode == update.ApplyModeGuidance {
+				m.err = fmt.Errorf("\u2139 Beta update found; manual apply required for this install type")
+				return m, m.errorAutoClearCmd(prevErr)
+			}
 			m.err = fmt.Errorf("\u2713 Update available: %s", msg.result.LatestTag)
 		} else {
-			m.err = fmt.Errorf("\u2713 Already on latest stable release")
+			if msg.result.ReleaseChannel == update.ReleaseChannelBeta {
+				m.err = fmt.Errorf("\u2713 Already on latest beta feed release")
+			} else {
+				m.err = fmt.Errorf("\u2713 Already on latest stable release")
+			}
 		}
 		return m, m.errorAutoClearCmd(prevErr)
 
@@ -375,6 +400,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("\u26A0 update failed")
 			return m, m.errorAutoClearCmd(prevErr)
 		}
+		m.settingsItems = m.buildSettingsItems()
 		if msg.handoffStarted {
 			return m, tea.Quit
 		}
@@ -398,6 +424,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.updateLast != nil {
 			m.updateLast.PathHealth = msg.pathHealth
 		}
+		m.settingsItems = m.buildSettingsItems()
 		m.err = fmt.Errorf("\u2713 PATH updated. Open a new terminal for changes.")
 		return m, m.errorAutoClearCmd(prevErr)
 

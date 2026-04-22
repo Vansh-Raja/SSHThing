@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for rele
 
 ---
 
+## [Unreleased]
+
+### Added
+- Opt-in `beta` release feed in the Settings `updates` section, including `beta releases`, `auto apply updates`, and a derived `feed` row.
+- GitHub prerelease workflow for beta tags like `vX.Y.Z-beta.N`, with the same cross-platform asset names as stable releases.
+
+### Changed
+- The updater now supports separate stable and beta release feeds, including prerelease-aware semantic version ordering.
+- `check now` can auto-apply beta updates for standalone installs when `auto apply updates` is enabled.
+- Package-manager installs remain stable/manual for beta in the first implementation and now show guidance instead of trying unsupported beta auto-upgrades.
+
 ## [v2.0.2] — 2026-04-07
 
 ### Fixed

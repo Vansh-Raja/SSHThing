@@ -1021,6 +1021,9 @@ func (m *Model) buildSettingsItems() []ui.SettingsItem {
 		{Category: "sync", Label: "branch", Value: m.cfg.Sync.Branch, Kind: 2, Disabled: !m.cfg.Sync.Enabled},
 		{Category: "sync", Label: "local path", Value: m.cfg.Sync.LocalPath, Kind: 2, Disabled: !m.cfg.Sync.Enabled},
 		// Updates
+		{Category: "updates", Label: "beta releases", Value: boolVal(m.cfg.Updates.ReleaseChannel == "beta"), Kind: 0},
+		{Category: "updates", Label: "auto apply updates", Value: boolVal(m.cfg.Updates.AutoApplyUpdates), Kind: 0},
+		{Category: "updates", Label: "feed", Value: m.updateSettingsState().FeedLabel, Kind: 2},
 		{Category: "updates", Label: "channel", Value: m.updateSettingsState().ChannelLabel, Kind: 2},
 		{Category: "updates", Label: "version", Value: m.updateSettingsState().VersionLabel, Kind: 2},
 		{Category: "updates", Label: "check now", Value: "", Kind: 2},
@@ -1064,6 +1067,7 @@ func (m *Model) filteredSettingsIdxs() []int {
 }
 
 type updateSettingsStateInfo struct {
+	FeedLabel    string
 	ChannelLabel string
 	VersionLabel string
 	PathHealth   string
@@ -1079,6 +1083,7 @@ func (m Model) updateSettingsState() updateSettingsStateInfo {
 		Applying: m.updateApplying,
 	}
 	if m.updateLast != nil {
+		state.FeedLabel = string(m.updateLast.ReleaseChannel)
 		state.ChannelLabel = update.ChannelLabel(m.updateLast.Channel, m.updateLast.ChannelDetail)
 		current := strings.TrimSpace(m.updateLast.CurrentVersion)
 		if current == "" {
@@ -1092,6 +1097,12 @@ func (m Model) updateSettingsState() updateSettingsStateInfo {
 		state.PathHealth = update.PathHealthLabel(m.updateLast.PathHealth)
 		state.CanApply = m.updateLast.UpdateAvailable && m.updateLast.ApplyMode != update.ApplyModeGuidance && m.updateLast.ApplyMode != update.ApplyModeNone
 		state.CanFixPath = !m.updateLast.PathHealth.Healthy && strings.TrimSpace(m.updateLast.PathHealth.DesiredPath) != ""
+	}
+	if state.FeedLabel == "" {
+		state.FeedLabel = strings.TrimSpace(m.cfg.Updates.ReleaseChannel)
+		if state.FeedLabel == "" {
+			state.FeedLabel = "stable"
+		}
 	}
 	if state.VersionLabel == "" {
 		v := strings.TrimSpace(m.currentVersion)
@@ -1428,8 +1439,16 @@ func (m *Model) applySettingChange(idx int, action string) {
 			}
 		}
 	case 16, 17, 18, 19: // sync repo/key/branch/local - editable
-	case 27: // manage tokens (opens token page)
-	case 28: // sync token definitions
+	case 20: // beta releases
+		if strings.EqualFold(m.cfg.Updates.ReleaseChannel, "beta") {
+			m.cfg.Updates.ReleaseChannel = "stable"
+		} else {
+			m.cfg.Updates.ReleaseChannel = "beta"
+		}
+	case 21: // auto apply updates
+		m.cfg.Updates.AutoApplyUpdates = !m.cfg.Updates.AutoApplyUpdates
+	case 30: // manage tokens (opens token page)
+	case 31: // sync token definitions
 		if m.cfg.Sync.Enabled {
 			m.cfg.Automation.SyncTokenDefinitions = !m.cfg.Automation.SyncTokenDefinitions
 		}

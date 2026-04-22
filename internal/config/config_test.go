@@ -4,8 +4,8 @@ import "testing"
 
 func TestDefaultTeamsSettings(t *testing.T) {
 	cfg := Default()
-	if cfg.Version != 5 {
-		t.Fatalf("expected version 5, got %d", cfg.Version)
+	if cfg.Version != 6 {
+		t.Fatalf("expected version 6, got %d", cfg.Version)
 	}
 	if cfg.Teams.Enabled {
 		t.Fatalf("expected teams disabled by default")
@@ -24,6 +24,12 @@ func TestDefaultTeamsSettings(t *testing.T) {
 	}
 	if cfg.TeamsUI.WrapLabels {
 		t.Fatalf("expected teams wrap labels off by default")
+	}
+	if cfg.Updates.ReleaseChannel != "stable" {
+		t.Fatalf("expected stable release channel by default, got %q", cfg.Updates.ReleaseChannel)
+	}
+	if cfg.Updates.AutoApplyUpdates {
+		t.Fatalf("expected auto apply updates off by default")
 	}
 }
 
@@ -63,13 +69,33 @@ func TestWithDefaultsMigratesTeamsVersion(t *testing.T) {
 	cfg.Version = 2
 
 	got := withDefaults(cfg)
-	if got.Version != 5 {
-		t.Fatalf("expected migration to version 5, got %d", got.Version)
+	if got.Version != 6 {
+		t.Fatalf("expected migration to version 6, got %d", got.Version)
 	}
 	if !got.Teams.SessionCacheEnabled {
 		t.Fatalf("expected session cache enabled after migration")
 	}
 	if got.TeamsUI.Theme == "" || got.TeamsUI.IconSet == "" {
 		t.Fatalf("expected teams ui defaults after migration")
+	}
+	if got.Updates.ReleaseChannel != "stable" {
+		t.Fatalf("expected stable release channel after migration, got %q", got.Updates.ReleaseChannel)
+	}
+	if got.Updates.AutoApplyUpdates {
+		t.Fatalf("expected auto apply updates off after migration")
+	}
+}
+
+func TestWithDefaultsMigratesLegacyUpdateETag(t *testing.T) {
+	cfg := Config{}
+	cfg.Version = 5
+	cfg.Updates.ETagLatest = "legacy-etag"
+
+	got := withDefaults(cfg)
+	if got.Version != 6 {
+		t.Fatalf("expected migration to version 6, got %d", got.Version)
+	}
+	if got.Updates.ETagStable != "legacy-etag" {
+		t.Fatalf("expected legacy etag to migrate to stable slot, got %q", got.Updates.ETagStable)
 	}
 }

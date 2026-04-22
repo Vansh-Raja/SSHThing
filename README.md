@@ -156,6 +156,45 @@ Optional provenance verification (requires `gh`):
 gh attestation verify sshthing-windows-amd64.zip --repo Vansh-Raja/SSHThing
 ```
 
+### Beta Releases
+
+SSHThing now supports an opt-in `beta` release feed alongside the default stable feed.
+
+- Stable releases continue to use normal GitHub releases from tags like `v2.0.3`
+- Beta releases use GitHub prereleases from tags like `v2.1.0-beta.1`
+- Stable remains the default for all users
+
+To opt in from the TUI:
+
+1. Open `Settings`
+2. Go to `updates`
+3. Turn `beta releases` on
+4. Optionally turn `auto apply updates` on
+5. Run `check now`
+
+First-cut beta auto-apply support is intentionally limited to standalone installs:
+
+- macOS zip installs
+- Linux tarball installs
+- Windows standalone installer / portable installs backed by GitHub release assets
+
+Package-manager installs stay stable/manual in the first beta implementation:
+
+- Homebrew installs do not auto-apply beta builds
+- Winget installs do not auto-apply beta builds
+- Chocolatey installs do not auto-apply beta builds
+
+If you enable `beta releases` on a package-manager install, SSHThing will still show beta availability when appropriate, but it will guide you to download the prerelease asset manually.
+
+To publish a beta build from GitHub Actions, push an explicit beta tag:
+
+```bash
+git tag v2.1.0-beta.1
+git push origin v2.1.0-beta.1
+```
+
+That tag runs `.github/workflows/release-beta.yml` and publishes a GitHub prerelease with the same platform asset names the updater already expects.
+
 ### From source
 
 ```bash
