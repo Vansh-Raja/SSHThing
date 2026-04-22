@@ -186,6 +186,26 @@ Package-manager installs stay stable/manual in the first beta implementation:
 
 If you enable `beta releases` on a package-manager install, SSHThing will still show beta availability when appropriate, but it will guide you to download the prerelease asset manually.
 
+To install a beta build manually, use the prerelease tag URL instead of the stable `latest` release endpoint:
+
+- Release page: `https://github.com/Vansh-Raja/SSHThing/releases/tag/v2.1.0-beta.1`
+- Windows installer: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.1/sshthing-setup-windows-amd64.exe`
+- Windows portable zip: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.1/sshthing-windows-amd64.zip`
+- macOS Apple Silicon zip: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.1/sshthing-macos-arm64.zip`
+- macOS Intel zip: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.1/sshthing-macos-amd64.zip`
+- Linux amd64 tarball: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.1/sshthing-linux-amd64.tar.gz`
+- Linux arm64 tarball: `https://github.com/Vansh-Raja/SSHThing/releases/download/v2.1.0-beta.1/sshthing-linux-arm64.tar.gz`
+
+Recommended beta install path for coworkers:
+
+1. Download the standalone asset for their platform from the beta prerelease page.
+2. Install or extract it using the same standalone steps documented above for macOS, Linux tarballs, or the Windows installer.
+3. Launch SSHThing.
+4. Open `Settings` -> `updates`.
+5. Turn `beta releases` on.
+6. Optionally turn `auto apply updates` on if they are on a standalone install.
+7. Run `check now` to stay on the beta feed.
+
 To publish a beta build from GitHub Actions, push an explicit beta tag:
 
 ```bash
