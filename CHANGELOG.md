@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for rele
 ### Added
 - Opt-in `beta` release feed in the Settings `updates` section, including `beta releases`, `auto apply updates`, and a derived `feed` row.
 - GitHub prerelease workflow for beta tags like `vX.Y.Z-beta.N`, with the same cross-platform asset names as stable releases.
+- Separate `sshthing-beta` Homebrew formula path for macOS beta installs.
 
 ### Changed
 - The updater now supports separate stable and beta release feeds, including prerelease-aware semantic version ordering.

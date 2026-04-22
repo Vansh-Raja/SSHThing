@@ -200,8 +200,8 @@ func detectChannel(ctx context.Context) (Channel, string, string, error) {
 		}
 		return ChannelStandalone, "windows standalone", "", nil
 	case "darwin":
-		if isBrewManaged() {
-			return ChannelMacOSBrew, "homebrew-managed install", "", nil
+		if formula := installedBrewFormula(); formula != "" {
+			return ChannelMacOSBrew, fmt.Sprintf("homebrew-managed install (%s)", formula), "", nil
 		}
 		return ChannelStandalone, "macOS standalone binary", "", nil
 	case "linux":
@@ -215,12 +215,24 @@ func isBrewManaged() bool {
 	if !hasTool("brew") {
 		return false
 	}
-	cmd := exec.Command("brew", "list", "--versions", "sshthing")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return false
+	return installedBrewFormula() != ""
+}
+
+func installedBrewFormula() string {
+	if !hasTool("brew") {
+		return ""
 	}
-	return strings.TrimSpace(string(out)) != ""
+	for _, formula := range []string{"sshthing", "sshthing-beta"} {
+		cmd := exec.Command("brew", "list", "--versions", formula)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(string(out)) != "" {
+			return formula
+		}
+	}
+	return ""
 }
 
 func hasTool(name string) bool {

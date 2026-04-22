@@ -186,6 +186,17 @@ Package-manager installs stay stable/manual in the first beta implementation:
 
 If you enable `beta releases` on a package-manager install, SSHThing will still show beta availability when appropriate, but it will guide you to download the prerelease asset manually.
 
+On macOS, there is also a separate Homebrew beta formula:
+
+```bash
+brew tap vansh-raja/tap
+brew uninstall sshthing
+brew install sshthing-beta
+sshthing --version
+```
+
+That formula intentionally conflicts with the stable `sshthing` formula so your shell keeps a single `sshthing` binary on PATH.
+
 To install a beta build manually, use the prerelease tag URL instead of the stable `latest` release endpoint:
 
 - Release page: `https://github.com/Vansh-Raja/SSHThing/releases/tag/v2.1.0-beta.1`
