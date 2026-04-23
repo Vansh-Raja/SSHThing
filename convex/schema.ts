@@ -37,7 +37,7 @@ export default defineSchema({
     port: v.number(),
     group: v.string(),
     tags: v.array(v.string()),
-    notes: v.string(),
+    notes: v.optional(v.string()),
     authMode: v.optional(v.string()),
     credentialMode: v.string(),
     credentialType: v.string(),
