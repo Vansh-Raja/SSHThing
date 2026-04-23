@@ -8,6 +8,7 @@ import (
 	ssync "github.com/Vansh-Raja/SSHThing/internal/sync"
 	"github.com/Vansh-Raja/SSHThing/internal/teamssession"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestBuildSettingsItemsIncludesUpdateNote(t *testing.T) {
@@ -328,6 +329,35 @@ func TestValidateForm(t *testing.T) {
 	err = m.validateForm()
 	if err == nil {
 		t.Error("Expected error for empty port, got nil")
+	}
+}
+
+func TestInitAddHostFormStartsEditingOnLabel(t *testing.T) {
+	m := NewModel()
+	m.initAddHostForm("", "", "", "", "", "22", "", "")
+
+	if m.formFocus != ui.FFLabel {
+		t.Fatalf("expected label focus, got %d", m.formFocus)
+	}
+	if !m.formEditing {
+		t.Fatalf("expected add-host form to start in editing mode")
+	}
+}
+
+func TestAddHostTypingStartsEditingAndInsertsRunes(t *testing.T) {
+	m := NewModel()
+	m.initAddHostForm("", "", "", "", "", "22", "", "")
+	m.formEditing = false
+	m.formFocus = ui.FFHostname
+
+	updated, _ := m.handleAddHostKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	got := updated.(Model)
+
+	if !got.formEditing {
+		t.Fatalf("expected typing to enter edit mode")
+	}
+	if got.formFields[ui.FFHostname].Value != "a" {
+		t.Fatalf("expected hostname field to receive typed rune, got %q", got.formFields[ui.FFHostname].Value)
 	}
 }
 

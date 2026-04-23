@@ -10,7 +10,7 @@
 - `internal/ssh/`: `ssh` subprocess integration, temp key handling, key generation.
 - `internal/sync/`: Git synchronization logic (export/import, encrypted JSON, conflict resolution).
 - `internal/config/`: Configuration file handling (`config.json`) and defaults.
-- Docs: `README.md`, `QUICKSTART.md`, `CHANGELOG.md`.
+- Docs: `README.md`, `QUICKSTART.md`, `CHANGELOG.md`, `changelog.md`.
 
 ## Build, Test, and Development Commands
 
@@ -40,6 +40,7 @@
 ## Commit & Pull Request Guidelines
 
 - Commit messages are short, imperative, and scoped when useful (e.g., `Cleanup: …`, `Fix: …`).
+- Before any release or release tag, update `changelog.md` to reflect the shipped changes.
 - PRs should include:
   - A clear summary of user-visible changes.
   - Any relevant screenshots (TUI screenshots are helpful for UI changes).
@@ -51,3 +52,11 @@
 - User data is stored at `~/.ssh-manager/hosts.db` (SQLCipher encrypted).
 - SSH sessions may override Ghostty’s TERM; you can force a value with:
   - `SSHTHING_SSH_TERM=xterm-256color ./sshthing`
+
+<!-- convex-ai-start -->
+This project uses [Convex](https://convex.dev) as its backend.
+
+When working on Convex code, **always read `convex/_generated/ai/guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns. The file contains rules that override what you may have learned about Convex from training data.
+
+Convex agent skills for common tasks can be installed by running `npx convex ai-files install`.
+<!-- convex-ai-end -->

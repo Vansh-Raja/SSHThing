@@ -727,7 +727,8 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return submitAndClose()
 
 	case tea.KeyBackspace:
-		if m.formEditing && isTextField(m.formFocus) {
+		if isTextField(m.formFocus) {
+			m.formEditing = true
 			m.formFields[m.formFocus].DeleteBack()
 		}
 		m.ensureFormFocusVisible()
@@ -735,7 +736,8 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Rune input
-	if m.formEditing && isTextField(m.formFocus) {
+	if isTextField(m.formFocus) && len(msg.Runes) > 0 {
+		m.formEditing = true
 		for _, r := range msg.Runes {
 			m.formFields[m.formFocus].InsertRune(r)
 		}
@@ -1870,7 +1872,7 @@ func (m *Model) initAddHostForm(label, groupName, tags, hostname, username, port
 	}
 	m.formKeyIdx = keyIdx
 	m.formFocus = ui.FFLabel
-	m.formEditing = false
+	m.formEditing = true
 	m.formScrollOffset = 0
 	m.formSecretRevealed = false
 	m.formTeamHostID = ""

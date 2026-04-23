@@ -17,6 +17,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for rele
 - `check now` can auto-apply beta updates for standalone installs when `auto apply updates` is enabled.
 - Package-manager installs remain stable/manual for beta in the first implementation and now show guidance instead of trying unsupported beta auto-upgrades.
 
+## [v2.1.0-beta.4] — 2026-04-23
+
+### Fixed
+- Restore typing and backspace behavior in the add/edit host modal by starting the form in editing mode and automatically entering edit mode when users type into focused text fields.
+
 ## [v2.0.2] — 2026-04-07
 
 ### Fixed
