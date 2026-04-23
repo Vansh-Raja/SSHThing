@@ -1,7 +1,9 @@
+import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
-import { requireHostPermission, requireTeamPermission } from "./teamAccess";
+import { hasTeamPermission, requireHostPermission, requireTeamPermission } from "./teamAccess";
 
 function normalizeCredentialMode(value: string): "shared" | "per_member" {
   return value === "per_member" ? "per_member" : "shared";
@@ -22,13 +24,82 @@ function normalizeVisibility(value: string): string {
   return value === "revealed_to_access_holders" ? value : "revealed_to_access_holders";
 }
 
+function normalizeNotes(value: string | undefined): string {
+  return (value ?? "").trim();
+}
+
+type TeamCtx = QueryCtx | MutationCtx;
+
+async function getMemberRecord(
+  ctx: TeamCtx,
+  teamId: Id<"teams">,
+  clerkUserId: string,
+): Promise<Doc<"teamMembers"> | null> {
+  return ctx.db
+    .query("teamMembers")
+    .withIndex("by_team_and_user", (q) => q.eq("teamId", teamId).eq("clerkUserId", clerkUserId))
+    .first();
+}
+
+function memberDisplayName(
+  member: Pick<Doc<"teamMembers">, "displayName" | "email" | "clerkUserId"> | null,
+  fallbackUserId: string,
+): string {
+  return member?.displayName?.trim() || member?.email?.trim() || fallbackUserId;
+}
+
+function roleOrder(role: string): number {
+  switch (role) {
+    case "owner":
+      return 0;
+    case "admin":
+      return 1;
+    default:
+      return 2;
+  }
+}
+
+async function writeAuditEvent(
+  ctx: MutationCtx,
+  args: {
+    teamId: Id<"teams">;
+    actorClerkUserId: string;
+    actorDisplayName: string;
+    entityType: string;
+    entityId: string;
+    eventType: string;
+    targetClerkUserId?: string;
+    targetDisplayName?: string;
+    summary: string;
+    metadata?: {
+      hostLabel?: string;
+      credentialMode?: string;
+      credentialType?: string;
+    };
+  },
+) {
+  await ctx.db.insert("teamAuditEvents", {
+    teamId: args.teamId,
+    actorClerkUserId: args.actorClerkUserId,
+    actorDisplayName: args.actorDisplayName,
+    entityType: args.entityType,
+    entityId: args.entityId,
+    eventType: args.eventType,
+    targetClerkUserId: args.targetClerkUserId,
+    targetDisplayName: args.targetDisplayName,
+    summary: args.summary,
+    metadata: args.metadata,
+    createdAt: Date.now(),
+  });
+}
+
 export const listForTeam = query({
   args: {
     teamId: v.id("teams"),
     clerkUserId: v.string(),
   },
   handler: async (ctx, args) => {
-    await requireTeamPermission(ctx, args.teamId, args.clerkUserId, "read");
+    const access = await requireTeamPermission(ctx, args.teamId, args.clerkUserId, "read");
     const hosts = await ctx.db
       .query("teamHosts")
       .withIndex("by_team", (q) => q.eq("teamId", args.teamId))
@@ -43,6 +114,7 @@ export const listForTeam = query({
       port: host.port,
       group: host.group,
       tags: host.tags,
+      notes: host.notes,
       authMode: host.authMode ?? host.credentialType,
       credentialMode: host.credentialMode,
       credentialType: host.credentialType,
@@ -50,6 +122,9 @@ export const listForTeam = query({
       lastConnectedAt: host.lastConnectedAt ?? null,
       createdAt: host.createdAt,
       updatedAt: host.updatedAt,
+      canManageHosts: hasTeamPermission(access.role, "manage_hosts"),
+      canRevealSecrets: hasTeamPermission(access.role, "reveal_secret"),
+      canEditNotes: hasTeamPermission(access.role, "edit_notes"),
     }));
   },
 });
@@ -64,6 +139,7 @@ export const create = mutation({
     port: v.number(),
     group: v.string(),
     tags: v.array(v.string()),
+    notes: v.optional(v.string()),
     credentialMode: v.string(),
     credentialType: v.string(),
     secretVisibility: v.string(),
@@ -83,6 +159,7 @@ export const create = mutation({
       port: args.port > 0 ? args.port : 22,
       group: args.group.trim(),
       tags: args.tags.map((tag) => tag.trim()).filter(Boolean),
+      notes: normalizeNotes(args.notes),
       authMode: credentialType,
       credentialMode,
       credentialType,
@@ -104,7 +181,27 @@ export const create = mutation({
       });
     }
 
-    return { id: hostId };
+    return {
+      id: hostId,
+      teamId: args.teamId,
+      label: args.label.trim(),
+      hostname: args.hostname.trim(),
+      username: args.username.trim(),
+      port: args.port > 0 ? args.port : 22,
+      group: args.group.trim(),
+      tags: args.tags.map((tag) => tag.trim()).filter(Boolean),
+      notes: normalizeNotes(args.notes),
+      authMode: credentialType,
+      credentialMode,
+      credentialType,
+      secretVisibility: normalizeVisibility(args.secretVisibility),
+      lastConnectedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      canManageHosts: true,
+      canRevealSecrets: true,
+      canEditNotes: true,
+    };
   },
 });
 
@@ -129,14 +226,19 @@ export const getHost = query({
       port: access.host.port,
       group: access.host.group,
       tags: access.host.tags,
+      notes: access.host.notes,
       authMode: access.host.authMode ?? access.host.credentialType,
       credentialMode: access.host.credentialMode,
       credentialType: access.host.credentialType,
       secretVisibility: access.host.secretVisibility,
       lastConnectedAt: access.host.lastConnectedAt ?? null,
-      sharedCredential: access.host.credentialMode === "shared" ? shared?.ciphertext ?? null : null,
+      sharedCredential: null,
+      sharedCredentialConfigured: Boolean(shared?.ciphertext),
       createdAt: access.host.createdAt,
       updatedAt: access.host.updatedAt,
+      canManageHosts: hasTeamPermission(access.role, "manage_hosts"),
+      canRevealSecrets: hasTeamPermission(access.role, "reveal_secret"),
+      canEditNotes: hasTeamPermission(access.role, "edit_notes"),
     };
   },
 });
@@ -151,6 +253,7 @@ export const update = mutation({
     port: v.number(),
     group: v.string(),
     tags: v.array(v.string()),
+    notes: v.optional(v.string()),
     credentialMode: v.string(),
     credentialType: v.string(),
     secretVisibility: v.string(),
@@ -161,6 +264,7 @@ export const update = mutation({
     const now = Date.now();
     const credentialMode = normalizeCredentialMode(args.credentialMode);
     const credentialType = normalizeCredentialType(args.credentialType);
+    const actorDisplayName = memberDisplayName(access.member, args.clerkUserId);
 
     await ctx.db.patch(args.hostId, {
       label: args.label.trim(),
@@ -169,6 +273,7 @@ export const update = mutation({
       port: args.port > 0 ? args.port : 22,
       group: args.group.trim(),
       tags: args.tags.map((tag) => tag.trim()).filter(Boolean),
+      notes: normalizeNotes(args.notes),
       authMode: credentialType,
       credentialMode,
       credentialType,
@@ -185,6 +290,20 @@ export const update = mutation({
     if (credentialMode !== "shared" || credentialType === "none") {
       if (existingShared) {
         await ctx.db.delete(existingShared._id);
+        await writeAuditEvent(ctx, {
+          teamId: access.host.teamId,
+          actorClerkUserId: args.clerkUserId,
+          actorDisplayName,
+          entityType: "team_host_shared_credential",
+          entityId: args.hostId,
+          eventType: "shared_credential_deleted",
+          summary: `Deleted shared credential for ${access.host.label || access.host.hostname}`,
+          metadata: {
+            hostLabel: access.host.label || access.host.hostname,
+            credentialMode: "shared",
+            credentialType: existingShared.credentialType,
+          },
+        });
       }
       return { ok: true };
     }
@@ -192,6 +311,20 @@ export const update = mutation({
     if (args.sharedCredentialCiphertext === null) {
       if (existingShared) {
         await ctx.db.delete(existingShared._id);
+        await writeAuditEvent(ctx, {
+          teamId: access.host.teamId,
+          actorClerkUserId: args.clerkUserId,
+          actorDisplayName,
+          entityType: "team_host_shared_credential",
+          entityId: args.hostId,
+          eventType: "shared_credential_deleted",
+          summary: `Deleted shared credential for ${access.host.label || access.host.hostname}`,
+          metadata: {
+            hostLabel: access.host.label || access.host.hostname,
+            credentialMode: "shared",
+            credentialType: existingShared.credentialType,
+          },
+        });
       }
       return { ok: true };
     }
@@ -204,6 +337,20 @@ export const update = mutation({
           updatedByClerkUserId: args.clerkUserId,
           updatedAt: now,
         });
+        await writeAuditEvent(ctx, {
+          teamId: access.host.teamId,
+          actorClerkUserId: args.clerkUserId,
+          actorDisplayName,
+          entityType: "team_host_shared_credential",
+          entityId: args.hostId,
+          eventType: "shared_credential_replaced",
+          summary: `Replaced shared credential for ${access.host.label || access.host.hostname}`,
+          metadata: {
+            hostLabel: access.host.label || access.host.hostname,
+            credentialMode: "shared",
+            credentialType,
+          },
+        });
       } else {
         await ctx.db.insert("teamHostSharedCredentials", {
           hostId: args.hostId,
@@ -213,9 +360,39 @@ export const update = mutation({
           createdAt: now,
           updatedAt: now,
         });
+        await writeAuditEvent(ctx, {
+          teamId: access.host.teamId,
+          actorClerkUserId: args.clerkUserId,
+          actorDisplayName,
+          entityType: "team_host_shared_credential",
+          entityId: args.hostId,
+          eventType: "shared_credential_replaced",
+          summary: `Configured shared credential for ${access.host.label || access.host.hostname}`,
+          metadata: {
+            hostLabel: access.host.label || access.host.hostname,
+            credentialMode: "shared",
+            credentialType,
+          },
+        });
       }
     }
 
+    return { ok: true };
+  },
+});
+
+export const updateNotes = mutation({
+  args: {
+    hostId: v.id("teamHosts"),
+    clerkUserId: v.string(),
+    notes: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await requireHostPermission(ctx, args.hostId, args.clerkUserId, "edit_notes");
+    await ctx.db.patch(args.hostId, {
+      notes: normalizeNotes(args.notes),
+      updatedAt: Date.now(),
+    });
     return { ok: true };
   },
 });
@@ -265,6 +442,8 @@ export const getMyCredential = query({
       username: credential?.username ?? null,
       ciphertext: credential?.ciphertext ?? null,
       hasCredential: Boolean(credential?.ciphertext),
+      updatedAt: credential?.updatedAt ?? null,
+      viewerCanEdit: true,
     };
   },
 });
@@ -328,6 +507,208 @@ export const deleteMyCredential = mutation({
     if (existing) {
       await ctx.db.delete(existing._id);
     }
+
+    return { ok: true };
+  },
+});
+
+export const listCredentialRoster = query({
+  args: {
+    hostId: v.id("teamHosts"),
+    clerkUserId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const access = await requireHostPermission(ctx, args.hostId, args.clerkUserId, "manage_hosts");
+    const members = await ctx.db
+      .query("teamMembers")
+      .withIndex("by_team", (q) => q.eq("teamId", access.host.teamId))
+      .collect();
+
+    const activeMembers = members.filter((member) => member.status === "active");
+    const ownerRecord = activeMembers.find((member) => member.clerkUserId === access.team.ownerClerkUserId);
+    const roster = ownerRecord
+      ? [...activeMembers]
+      : [
+          ...activeMembers,
+          {
+            _id: "owner_virtual" as Id<"teamMembers">,
+            _creationTime: 0,
+            teamId: access.host.teamId,
+            clerkUserId: access.team.ownerClerkUserId,
+            email: "",
+            displayName: access.team.ownerClerkUserId,
+            role: "owner",
+            status: "active",
+            joinedAt: access.team.createdAt,
+            createdAt: access.team.createdAt,
+            updatedAt: access.team.updatedAt,
+          },
+        ];
+
+    const entries = await Promise.all(
+      roster.map(async (member) => {
+        const credential = await ctx.db
+          .query("teamHostPersonalCredentials")
+          .withIndex("by_host_and_user", (q) => q.eq("hostId", args.hostId).eq("clerkUserId", member.clerkUserId))
+          .first();
+
+        const role = member.clerkUserId === access.team.ownerClerkUserId ? "owner" : member.role;
+        return {
+          memberId: member.clerkUserId,
+          displayName: memberDisplayName(member, member.clerkUserId),
+          email: member.email,
+          role,
+          isOwner: member.clerkUserId === access.team.ownerClerkUserId,
+          isCurrentUser: member.clerkUserId === args.clerkUserId,
+          hasCredential: Boolean(credential?.ciphertext),
+          credentialType: credential?.credentialType ?? "none",
+          username: credential?.username ?? null,
+          updatedAt: credential?.updatedAt ?? null,
+        };
+      }),
+    );
+
+    return entries.sort((left, right) => {
+      const roleDelta = roleOrder(left.role) - roleOrder(right.role);
+      if (roleDelta !== 0) {
+        return roleDelta;
+      }
+      return left.displayName.localeCompare(right.displayName, undefined, { sensitivity: "base" });
+    });
+  },
+});
+
+export const revealSharedCredential = mutation({
+  args: {
+    hostId: v.id("teamHosts"),
+    clerkUserId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const access = await requireHostPermission(ctx, args.hostId, args.clerkUserId, "reveal_secret");
+    if (access.host.credentialMode !== "shared") {
+      throw new Error("host_not_shared_credential_mode");
+    }
+
+    const shared = await ctx.db
+      .query("teamHostSharedCredentials")
+      .withIndex("by_host", (q) => q.eq("hostId", args.hostId))
+      .first();
+    if (!shared) {
+      throw new Error("shared_credential_not_configured");
+    }
+
+    await writeAuditEvent(ctx, {
+      teamId: access.host.teamId,
+      actorClerkUserId: args.clerkUserId,
+      actorDisplayName: memberDisplayName(access.member, args.clerkUserId),
+      entityType: "team_host_shared_credential",
+      entityId: args.hostId,
+      eventType: "shared_credential_revealed",
+      summary: `Revealed shared credential for ${access.host.label || access.host.hostname}`,
+      metadata: {
+        hostLabel: access.host.label || access.host.hostname,
+        credentialMode: access.host.credentialMode,
+        credentialType: shared.credentialType,
+      },
+    });
+
+    return {
+      hostId: args.hostId,
+      credentialType: shared.credentialType,
+      ciphertext: shared.ciphertext,
+      updatedAt: shared.updatedAt,
+    };
+  },
+});
+
+export const revealMemberCredential = mutation({
+  args: {
+    hostId: v.id("teamHosts"),
+    memberClerkUserId: v.string(),
+    clerkUserId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const access = await requireHostPermission(ctx, args.hostId, args.clerkUserId, "reveal_secret");
+    if (access.host.credentialMode !== "per_member") {
+      throw new Error("host_not_personal_credential_mode");
+    }
+
+    const credential = await ctx.db
+      .query("teamHostPersonalCredentials")
+      .withIndex("by_host_and_user", (q) => q.eq("hostId", args.hostId).eq("clerkUserId", args.memberClerkUserId))
+      .first();
+    if (!credential) {
+      throw new Error("credential_not_configured");
+    }
+
+    const targetMember = await getMemberRecord(ctx, access.host.teamId, args.memberClerkUserId);
+    await writeAuditEvent(ctx, {
+      teamId: access.host.teamId,
+      actorClerkUserId: args.clerkUserId,
+      actorDisplayName: memberDisplayName(access.member, args.clerkUserId),
+      entityType: "team_host_personal_credential",
+      entityId: `${args.hostId}:${args.memberClerkUserId}`,
+      eventType: "member_credential_revealed",
+      targetClerkUserId: args.memberClerkUserId,
+      targetDisplayName: memberDisplayName(targetMember, args.memberClerkUserId),
+      summary: `Revealed ${memberDisplayName(targetMember, args.memberClerkUserId)}'s credential for ${access.host.label || access.host.hostname}`,
+      metadata: {
+        hostLabel: access.host.label || access.host.hostname,
+        credentialMode: access.host.credentialMode,
+        credentialType: credential.credentialType,
+      },
+    });
+
+    return {
+      hostId: args.hostId,
+      memberClerkUserId: args.memberClerkUserId,
+      credentialType: credential.credentialType,
+      username: credential.username ?? null,
+      ciphertext: credential.ciphertext,
+      updatedAt: credential.updatedAt,
+    };
+  },
+});
+
+export const deleteMemberCredentialAsAdmin = mutation({
+  args: {
+    hostId: v.id("teamHosts"),
+    memberClerkUserId: v.string(),
+    clerkUserId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const access = await requireHostPermission(ctx, args.hostId, args.clerkUserId, "reveal_secret");
+    if (access.host.credentialMode !== "per_member") {
+      throw new Error("host_not_personal_credential_mode");
+    }
+
+    const credential = await ctx.db
+      .query("teamHostPersonalCredentials")
+      .withIndex("by_host_and_user", (q) => q.eq("hostId", args.hostId).eq("clerkUserId", args.memberClerkUserId))
+      .first();
+    if (!credential) {
+      return { ok: true };
+    }
+
+    await ctx.db.delete(credential._id);
+
+    const targetMember = await getMemberRecord(ctx, access.host.teamId, args.memberClerkUserId);
+    await writeAuditEvent(ctx, {
+      teamId: access.host.teamId,
+      actorClerkUserId: args.clerkUserId,
+      actorDisplayName: memberDisplayName(access.member, args.clerkUserId),
+      entityType: "team_host_personal_credential",
+      entityId: `${args.hostId}:${args.memberClerkUserId}`,
+      eventType: "member_credential_deleted",
+      targetClerkUserId: args.memberClerkUserId,
+      targetDisplayName: memberDisplayName(targetMember, args.memberClerkUserId),
+      summary: `Deleted ${memberDisplayName(targetMember, args.memberClerkUserId)}'s credential for ${access.host.label || access.host.hostname}`,
+      metadata: {
+        hostLabel: access.host.label || access.host.hostname,
+        credentialMode: access.host.credentialMode,
+        credentialType: credential.credentialType,
+      },
+    });
 
     return { ok: true };
   },

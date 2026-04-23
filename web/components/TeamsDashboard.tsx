@@ -4,7 +4,7 @@ import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 type TeamRole = "owner" | "admin" | "member";
-type DashboardTab = "overview" | "members" | "hosts" | "invites";
+type DashboardTab = "overview" | "members" | "hosts" | "invites" | "audit";
 
 type TeamSummary = {
   id: string;
@@ -47,6 +47,7 @@ type TeamHost = {
   port: number;
   group: string;
   tags: string[];
+  notes: string;
   authMode?: string;
   credentialMode: "shared" | "per_member";
   credentialType: "none" | "password" | "private_key";
@@ -54,10 +55,14 @@ type TeamHost = {
   lastConnectedAt: number | null;
   createdAt: number;
   updatedAt: number;
+  canManageHosts?: boolean;
+  canRevealSecrets?: boolean;
+  canEditNotes?: boolean;
 };
 
 type TeamHostDetail = TeamHost & {
   sharedCredential: string | null;
+  sharedCredentialConfigured?: boolean;
 };
 
 type PersonalCredential = {
@@ -67,6 +72,49 @@ type PersonalCredential = {
   username: string | null;
   hasCredential: boolean;
   secret: string;
+  updatedAt?: number | null;
+  viewerCanEdit?: boolean;
+};
+
+type CredentialRosterEntry = {
+  memberId: string;
+  displayName: string;
+  email: string;
+  role: TeamRole;
+  isOwner: boolean;
+  isCurrentUser: boolean;
+  hasCredential: boolean;
+  credentialType: "none" | "password" | "private_key";
+  username: string | null;
+  updatedAt: number | null;
+};
+
+type RevealedCredential = {
+  hostId: string;
+  memberClerkUserId?: string;
+  credentialType: "none" | "password" | "private_key";
+  username?: string | null;
+  secret: string;
+  updatedAt?: number | null;
+};
+
+type TeamAuditEvent = {
+  id: string;
+  teamId: string;
+  actorClerkUserId: string;
+  actorDisplayName: string;
+  entityType: string;
+  entityId: string;
+  eventType: string;
+  targetClerkUserId?: string | null;
+  targetDisplayName?: string | null;
+  summary: string;
+  metadata?: {
+    hostLabel?: string;
+    credentialMode?: string;
+    credentialType?: string;
+  } | null;
+  createdAt: number;
 };
 
 type InviteResponse = {
@@ -81,6 +129,7 @@ type HostFormState = {
   port: string;
   group: string;
   tags: string;
+  notes: string;
   credentialMode: "shared" | "per_member";
   credentialType: "none" | "password" | "private_key";
   sharedCredential: string;
@@ -99,6 +148,7 @@ const blankHostForm: HostFormState = {
   port: "22",
   group: "",
   tags: "",
+  notes: "",
   credentialMode: "shared",
   credentialType: "none",
   sharedCredential: "",
@@ -152,6 +202,9 @@ export default function TeamsDashboard() {
   const [editingHostId, setEditingHostId] = useState("");
   const [hostForm, setHostForm] = useState<HostFormState>(blankHostForm);
   const [personalCredential, setPersonalCredential] = useState<PersonalCredential | null>(null);
+  const [credentialRoster, setCredentialRoster] = useState<CredentialRosterEntry[]>([]);
+  const [revealedCredential, setRevealedCredential] = useState<RevealedCredential | null>(null);
+  const [auditEvents, setAuditEvents] = useState<TeamAuditEvent[]>([]);
   const [personalCredentialForm, setPersonalCredentialForm] = useState<PersonalCredentialFormState>(
     blankPersonalCredentialForm,
   );
@@ -167,6 +220,7 @@ export default function TeamsDashboard() {
   const canManageMembers = selectedTeam?.role === "owner" || selectedTeam?.role === "admin";
   const canManageHosts = canManageMembers;
   const canManageTeam = canManageMembers;
+  const canRevealSecrets = canManageMembers;
 
   async function refreshTeams(preferredTeamId?: string) {
     const nextTeams = await apiRequest<TeamSummary[]>("/api/teams/list");
@@ -267,6 +321,33 @@ export default function TeamsDashboard() {
   useEffect(() => {
     let cancelled = false;
 
+    async function loadAuditEvents() {
+      if (!selectedTeamId || !canManageHosts || activeTab !== "audit") {
+        setAuditEvents([]);
+        return;
+      }
+
+      try {
+        const events = await apiRequest<TeamAuditEvent[]>(`/api/teams/${selectedTeamId}/audit`);
+        if (!cancelled) {
+          setAuditEvents(events);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(loadError instanceof Error ? loadError.message : "audit_load_failed");
+        }
+      }
+    }
+
+    void loadAuditEvents();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, canManageHosts, selectedTeamId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
     async function loadPersonalCredential() {
       if (!editingHostId || hostForm.credentialMode !== "per_member") {
         setPersonalCredential(null);
@@ -300,6 +381,35 @@ export default function TeamsDashboard() {
       cancelled = true;
     };
   }, [editingHostId, hostForm.credentialMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCredentialRoster() {
+      if (!editingHostId || hostForm.credentialMode !== "per_member" || !canManageHosts) {
+        setCredentialRoster([]);
+        return;
+      }
+
+      try {
+        const roster = await apiRequest<CredentialRosterEntry[]>(
+          `/api/teams/hosts/${editingHostId}/credentials`,
+        );
+        if (!cancelled) {
+          setCredentialRoster(roster);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(loadError instanceof Error ? loadError.message : "credential_roster_failed");
+        }
+      }
+    }
+
+    void loadCredentialRoster();
+    return () => {
+      cancelled = true;
+    };
+  }, [canManageHosts, editingHostId, hostForm.credentialMode]);
 
   async function copyText(value: string, successMessage: string) {
     await navigator.clipboard.writeText(value);
@@ -477,6 +587,7 @@ export default function TeamsDashboard() {
     try {
       setError("");
       setDetailLoading(true);
+      setRevealedCredential(null);
       const host = await apiRequest<TeamHostDetail>(`/api/teams/hosts/${hostId}`);
       setEditingHostId(host.id);
       setHostForm({
@@ -486,6 +597,7 @@ export default function TeamsDashboard() {
         port: String(host.port || 22),
         group: host.group,
         tags: host.tags.join(", "),
+        notes: host.notes ?? "",
         credentialMode: host.credentialMode,
         credentialType: host.credentialType,
         sharedCredential: host.sharedCredential ?? "",
@@ -502,6 +614,8 @@ export default function TeamsDashboard() {
     setEditingHostId("");
     setHostForm(blankHostForm);
     setPersonalCredential(null);
+    setCredentialRoster([]);
+    setRevealedCredential(null);
     setPersonalCredentialForm(blankPersonalCredentialForm);
     setActiveTab("hosts");
   }
@@ -521,6 +635,7 @@ export default function TeamsDashboard() {
         port: Number(hostForm.port) || 22,
         group: hostForm.group.trim(),
         tags: parseTags(hostForm.tags),
+        notes: hostForm.notes.trim(),
         credentialMode: hostForm.credentialMode,
         credentialType: hostForm.credentialType,
         secretVisibility: "revealed_to_access_holders",
@@ -551,6 +666,26 @@ export default function TeamsDashboard() {
       }
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "save_host_failed");
+    }
+  }
+
+  async function handleSaveNotes() {
+    if (!editingHostId) {
+      return;
+    }
+
+    try {
+      setError("");
+      await apiRequest(`/api/teams/hosts/${editingHostId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ notes: hostForm.notes.trim() }),
+      });
+      if (selectedTeamId) {
+        await refreshTeamData(selectedTeamId);
+      }
+      setFlash("Notes saved.");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "save_notes_failed");
     }
   }
 
@@ -596,6 +731,12 @@ export default function TeamsDashboard() {
           nextCredential.credentialType === "private_key" ? "private_key" : "password",
         secret: nextCredential.secret ?? "",
       });
+      if (canManageHosts) {
+        const roster = await apiRequest<CredentialRosterEntry[]>(
+          `/api/teams/hosts/${editingHostId}/credentials`,
+        );
+        setCredentialRoster(roster);
+      }
       setFlash("Personal credential saved.");
     } catch (credentialError) {
       setError(credentialError instanceof Error ? credentialError.message : "save_credential_failed");
@@ -619,11 +760,92 @@ export default function TeamsDashboard() {
         username: null,
         hasCredential: false,
         secret: "",
+        updatedAt: null,
       });
       setPersonalCredentialForm(blankPersonalCredentialForm);
+      if (canManageHosts) {
+        const roster = await apiRequest<CredentialRosterEntry[]>(
+          `/api/teams/hosts/${editingHostId}/credentials`,
+        );
+        setCredentialRoster(roster);
+      }
       setFlash("Personal credential deleted.");
     } catch (credentialError) {
       setError(credentialError instanceof Error ? credentialError.message : "delete_credential_failed");
+    }
+  }
+
+  async function handleRevealSharedCredential() {
+    if (!editingHostId || !window.confirm("Reveal the shared credential? This action will be logged.")) {
+      return;
+    }
+
+    try {
+      setError("");
+      const revealed = await apiRequest<RevealedCredential>(
+        `/api/teams/hosts/${editingHostId}/credentials/shared/reveal`,
+        {
+          method: "POST",
+        },
+      );
+      setRevealedCredential(revealed);
+      setHostForm((current) => ({ ...current, sharedCredential: revealed.secret }));
+      setFlash("Shared credential revealed and logged.");
+      if (selectedTeamId) {
+        const events = await apiRequest<TeamAuditEvent[]>(`/api/teams/${selectedTeamId}/audit`);
+        setAuditEvents(events);
+      }
+    } catch (revealError) {
+      setError(revealError instanceof Error ? revealError.message : "reveal_shared_credential_failed");
+    }
+  }
+
+  async function handleRevealMemberCredential(memberId: string) {
+    if (!editingHostId || !window.confirm("Reveal this member credential? This action will be logged.")) {
+      return;
+    }
+
+    try {
+      setError("");
+      const revealed = await apiRequest<RevealedCredential>(
+        `/api/teams/hosts/${editingHostId}/credentials/${memberId}/reveal`,
+        {
+          method: "POST",
+        },
+      );
+      setRevealedCredential(revealed);
+      setFlash("Member credential revealed and logged.");
+      if (selectedTeamId) {
+        const events = await apiRequest<TeamAuditEvent[]>(`/api/teams/${selectedTeamId}/audit`);
+        setAuditEvents(events);
+      }
+    } catch (revealError) {
+      setError(revealError instanceof Error ? revealError.message : "reveal_member_credential_failed");
+    }
+  }
+
+  async function handleDeleteMemberCredential(memberId: string, displayName: string) {
+    if (!editingHostId || !window.confirm(`Delete ${displayName}'s credential? This action will be logged.`)) {
+      return;
+    }
+
+    try {
+      setError("");
+      await apiRequest(`/api/teams/hosts/${editingHostId}/credentials/${memberId}`, {
+        method: "DELETE",
+      });
+      setRevealedCredential(null);
+      const roster = await apiRequest<CredentialRosterEntry[]>(
+        `/api/teams/hosts/${editingHostId}/credentials`,
+      );
+      setCredentialRoster(roster);
+      if (selectedTeamId) {
+        const events = await apiRequest<TeamAuditEvent[]>(`/api/teams/${selectedTeamId}/audit`);
+        setAuditEvents(events);
+      }
+      setFlash(`Deleted ${displayName}'s credential.`);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "delete_member_credential_failed");
     }
   }
 
@@ -731,7 +953,9 @@ export default function TeamsDashboard() {
           </div>
 
           <div className="teams-tabs">
-            {(["overview", "members", "hosts", "invites"] as DashboardTab[]).map((tab) => (
+            {((canManageHosts
+              ? ["overview", "members", "hosts", "invites", "audit"]
+              : ["overview", "members", "hosts", "invites"]) as DashboardTab[]).map((tab) => (
               <button
                 key={tab}
                 className={`teams-tab ${activeTab === tab ? "teams-tab--active" : ""}`}
@@ -1014,6 +1238,16 @@ export default function TeamsDashboard() {
                         />
                       </label>
 
+                      <label className="field">
+                        <span className="field__label">Notes</span>
+                        <textarea
+                          className="field__input field__textarea"
+                          value={hostForm.notes}
+                          onChange={(event) => setHostForm((current) => ({ ...current, notes: event.target.value }))}
+                          placeholder="Shared deployment notes, caveats, or runbook steps"
+                        />
+                      </label>
+
                       <div className="grid-2">
                         <label className="field">
                           <span className="field__label">Credential mode</span>
@@ -1053,21 +1287,35 @@ export default function TeamsDashboard() {
                       </div>
 
                       {hostForm.credentialMode === "shared" && hostForm.credentialType !== "none" ? (
-                        <label className="field">
-                          <span className="field__label">Shared secret</span>
-                          <textarea
-                            className="field__input field__textarea"
-                            value={hostForm.sharedCredential}
-                            onChange={(event) =>
-                              setHostForm((current) => ({ ...current, sharedCredential: event.target.value }))
-                            }
-                            placeholder={
-                              hostForm.credentialType === "private_key"
-                                ? "Paste the private key"
-                                : "Paste the password"
-                            }
-                          />
-                        </label>
+                        <div className="stack" style={{ gap: 10 }}>
+                          <label className="field">
+                            <span className="field__label">Shared secret</span>
+                            <textarea
+                              className="field__input field__textarea"
+                              value={hostForm.sharedCredential}
+                              onChange={(event) =>
+                                setHostForm((current) => ({ ...current, sharedCredential: event.target.value }))
+                              }
+                              placeholder={
+                                hostForm.credentialType === "private_key"
+                                  ? "Paste the private key"
+                                  : "Paste the password"
+                              }
+                            />
+                          </label>
+                          {editingHostId ? (
+                            <div className="row">
+                              <button className="btn" type="button" onClick={() => void handleRevealSharedCredential()}>
+                                Reveal shared credential
+                              </button>
+                              <span className="muted text-sm">
+                                {hostForm.sharedCredential
+                                  ? "Editing revealed/shared secret"
+                                  : "Reveal is audited and only available to owners/admins."}
+                              </span>
+                            </div>
+                          ) : null}
+                        </div>
                       ) : null}
 
                       <div className="row">
@@ -1088,86 +1336,313 @@ export default function TeamsDashboard() {
                     </form>
 
                     {editingHostId && hostForm.credentialMode === "per_member" ? (
-                      <div className="block stack teams-subpanel" style={{ gap: 12 }}>
-                        <span className="eyebrow">Your credential</span>
-                        <p className="muted text-sm">
-                          This host uses per-member credentials. Save your own secret here; other members cannot read it.
-                        </p>
-                        <p className="muted text-sm">
-                          Status: {personalCredential?.hasCredential ? "configured" : "not configured"}
-                        </p>
-                        <form className="stack" style={{ gap: 12 }} onSubmit={handleSavePersonalCredential}>
-                          <label className="field">
-                            <span className="field__label">Username override</span>
-                            <input
-                              className="field__input"
-                              value={personalCredentialForm.username}
-                              onChange={(event) =>
-                                setPersonalCredentialForm((current) => ({
-                                  ...current,
-                                  username: event.target.value,
-                                }))
-                              }
-                              placeholder="Optional"
-                            />
-                          </label>
-                          <label className="field">
-                            <span className="field__label">Credential type</span>
-                            <select
-                              className="field__input"
-                              value={personalCredentialForm.credentialType}
-                              onChange={(event) =>
-                                setPersonalCredentialForm((current) => ({
-                                  ...current,
-                                  credentialType: event.target.value as "password" | "private_key",
-                                }))
-                              }
-                            >
-                              <option value="password">password</option>
-                              <option value="private_key">private key</option>
-                            </select>
-                          </label>
-                          <label className="field">
-                            <span className="field__label">Secret</span>
-                            <textarea
-                              className="field__input field__textarea"
-                              value={personalCredentialForm.secret}
-                              onChange={(event) =>
-                                setPersonalCredentialForm((current) => ({
-                                  ...current,
-                                  secret: event.target.value,
-                                }))
-                              }
-                              placeholder={
-                                personalCredentialForm.credentialType === "private_key"
-                                  ? "Paste your private key"
-                                  : "Paste your password"
-                              }
-                            />
-                          </label>
-                          <div className="row">
-                            <button className="btn btn--primary" type="submit">
-                              Save my credential
-                            </button>
-                            {personalCredential?.hasCredential ? (
-                              <button className="btn" type="button" onClick={handleDeletePersonalCredential}>
-                                Delete my credential
+                      <>
+                        <div className="block stack teams-subpanel" style={{ gap: 12 }}>
+                          <span className="eyebrow">Your credential</span>
+                          <p className="muted text-sm">
+                            This host uses per-member credentials. Save your own secret here; other members cannot read it through the self-service path.
+                          </p>
+                          <p className="muted text-sm">
+                            Status: {personalCredential?.hasCredential ? "configured" : "not configured"}
+                            {personalCredential?.updatedAt ? ` · updated ${formatTime(personalCredential.updatedAt)}` : ""}
+                          </p>
+                          <form className="stack" style={{ gap: 12 }} onSubmit={handleSavePersonalCredential}>
+                            <label className="field">
+                              <span className="field__label">Username override</span>
+                              <input
+                                className="field__input"
+                                value={personalCredentialForm.username}
+                                onChange={(event) =>
+                                  setPersonalCredentialForm((current) => ({
+                                    ...current,
+                                    username: event.target.value,
+                                  }))
+                                }
+                                placeholder="Optional"
+                              />
+                            </label>
+                            <label className="field">
+                              <span className="field__label">Credential type</span>
+                              <select
+                                className="field__input"
+                                value={personalCredentialForm.credentialType}
+                                onChange={(event) =>
+                                  setPersonalCredentialForm((current) => ({
+                                    ...current,
+                                    credentialType: event.target.value as "password" | "private_key",
+                                  }))
+                                }
+                              >
+                                <option value="password">password</option>
+                                <option value="private_key">private key</option>
+                              </select>
+                            </label>
+                            <label className="field">
+                              <span className="field__label">Secret</span>
+                              <textarea
+                                className="field__input field__textarea"
+                                value={personalCredentialForm.secret}
+                                onChange={(event) =>
+                                  setPersonalCredentialForm((current) => ({
+                                    ...current,
+                                    secret: event.target.value,
+                                  }))
+                                }
+                                placeholder={
+                                  personalCredentialForm.credentialType === "private_key"
+                                    ? "Paste your private key"
+                                    : "Paste your password"
+                                }
+                              />
+                            </label>
+                            <div className="row">
+                              <button className="btn btn--primary" type="submit">
+                                Save my credential
                               </button>
-                            ) : null}
-                          </div>
-                        </form>
+                              {personalCredential?.hasCredential ? (
+                                <button className="btn" type="button" onClick={handleDeletePersonalCredential}>
+                                  Delete my credential
+                                </button>
+                              ) : null}
+                            </div>
+                          </form>
+                        </div>
+
+                        <div className="block stack teams-subpanel" style={{ gap: 12 }}>
+                          <span className="eyebrow">Member credentials</span>
+                          <p className="muted text-sm">
+                            Owners and admins can inspect configuration status, reveal secrets, and delete member credentials. Reveal and delete actions are audited.
+                          </p>
+                          {credentialRoster.length > 0 ? (
+                            <div className="stack" style={{ gap: 10 }}>
+                              {credentialRoster.map((entry) => (
+                                <div key={entry.memberId} className="teams-cardRow">
+                                  <div className="stack" style={{ gap: 4 }}>
+                                    <strong>{entry.displayName}</strong>
+                                    <span className="muted text-sm">
+                                      {entry.role} · {entry.email || entry.memberId}
+                                    </span>
+                                    <span className="muted text-sm">
+                                      {entry.hasCredential
+                                        ? `${entry.credentialType}${entry.username ? ` · ${entry.username}` : ""}${entry.updatedAt ? ` · ${formatTime(entry.updatedAt)}` : ""}`
+                                        : "missing credential"}
+                                    </span>
+                                  </div>
+                                  <div className="row">
+                                    <button
+                                      className="btn"
+                                      type="button"
+                                      onClick={() => void handleRevealMemberCredential(entry.memberId)}
+                                      disabled={!entry.hasCredential}
+                                    >
+                                      Reveal
+                                    </button>
+                                    <button
+                                      className="btn"
+                                      type="button"
+                                      onClick={() => void handleDeleteMemberCredential(entry.memberId, entry.displayName)}
+                                      disabled={!entry.hasCredential}
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="teams-empty">No member credential data yet.</div>
+                          )}
+                        </div>
+                      </>
+                    ) : null}
+
+                    {revealedCredential ? (
+                      <div className="block stack teams-subpanel" style={{ gap: 12 }}>
+                        <span className="eyebrow">Revealed credential</span>
+                        <p className="muted text-sm">
+                          This output was revealed through an audited admin action.
+                        </p>
+                        <div className="stack" style={{ gap: 6 }}>
+                          <span className="muted text-sm">
+                            {revealedCredential.credentialType}
+                            {revealedCredential.username ? ` · ${revealedCredential.username}` : ""}
+                            {revealedCredential.updatedAt ? ` · ${formatTime(revealedCredential.updatedAt)}` : ""}
+                          </span>
+                          <textarea
+                            className="field__input field__textarea"
+                            value={revealedCredential.secret}
+                            readOnly
+                          />
+                        </div>
+                        <div className="row">
+                          <button
+                            className="btn"
+                            type="button"
+                            onClick={() => void copyText(revealedCredential.secret, "Credential copied.")}
+                          >
+                            Copy secret
+                          </button>
+                          <button className="btn" type="button" onClick={() => setRevealedCredential(null)}>
+                            Clear
+                          </button>
+                        </div>
                       </div>
                     ) : null}
                   </>
                 ) : (
-                  <div className="teams-empty">
-                    You can browse hosts in this team, but only owners and admins can change them.
-                  </div>
+                  editingHostId ? (
+                    <div className="stack" style={{ gap: 12 }}>
+                      <div className="block stack teams-subpanel" style={{ gap: 10 }}>
+                        <span className="eyebrow">Host details</span>
+                        <h3 className="text-lg fw-800">{hostForm.label || hostForm.hostname}</h3>
+                        <p className="muted text-sm">
+                          {hostForm.username}@{hostForm.hostname}:{hostForm.port}
+                        </p>
+                        <p className="muted text-sm">
+                          {hostForm.credentialMode} · {hostForm.credentialType}
+                        </p>
+                      </div>
+
+                      <div className="block stack teams-subpanel" style={{ gap: 12 }}>
+                        <span className="eyebrow">Notes</span>
+                        <p className="muted text-sm">
+                          Shared host notes are collaborative and visible in the browser and TUI.
+                        </p>
+                        <label className="field">
+                          <span className="field__label">Host notes</span>
+                          <textarea
+                            className="field__input field__textarea"
+                            value={hostForm.notes}
+                            onChange={(event) => setHostForm((current) => ({ ...current, notes: event.target.value }))}
+                            placeholder="Shared deployment notes, caveats, or runbook steps"
+                          />
+                        </label>
+                        <div className="row">
+                          <button className="btn btn--primary" type="button" onClick={() => void handleSaveNotes()}>
+                            Save notes
+                          </button>
+                        </div>
+                      </div>
+
+                      {hostForm.credentialMode === "per_member" ? (
+                        <div className="block stack teams-subpanel" style={{ gap: 12 }}>
+                          <span className="eyebrow">Your credential</span>
+                          <p className="muted text-sm">
+                            This host uses per-member credentials. Save your own secret here.
+                          </p>
+                          <p className="muted text-sm">
+                            Status: {personalCredential?.hasCredential ? "configured" : "not configured"}
+                            {personalCredential?.updatedAt ? ` · updated ${formatTime(personalCredential.updatedAt)}` : ""}
+                          </p>
+                          <form className="stack" style={{ gap: 12 }} onSubmit={handleSavePersonalCredential}>
+                            <label className="field">
+                              <span className="field__label">Username override</span>
+                              <input
+                                className="field__input"
+                                value={personalCredentialForm.username}
+                                onChange={(event) =>
+                                  setPersonalCredentialForm((current) => ({
+                                    ...current,
+                                    username: event.target.value,
+                                  }))
+                                }
+                                placeholder="Optional"
+                              />
+                            </label>
+                            <label className="field">
+                              <span className="field__label">Credential type</span>
+                              <select
+                                className="field__input"
+                                value={personalCredentialForm.credentialType}
+                                onChange={(event) =>
+                                  setPersonalCredentialForm((current) => ({
+                                    ...current,
+                                    credentialType: event.target.value as "password" | "private_key",
+                                  }))
+                                }
+                              >
+                                <option value="password">password</option>
+                                <option value="private_key">private key</option>
+                              </select>
+                            </label>
+                            <label className="field">
+                              <span className="field__label">Secret</span>
+                              <textarea
+                                className="field__input field__textarea"
+                                value={personalCredentialForm.secret}
+                                onChange={(event) =>
+                                  setPersonalCredentialForm((current) => ({
+                                    ...current,
+                                    secret: event.target.value,
+                                  }))
+                                }
+                                placeholder={
+                                  personalCredentialForm.credentialType === "private_key"
+                                    ? "Paste your private key"
+                                    : "Paste your password"
+                                }
+                              />
+                            </label>
+                            <div className="row">
+                              <button className="btn btn--primary" type="submit">
+                                Save my credential
+                              </button>
+                              {personalCredential?.hasCredential ? (
+                                <button className="btn" type="button" onClick={handleDeletePersonalCredential}>
+                                  Delete my credential
+                                </button>
+                              ) : null}
+                            </div>
+                          </form>
+                        </div>
+                      ) : (
+                        <div className="teams-empty">
+                          This host uses a shared credential. Only owners and admins can reveal or change it.
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="teams-empty">
+                      You can browse hosts in this team, edit shared notes, and manage your own credential where needed.
+                    </div>
+                  )
                 )
               ) : (
                 <div className="teams-empty">Select a team first.</div>
               )}
             </div>
+          </div>
+        ) : null}
+
+        {activeTab === "audit" ? (
+          <div className="block stack teams-panel">
+            <span className="eyebrow">Audit</span>
+            <h3 className="text-lg fw-800">Credential access log</h3>
+            <p className="muted text-sm">
+              Owner/admin reveal and delete actions for team credentials are recorded here.
+            </p>
+            {auditEvents.length > 0 ? (
+              <div className="stack" style={{ gap: 10 }}>
+                {auditEvents.map((event) => (
+                  <div key={event.id} className="teams-cardRow">
+                    <div className="stack" style={{ gap: 4 }}>
+                      <strong>{event.summary}</strong>
+                      <span className="muted text-sm">
+                        {event.actorDisplayName}
+                        {event.targetDisplayName ? ` → ${event.targetDisplayName}` : ""}
+                      </span>
+                      <span className="muted text-sm">
+                        {formatTime(event.createdAt)}
+                        {event.metadata?.hostLabel ? ` · ${event.metadata.hostLabel}` : ""}
+                        {event.metadata?.credentialType ? ` · ${event.metadata.credentialType}` : ""}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="teams-empty">No audited credential events yet.</div>
+            )}
           </div>
         ) : null}
 

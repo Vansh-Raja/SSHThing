@@ -37,6 +37,7 @@ export default defineSchema({
     port: v.number(),
     group: v.string(),
     tags: v.array(v.string()),
+    notes: v.string(),
     authMode: v.optional(v.string()),
     credentialMode: v.string(),
     credentialType: v.string(),
@@ -87,6 +88,28 @@ export default defineSchema({
   })
     .index("by_host_and_user", ["hostId", "clerkUserId"])
     .index("by_user", ["clerkUserId"]),
+
+  teamAuditEvents: defineTable({
+    teamId: v.id("teams"),
+    actorClerkUserId: v.string(),
+    actorDisplayName: v.string(),
+    entityType: v.string(),
+    entityId: v.string(),
+    eventType: v.string(),
+    targetClerkUserId: v.optional(v.string()),
+    targetDisplayName: v.optional(v.string()),
+    summary: v.string(),
+    metadata: v.optional(
+      v.object({
+        hostLabel: v.optional(v.string()),
+        credentialMode: v.optional(v.string()),
+        credentialType: v.optional(v.string()),
+      }),
+    ),
+    createdAt: v.number(),
+  })
+    .index("by_team_and_created_at", ["teamId", "createdAt"])
+    .index("by_entity_and_created_at", ["entityId", "createdAt"]),
 
   cliAuthSessions: defineTable({
     deviceName: v.string(),

@@ -135,6 +135,7 @@ func (c *Client) UpdateTeamHost(ctx context.Context, accessToken, hostID string,
 		"port":             req.Port,
 		"group":            req.Group,
 		"tags":             req.Tags,
+		"notes":            req.Notes,
 		"credentialMode":   req.CredentialMode,
 		"credentialType":   req.CredentialType,
 		"secretVisibility": req.SecretVisibility,
@@ -149,6 +150,34 @@ func (c *Client) UpdateTeamHost(ctx context.Context, accessToken, hostID string,
 
 func (c *Client) DeleteTeamHost(ctx context.Context, accessToken, hostID string) error {
 	return c.doJSON(ctx, http.MethodDelete, "/api/teams/hosts/"+url.PathEscape(hostID), accessToken, nil, nil)
+}
+
+func (c *Client) ListHostCredentialRoster(ctx context.Context, accessToken, hostID string) ([]teams.TeamHostCredentialRosterEntry, error) {
+	var out []teams.TeamHostCredentialRosterEntry
+	err := c.doJSON(ctx, http.MethodGet, "/api/teams/hosts/"+url.PathEscape(hostID)+"/credentials", accessToken, nil, &out)
+	return out, err
+}
+
+func (c *Client) RevealSharedCredential(ctx context.Context, accessToken, hostID string) (teams.RevealedTeamHostCredential, error) {
+	var out teams.RevealedTeamHostCredential
+	err := c.doJSON(ctx, http.MethodPost, "/api/teams/hosts/"+url.PathEscape(hostID)+"/credentials/shared/reveal", accessToken, map[string]any{}, &out)
+	return out, err
+}
+
+func (c *Client) RevealMemberCredential(ctx context.Context, accessToken, hostID, memberID string) (teams.RevealedTeamHostCredential, error) {
+	var out teams.RevealedTeamHostCredential
+	err := c.doJSON(ctx, http.MethodPost, "/api/teams/hosts/"+url.PathEscape(hostID)+"/credentials/"+url.PathEscape(memberID)+"/reveal", accessToken, map[string]any{}, &out)
+	return out, err
+}
+
+func (c *Client) DeleteMemberCredentialAsAdmin(ctx context.Context, accessToken, hostID, memberID string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/api/teams/hosts/"+url.PathEscape(hostID)+"/credentials/"+url.PathEscape(memberID), accessToken, nil, nil)
+}
+
+func (c *Client) ListTeamAuditEvents(ctx context.Context, accessToken, teamID string) ([]teams.TeamAuditEvent, error) {
+	var out []teams.TeamAuditEvent
+	err := c.doJSON(ctx, http.MethodGet, "/api/teams/"+url.PathEscape(teamID)+"/audit", accessToken, nil, &out)
+	return out, err
 }
 
 func (c *Client) GetTeamHostConnectConfig(ctx context.Context, accessToken, hostID string) (teams.TeamHostConnectConfig, error) {

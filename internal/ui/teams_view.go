@@ -34,6 +34,7 @@ type TeamsHomeListItem struct {
 	CredentialType     string
 	LastConnectedLabel string
 	Tags               []string
+	Notes              string
 }
 
 type TeamsHomeViewParams struct {
@@ -230,8 +231,16 @@ func (r *Renderer) renderTeamsDetail(p TeamsHomeViewParams, _ int, _ int) string
 		"",
 		kStyle.Render("tags        ") + tagStr,
 		"",
-		lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("enter connect  \u00B7  a add host  \u00B7  e edit  \u00B7  d delete"),
 	}
+
+	if notes := strings.TrimSpace(selected.Notes); notes != "" {
+		lines = append(lines,
+			kStyle.Render("notes       ")+dimStyle.Render(notes),
+			"",
+		)
+	}
+
+	lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("enter connect  \u00B7  a add host  \u00B7  e edit  \u00B7  d delete"))
 	return strings.Join(lines, "\n")
 }
 

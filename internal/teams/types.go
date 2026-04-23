@@ -60,6 +60,7 @@ type TeamHost struct {
 	Port             int      `json:"port"`
 	Group            string   `json:"group,omitempty"`
 	Tags             []string `json:"tags,omitempty"`
+	Notes            string   `json:"notes,omitempty"`
 	AuthMode         string   `json:"authMode,omitempty"`
 	CredentialMode   string   `json:"credentialMode,omitempty"`
 	CredentialType   string   `json:"credentialType,omitempty"`
@@ -67,11 +68,15 @@ type TeamHost struct {
 	LastConnectedAt  *int64   `json:"lastConnectedAt,omitempty"`
 	CreatedAt        int64    `json:"createdAt,omitempty"`
 	UpdatedAt        int64    `json:"updatedAt,omitempty"`
+	CanManageHosts   bool     `json:"canManageHosts,omitempty"`
+	CanRevealSecrets bool     `json:"canRevealSecrets,omitempty"`
+	CanEditNotes     bool     `json:"canEditNotes,omitempty"`
 }
 
 type TeamHostDetail struct {
 	TeamHost
-	SharedCredential string `json:"sharedCredential,omitempty"`
+	SharedCredential           string `json:"sharedCredential,omitempty"`
+	SharedCredentialConfigured bool   `json:"sharedCredentialConfigured,omitempty"`
 }
 
 type TeamHostConnectConfig struct {
@@ -93,6 +98,7 @@ type CreateTeamHostRequest struct {
 	Port             int      `json:"port"`
 	Group            string   `json:"group,omitempty"`
 	Tags             []string `json:"tags,omitempty"`
+	Notes            string   `json:"notes,omitempty"`
 	CredentialMode   string   `json:"credentialMode"`
 	CredentialType   string   `json:"credentialType"`
 	SecretVisibility string   `json:"secretVisibility"`
@@ -106,6 +112,7 @@ type UpdateTeamHostRequest struct {
 	Port                  int      `json:"port"`
 	Group                 string   `json:"group,omitempty"`
 	Tags                  []string `json:"tags,omitempty"`
+	Notes                 string   `json:"notes,omitempty"`
 	CredentialMode        string   `json:"credentialMode"`
 	CredentialType        string   `json:"credentialType"`
 	SecretVisibility      string   `json:"secretVisibility"`
@@ -120,6 +127,44 @@ type TeamHostCredential struct {
 	Username       string `json:"username,omitempty"`
 	HasCredential  bool   `json:"hasCredential"`
 	Secret         string `json:"secret,omitempty"`
+	UpdatedAt      *int64 `json:"updatedAt,omitempty"`
+	ViewerCanEdit  bool   `json:"viewerCanEdit,omitempty"`
+}
+
+type TeamHostCredentialRosterEntry struct {
+	MemberID       string   `json:"memberId"`
+	DisplayName    string   `json:"displayName"`
+	Email          string   `json:"email"`
+	Role           TeamRole `json:"role"`
+	IsOwner        bool     `json:"isOwner"`
+	IsCurrentUser  bool     `json:"isCurrentUser"`
+	HasCredential  bool     `json:"hasCredential"`
+	CredentialType string   `json:"credentialType"`
+	Username       string   `json:"username,omitempty"`
+	UpdatedAt      *int64   `json:"updatedAt,omitempty"`
+}
+
+type RevealedTeamHostCredential struct {
+	HostID            string `json:"hostId"`
+	MemberClerkUserID string `json:"memberClerkUserId,omitempty"`
+	CredentialType    string `json:"credentialType"`
+	Username          string `json:"username,omitempty"`
+	Secret            string `json:"secret,omitempty"`
+	UpdatedAt         *int64 `json:"updatedAt,omitempty"`
+}
+
+type TeamAuditEvent struct {
+	ID                string `json:"id"`
+	TeamID            string `json:"teamId"`
+	ActorClerkUserID  string `json:"actorClerkUserId"`
+	ActorDisplayName  string `json:"actorDisplayName"`
+	EntityType        string `json:"entityType"`
+	EntityID          string `json:"entityId"`
+	EventType         string `json:"eventType"`
+	TargetClerkUserID string `json:"targetClerkUserId,omitempty"`
+	TargetDisplayName string `json:"targetDisplayName,omitempty"`
+	Summary           string `json:"summary"`
+	CreatedAt         int64  `json:"createdAt"`
 }
 
 type AuthState struct {

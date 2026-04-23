@@ -1616,6 +1616,7 @@ func (m Model) buildTeamsViewParams() ui.TeamsHomeViewParams {
 				CredentialType:     strings.TrimSpace(host.CredentialType),
 				LastConnectedLabel: lastConnected,
 				Tags:               append([]string(nil), host.Tags...),
+				Notes:              strings.TrimSpace(host.Notes),
 				Selected:           host.ID == selectedHostID,
 			})
 		}

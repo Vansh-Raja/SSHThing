@@ -40,6 +40,7 @@ export async function PATCH(request: Request, { params }: Params) {
     port?: number;
     group?: string;
     tags?: string[];
+    notes?: string;
     credentialMode?: string;
     credentialType?: string;
     secretVisibility?: string;
@@ -48,25 +49,50 @@ export async function PATCH(request: Request, { params }: Params) {
 
   try {
     const actor = await getActorFromRequest(request.headers.get("authorization"));
-    const result = await convexMutation<Record<string, unknown>>(convexApi.teamHosts.update, {
+    const currentHost = await convexQuery<Record<string, unknown>>(convexApi.teamHosts.getHost, {
       hostId,
       clerkUserId: actor.clerkUserId,
-      label: body.label?.trim() || body.hostname?.trim() || "",
-      hostname: body.hostname?.trim() || "",
-      username: body.username?.trim() || "",
-      port: body.port ?? 22,
-      group: body.group?.trim() || "",
-      tags: Array.isArray(body.tags) ? body.tags : [],
-      credentialMode: body.credentialMode ?? "shared",
-      credentialType: body.credentialType ?? "none",
-      secretVisibility: body.secretVisibility ?? "revealed_to_access_holders",
-      sharedCredentialCiphertext:
-        body.sharedCredential === null
-          ? null
-          : body.sharedCredential
-            ? encryptTeamSecret(body.sharedCredential)
-            : undefined,
     });
+    const canManageHosts = currentHost.canManageHosts === true;
+    const hasMetadataFields = [
+      body.label,
+      body.hostname,
+      body.username,
+      body.port,
+      body.group,
+      body.tags,
+      body.credentialMode,
+      body.credentialType,
+      body.secretVisibility,
+      body.sharedCredential,
+    ].some((value) => value !== undefined);
+
+    const result = !canManageHosts && !hasMetadataFields
+      ? await convexMutation<Record<string, unknown>>(convexApi.teamHosts.updateNotes, {
+          hostId,
+          clerkUserId: actor.clerkUserId,
+          notes: body.notes?.trim() || "",
+        })
+      : await convexMutation<Record<string, unknown>>(convexApi.teamHosts.update, {
+          hostId,
+          clerkUserId: actor.clerkUserId,
+          label: body.label?.trim() || body.hostname?.trim() || "",
+          hostname: body.hostname?.trim() || "",
+          username: body.username?.trim() || "",
+          port: body.port ?? 22,
+          group: body.group?.trim() || "",
+          tags: Array.isArray(body.tags) ? body.tags : [],
+          notes: body.notes?.trim() || "",
+          credentialMode: body.credentialMode ?? "shared",
+          credentialType: body.credentialType ?? "none",
+          secretVisibility: body.secretVisibility ?? "revealed_to_access_holders",
+          sharedCredentialCiphertext:
+            body.sharedCredential === null
+              ? null
+              : body.sharedCredential
+                ? encryptTeamSecret(body.sharedCredential)
+                : undefined,
+        });
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(

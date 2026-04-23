@@ -34,6 +34,7 @@ export async function POST(request: Request, { params }: Params) {
     port?: number;
     group?: string;
     tags?: string[];
+    notes?: string;
     credentialMode?: string;
     credentialType?: string;
     secretVisibility?: string;
@@ -55,6 +56,7 @@ export async function POST(request: Request, { params }: Params) {
       port: body.port ?? 22,
       group: body.group?.trim() || "",
       tags: Array.isArray(body.tags) ? body.tags : [],
+      notes: body.notes?.trim() || "",
       credentialMode: body.credentialMode ?? "shared",
       credentialType: body.credentialType ?? "none",
       secretVisibility: body.secretVisibility ?? "revealed_to_access_holders",

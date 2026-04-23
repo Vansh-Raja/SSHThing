@@ -41,7 +41,9 @@ export const listForUser = query({
         }),
     );
 
-    return teams.filter(Boolean).sort((a, b) => a.displayOrder - b.displayOrder);
+    return teams
+      .filter((team): team is NonNullable<(typeof teams)[number]> => team !== null)
+      .sort((a, b) => a.displayOrder - b.displayOrder);
   },
 });
 
@@ -184,6 +186,14 @@ export const remove = mutation({
         await ctx.db.delete(credential._id);
       }
       await ctx.db.delete(host._id);
+    }
+
+    const auditEvents = await ctx.db
+      .query("teamAuditEvents")
+      .withIndex("by_team_and_created_at", (q) => q.eq("teamId", team._id))
+      .collect();
+    for (const event of auditEvents) {
+      await ctx.db.delete(event._id);
     }
 
     return { ok: true };

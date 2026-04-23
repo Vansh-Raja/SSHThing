@@ -4,6 +4,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 export type TeamRole = "owner" | "admin" | "member";
 export type TeamPermission =
   | "read"
+  | "edit_notes"
   | "manage_members"
   | "manage_hosts"
   | "manage_team"
@@ -26,6 +27,7 @@ export function normalizeTeamRole(role: string): TeamRole {
 export function hasTeamPermission(role: TeamRole, permission: TeamPermission): boolean {
   switch (permission) {
     case "read":
+    case "edit_notes":
       return true;
     case "delete_team":
       return role === "owner";
