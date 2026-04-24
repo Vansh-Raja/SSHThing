@@ -1630,6 +1630,74 @@ html.dark .btn--danger {
   line-height: 1.55;
 }
 
+/* ---------- Disclosure (admin expander) ---------- */
+
+.disclosure {
+  border: 1.5px solid var(--line);
+  background: var(--paper);
+  border-radius: var(--radius);
+}
+.disclosure + .disclosure {
+  margin-top: 8px;
+}
+.disclosure__summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  user-select: none;
+}
+.disclosure__summary::-webkit-details-marker {
+  display: none;
+}
+.disclosure__title {
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+.disclosure__title::before {
+  content: "▸";
+  color: var(--muted);
+  transition: transform 0.15s ease;
+  display: inline-block;
+  font-size: 11px;
+}
+.disclosure[open] .disclosure__title::before {
+  transform: rotate(90deg);
+}
+.disclosure__hint {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.disclosure__content {
+  padding: 10px 14px 14px;
+  border-top: 1.5px solid var(--line);
+}
+
+/* ---------- In-copy link (looks like a link, is a button) ---------- */
+
+.linklike {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--ink);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.linklike:hover {
+  color: var(--accent);
+}
+
 /* ---------- Responsive tweaks ---------- */
 
 @media (max-width: 720px) {

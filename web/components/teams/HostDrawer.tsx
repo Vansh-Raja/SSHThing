@@ -30,7 +30,7 @@ type HostDrawerProps = {
   onAuditChanged?: () => void;
 };
 
-type Segment = "details" | "credentials";
+type Segment = "details" | "host_credentials" | "personal_credentials";
 
 async function copyText(value: string, successMessage: string) {
   try {
@@ -172,6 +172,13 @@ export default function HostDrawer({
       cancelled = true;
     };
   }, [open, mode, hostId, hostForm.credentialMode, canManageHosts]);
+
+  // Clear revealed panel when the user switches to a segment that doesn't
+  // render it, so the secret isn't still sitting in memory/state unnoticed.
+  useEffect(() => {
+    setRevealed(null);
+    setShowRevealedSecret(false);
+  }, [segment]);
 
   async function handleSaveHost(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -381,7 +388,9 @@ export default function HostDrawer({
       ? "New host"
       : hostForm.label || hostForm.hostname || hostLabel || "Edit host";
 
-  const hasCredentialsSegment = mode === "edit";
+  const hasCredentialsSegments = mode === "edit";
+  const hostFormVisible =
+    segment === "details" || segment === "host_credentials";
 
   return (
     <Drawer
@@ -390,7 +399,11 @@ export default function HostDrawer({
       title={title}
       width={560}
       footer={
-        segment === "details" ? (
+        segment === "personal_credentials" ? (
+          <button type="button" className="btn" onClick={onClose}>
+            Close
+          </button>
+        ) : (
           <>
             {mode === "edit" && canManageHosts ? (
               <div className="drawer__footer-left">
@@ -427,14 +440,10 @@ export default function HostDrawer({
               </button>
             ) : null}
           </>
-        ) : (
-          <button type="button" className="btn" onClick={onClose}>
-            Close
-          </button>
         )
       }
     >
-      {hasCredentialsSegment ? (
+      {hasCredentialsSegments ? (
         <div className="segmented" role="tablist" aria-label="Host sections">
           <button
             type="button"
@@ -448,226 +457,311 @@ export default function HostDrawer({
           <button
             type="button"
             role="tab"
-            aria-selected={segment === "credentials"}
+            aria-selected={segment === "host_credentials"}
             className="segmented__item"
-            onClick={() => setSegment("credentials")}
+            onClick={() => setSegment("host_credentials")}
           >
-            Credentials
+            Host creds
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={segment === "personal_credentials"}
+            className="segmented__item"
+            onClick={() => setSegment("personal_credentials")}
+          >
+            Personal creds
           </button>
         </div>
       ) : null}
 
-      {segment === "details" ? (
+      {hostFormVisible ? (
         <form
           id="host-form"
           className="stack"
           style={{ gap: 12 }}
           onSubmit={handleSaveHost}
         >
-          <label className="field">
-            <span className="field__label">Label</span>
-            <input
-              className="field__input"
-              value={hostForm.label}
-              onChange={(e) =>
-                setHostForm((cur) => ({ ...cur, label: e.target.value }))
-              }
-              placeholder="Production bastion"
-              disabled={!canManageHosts}
-            />
-          </label>
+          {segment === "details" ? (
+            <>
+              <label className="field">
+                <span className="field__label">Label</span>
+                <input
+                  className="field__input"
+                  value={hostForm.label}
+                  onChange={(e) =>
+                    setHostForm((cur) => ({ ...cur, label: e.target.value }))
+                  }
+                  placeholder="Production bastion"
+                  disabled={!canManageHosts}
+                />
+              </label>
 
-          <div className="grid-2">
-            <label className="field">
-              <span className="field__label">Hostname</span>
-              <input
-                className="field__input"
-                value={hostForm.hostname}
-                onChange={(e) =>
-                  setHostForm((cur) => ({ ...cur, hostname: e.target.value }))
-                }
-                placeholder="server.example.com"
-                disabled={!canManageHosts}
-                required
-              />
-            </label>
-            <label className="field">
-              <span className="field__label">Username</span>
-              <input
-                className="field__input"
-                value={hostForm.username}
-                onChange={(e) =>
-                  setHostForm((cur) => ({ ...cur, username: e.target.value }))
-                }
-                placeholder="root"
-                disabled={!canManageHosts}
-              />
-            </label>
-          </div>
+              <div className="grid-2">
+                <label className="field">
+                  <span className="field__label">Hostname</span>
+                  <input
+                    className="field__input"
+                    value={hostForm.hostname}
+                    onChange={(e) =>
+                      setHostForm((cur) => ({ ...cur, hostname: e.target.value }))
+                    }
+                    placeholder="server.example.com"
+                    disabled={!canManageHosts}
+                    required
+                  />
+                </label>
+                <label className="field">
+                  <span className="field__label">Username</span>
+                  <input
+                    className="field__input"
+                    value={hostForm.username}
+                    onChange={(e) =>
+                      setHostForm((cur) => ({ ...cur, username: e.target.value }))
+                    }
+                    placeholder="root"
+                    disabled={!canManageHosts}
+                  />
+                </label>
+              </div>
 
-          <div className="grid-2">
-            <label className="field">
-              <span className="field__label">Port</span>
-              <input
-                className="field__input"
-                value={hostForm.port}
-                onChange={(e) =>
-                  setHostForm((cur) => ({ ...cur, port: e.target.value }))
-                }
-                placeholder="22"
-                disabled={!canManageHosts}
-                inputMode="numeric"
-              />
-            </label>
-            <label className="field">
-              <span className="field__label">Group</span>
-              <input
-                className="field__input"
-                value={hostForm.group}
-                onChange={(e) =>
-                  setHostForm((cur) => ({ ...cur, group: e.target.value }))
-                }
-                placeholder="prod"
-                disabled={!canManageHosts}
-              />
-            </label>
-          </div>
+              <div className="grid-2">
+                <label className="field">
+                  <span className="field__label">Port</span>
+                  <input
+                    className="field__input"
+                    value={hostForm.port}
+                    onChange={(e) =>
+                      setHostForm((cur) => ({ ...cur, port: e.target.value }))
+                    }
+                    placeholder="22"
+                    disabled={!canManageHosts}
+                    inputMode="numeric"
+                  />
+                </label>
+                <label className="field">
+                  <span className="field__label">Group</span>
+                  <input
+                    className="field__input"
+                    value={hostForm.group}
+                    onChange={(e) =>
+                      setHostForm((cur) => ({ ...cur, group: e.target.value }))
+                    }
+                    placeholder="prod"
+                    disabled={!canManageHosts}
+                  />
+                </label>
+              </div>
 
-          <label className="field">
-            <span className="field__label">Tags</span>
-            <input
-              className="field__input"
-              value={hostForm.tags}
-              onChange={(e) =>
-                setHostForm((cur) => ({ ...cur, tags: e.target.value }))
-              }
-              placeholder="ssh, linux, us-east-1"
-              disabled={!canManageHosts}
-            />
-          </label>
+              <label className="field">
+                <span className="field__label">Tags</span>
+                <input
+                  className="field__input"
+                  value={hostForm.tags}
+                  onChange={(e) =>
+                    setHostForm((cur) => ({ ...cur, tags: e.target.value }))
+                  }
+                  placeholder="ssh, linux, us-east-1"
+                  disabled={!canManageHosts}
+                />
+              </label>
 
-          <label className="field">
-            <span className="field__label">Notes</span>
-            <textarea
-              className="field__input field__textarea"
-              value={hostForm.notes}
-              onChange={(e) =>
-                setHostForm((cur) => ({ ...cur, notes: e.target.value }))
-              }
-              placeholder="Shared deployment notes, caveats, or runbook steps"
-            />
-          </label>
+              <label className="field">
+                <span className="field__label">Notes</span>
+                <textarea
+                  className="field__input field__textarea"
+                  value={hostForm.notes}
+                  onChange={(e) =>
+                    setHostForm((cur) => ({ ...cur, notes: e.target.value }))
+                  }
+                  placeholder="Shared deployment notes, caveats, or runbook steps"
+                />
+              </label>
 
-          <div className="grid-2">
-            <label className="field">
-              <span className="field__label">Credential mode</span>
-              <select
-                className="field__input"
-                value={hostForm.credentialMode}
-                onChange={(e) =>
-                  setHostForm((cur) => ({
-                    ...cur,
-                    credentialMode: e.target.value as "shared" | "per_member",
-                    sharedCredential:
-                      e.target.value === "per_member"
-                        ? ""
-                        : cur.sharedCredential,
-                  }))
-                }
-                disabled={!canManageHosts}
-              >
-                <option value="shared">shared</option>
-                <option value="per_member">per member</option>
-              </select>
-            </label>
-            <label className="field">
-              <span className="field__label">Credential type</span>
-              <select
-                className="field__input"
-                value={hostForm.credentialType}
-                onChange={(e) =>
-                  setHostForm((cur) => ({
-                    ...cur,
-                    credentialType: e.target.value as
-                      | "none"
-                      | "password"
-                      | "private_key",
-                  }))
-                }
-                disabled={!canManageHosts}
-              >
-                <option value="none">none</option>
-                <option value="password">password</option>
-                <option value="private_key">private key</option>
-              </select>
-            </label>
-          </div>
-
-          {hostForm.credentialMode === "shared" &&
-          hostForm.credentialType !== "none" ? (
-            <label className="field">
-              <span className="field__label">Shared secret</span>
-              <textarea
-                className="field__input field__textarea"
-                value={hostForm.sharedCredential}
-                onChange={(e) =>
-                  setHostForm((cur) => ({
-                    ...cur,
-                    sharedCredential: e.target.value,
-                  }))
-                }
-                placeholder={
-                  hostForm.credentialType === "private_key"
-                    ? "Paste the private key"
-                    : "Paste the password"
-                }
-                disabled={!canManageHosts}
-              />
-              {mode === "edit" && canRevealSecrets ? (
-                <span className="muted" style={{ fontSize: 12 }}>
-                  Reveal is audited. Use the Credentials tab to pull the
-                  currently-stored secret.
-                </span>
-              ) : null}
-            </label>
-          ) : null}
-        </form>
-      ) : (
-        <div className="stack" style={{ gap: 14 }}>
-          {hostForm.credentialMode === "shared" ? (
-            <section className="stack" style={{ gap: 10 }}>
-              <span className="eyebrow">Shared credential</span>
-              {hostForm.credentialType === "none" ? (
-                <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-                  This host has no credential configured. Switch to a password or
-                  private key in Details to enable reveal.
-                </p>
-              ) : canRevealSecrets ? (
-                <div className="row">
-                  <button
-                    type="button"
-                    className="btn btn--primary"
-                    onClick={handleRevealShared}
+              <div className="grid-2">
+                <label className="field">
+                  <span className="field__label">Credential mode</span>
+                  <select
+                    className="field__input"
+                    value={hostForm.credentialMode}
+                    onChange={(e) =>
+                      setHostForm((cur) => ({
+                        ...cur,
+                        credentialMode: e.target.value as "shared" | "per_member",
+                        sharedCredential:
+                          e.target.value === "per_member"
+                            ? ""
+                            : cur.sharedCredential,
+                      }))
+                    }
+                    disabled={!canManageHosts}
                   >
-                    Reveal shared credential
-                  </button>
-                  <span className="muted" style={{ fontSize: 12 }}>
-                    Audited action. Output appears below.
-                  </span>
+                    <option value="shared">shared</option>
+                    <option value="per_member">per member</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span className="field__label">Credential type</span>
+                  <select
+                    className="field__input"
+                    value={hostForm.credentialType}
+                    onChange={(e) =>
+                      setHostForm((cur) => ({
+                        ...cur,
+                        credentialType: e.target.value as
+                          | "none"
+                          | "password"
+                          | "private_key",
+                      }))
+                    }
+                    disabled={!canManageHosts}
+                  >
+                    <option value="none">none</option>
+                    <option value="password">password</option>
+                    <option value="private_key">private key</option>
+                  </select>
+                </label>
+              </div>
+
+              {mode === "edit" ? (
+                <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                  Shared secrets live in the Host creds tab. Your own secret
+                  lives in Personal creds.
+                </p>
+              ) : null}
+            </>
+          ) : null}
+
+          {segment === "host_credentials" ? (
+            <>
+              {hostForm.credentialMode !== "shared" ? (
+                <div className="empty-state">
+                  <div className="empty-state__title">Per-member credentials</div>
+                  <p className="empty-state__body">
+                    This host uses per-member credentials. Each member configures
+                    their own in <strong>Personal creds</strong>.
+                  </p>
+                </div>
+              ) : hostForm.credentialType === "none" ? (
+                <div className="empty-state">
+                  <div className="empty-state__title">No credential configured</div>
+                  <p className="empty-state__body">
+                    Pick a credential type in <strong>Details</strong> to enable
+                    the shared secret editor.
+                  </p>
                 </div>
               ) : (
-                <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-                  Only owners and admins can reveal shared credentials.
-                </p>
+                <>
+                  <div className="stack" style={{ gap: 6 }}>
+                    <span className="eyebrow">Shared credential</span>
+                    <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                      Connection username:{" "}
+                      <strong style={{ color: "var(--ink)" }}>
+                        {hostForm.username || "—"}
+                      </strong>
+                      {" · edit in "}
+                      <button
+                        type="button"
+                        className="linklike"
+                        onClick={() => setSegment("details")}
+                      >
+                        Details
+                      </button>
+                    </p>
+                  </div>
+
+                  <label className="field">
+                    <span className="field__label">
+                      Shared{" "}
+                      {hostForm.credentialType === "private_key"
+                        ? "private key"
+                        : "password"}
+                    </span>
+                    <textarea
+                      className="field__input field__textarea"
+                      value={hostForm.sharedCredential}
+                      onChange={(e) =>
+                        setHostForm((cur) => ({
+                          ...cur,
+                          sharedCredential: e.target.value,
+                        }))
+                      }
+                      placeholder={
+                        hostForm.credentialType === "private_key"
+                          ? "Paste the private key"
+                          : "Paste the password"
+                      }
+                      disabled={!canManageHosts}
+                      rows={hostForm.credentialType === "private_key" ? 8 : 3}
+                    />
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      {canManageHosts
+                        ? "Save host (footer) to persist changes."
+                        : "Only owners and admins can edit the shared secret."}
+                    </span>
+                  </label>
+
+                  {mode === "edit" && canRevealSecrets ? (
+                    <section className="stack" style={{ gap: 8 }}>
+                      <span className="eyebrow">Reveal stored secret</span>
+                      <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                        Pull the currently-stored shared secret from the server.
+                        Audited.
+                      </p>
+                      <div className="row">
+                        <button
+                          type="button"
+                          className="btn btn--primary"
+                          onClick={handleRevealShared}
+                        >
+                          Reveal shared credential
+                        </button>
+                      </div>
+                    </section>
+                  ) : mode === "edit" ? (
+                    <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                      Only owners and admins can reveal the stored secret.
+                    </p>
+                  ) : null}
+
+                  {revealed ? (
+                    <RevealedPanel
+                      revealed={revealed}
+                      show={showRevealedSecret}
+                      onToggleShow={() => setShowRevealedSecret((v) => !v)}
+                      onCopy={() =>
+                        copyText(revealed.secret, "Credential copied.")
+                      }
+                      onClear={() => {
+                        setRevealed(null);
+                        setShowRevealedSecret(false);
+                      }}
+                    />
+                  ) : null}
+                </>
               )}
-            </section>
+            </>
+          ) : null}
+        </form>
+      ) : null}
+
+      {segment === "personal_credentials" ? (
+        <div className="stack" style={{ gap: 14 }}>
+          {hostForm.credentialMode !== "per_member" ? (
+            <div className="empty-state">
+              <div className="empty-state__title">Shared credential host</div>
+              <p className="empty-state__body">
+                This host uses a shared credential. See{" "}
+                <strong>Host creds</strong>.
+              </p>
+            </div>
           ) : (
             <>
               <section className="stack" style={{ gap: 10 }}>
                 <span className="eyebrow">Your credential</span>
                 <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-                  Per-member host. Your secret isn&apos;t visible to other members
-                  via the self-service path.
+                  Per-member host. Your secret isn&apos;t visible to other
+                  members via the self-service path.
                   {personalCredential?.updatedAt
                     ? ` · updated ${formatTime(personalCredential.updatedAt)}`
                     : ""}
@@ -725,6 +819,7 @@ export default function HostDrawer({
                           ? "Paste your private key"
                           : "Paste your password"
                       }
+                      rows={personalForm.credentialType === "private_key" ? 8 : 3}
                     />
                   </label>
                   <div className="row">
@@ -745,135 +840,161 @@ export default function HostDrawer({
               </section>
 
               {canManageHosts ? (
-                <section className="stack" style={{ gap: 10 }}>
-                  <span className="eyebrow">Member credentials</span>
-                  <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-                    Reveal and delete actions are audited.
-                  </p>
-                  {roster.length === 0 ? (
-                    <div className="empty-state">
-                      <div className="empty-state__title">No data yet</div>
-                      <p className="empty-state__body">
-                        Member credential states will appear here once recorded.
-                      </p>
-                    </div>
-                  ) : (
-                    <div>
-                      {roster.map((entry) => (
-                        <div key={entry.memberId} className="data-row">
-                          <div className="data-row__primary">
-                            <span className="data-row__title">
-                              {entry.displayName}
-                            </span>
-                            <span className="data-row__meta">
-                              {entry.role} · {entry.email || entry.memberId}
-                            </span>
-                            <span className="data-row__meta">
-                              {entry.hasCredential
-                                ? `${entry.credentialType}${
-                                    entry.username ? ` · ${entry.username}` : ""
-                                  }${
-                                    entry.updatedAt
-                                      ? ` · ${formatTime(entry.updatedAt)}`
-                                      : ""
-                                  }`
-                                : "no credential saved"}
-                            </span>
+                <details className="disclosure">
+                  <summary className="disclosure__summary">
+                    <span className="disclosure__title">
+                      Member credential status ({roster.length})
+                    </span>
+                    <span className="disclosure__hint">Admin · audited</span>
+                  </summary>
+                  <div
+                    className="disclosure__content stack"
+                    style={{ gap: 10 }}
+                  >
+                    <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+                      Reveal and delete actions are audited.
+                    </p>
+                    {roster.length === 0 ? (
+                      <div className="empty-state">
+                        <div className="empty-state__title">No data yet</div>
+                        <p className="empty-state__body">
+                          Member credential states will appear here once
+                          recorded.
+                        </p>
+                      </div>
+                    ) : (
+                      <div>
+                        {roster.map((entry) => (
+                          <div key={entry.memberId} className="data-row">
+                            <div className="data-row__primary">
+                              <span className="data-row__title">
+                                {entry.displayName}
+                              </span>
+                              <span className="data-row__meta">
+                                {entry.role} · {entry.email || entry.memberId}
+                              </span>
+                              <span className="data-row__meta">
+                                {entry.hasCredential
+                                  ? `${entry.credentialType}${
+                                      entry.username
+                                        ? ` · ${entry.username}`
+                                        : ""
+                                    }${
+                                      entry.updatedAt
+                                        ? ` · ${formatTime(entry.updatedAt)}`
+                                        : ""
+                                    }`
+                                  : "no credential saved"}
+                              </span>
+                            </div>
+                            <div className="data-row__trail">
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={() =>
+                                  handleRevealMember(entry.memberId)
+                                }
+                                disabled={!entry.hasCredential}
+                              >
+                                Reveal
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn--danger"
+                                onClick={() =>
+                                  handleDeleteMember(
+                                    entry.memberId,
+                                    entry.displayName,
+                                  )
+                                }
+                                disabled={!entry.hasCredential}
+                              >
+                                Delete
+                              </button>
+                            </div>
                           </div>
-                          <div className="data-row__trail">
-                            <button
-                              type="button"
-                              className="btn"
-                              onClick={() => handleRevealMember(entry.memberId)}
-                              disabled={!entry.hasCredential}
-                            >
-                              Reveal
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn--danger"
-                              onClick={() =>
-                                handleDeleteMember(
-                                  entry.memberId,
-                                  entry.displayName,
-                                )
-                              }
-                              disabled={!entry.hasCredential}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </details>
               ) : null}
-            </>
-          )}
 
-          {revealed ? (
-            <section className="stack" style={{ gap: 10 }}>
-              <span className="eyebrow">Revealed credential</span>
-              <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-                {revealed.credentialType}
-                {revealed.username ? ` · ${revealed.username}` : ""}
-                {revealed.updatedAt
-                  ? ` · ${formatTime(revealed.updatedAt)}`
-                  : ""}
-              </p>
-              {showRevealedSecret ? (
-                <textarea
-                  className="field__input field__textarea"
-                  value={revealed.secret}
-                  readOnly
-                />
-              ) : (
-                <div
-                  className="field__input field__textarea"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "var(--muted)",
-                    fontSize: 12,
-                  }}
-                >
-                  Secret hidden.
-                </div>
-              )}
-              <div className="row">
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  onClick={() =>
-                    copyText(revealed.secret, "Credential copied.")
-                  }
-                >
-                  Copy secret
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => setShowRevealedSecret((v) => !v)}
-                >
-                  {showRevealedSecret ? "Hide" : "Show"}
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => {
+              {revealed ? (
+                <RevealedPanel
+                  revealed={revealed}
+                  show={showRevealedSecret}
+                  onToggleShow={() => setShowRevealedSecret((v) => !v)}
+                  onCopy={() => copyText(revealed.secret, "Credential copied.")}
+                  onClear={() => {
                     setRevealed(null);
                     setShowRevealedSecret(false);
                   }}
-                >
-                  Clear
-                </button>
-              </div>
-            </section>
-          ) : null}
+                />
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+    </Drawer>
+  );
+}
+
+type RevealedPanelProps = {
+  revealed: RevealedCredential;
+  show: boolean;
+  onToggleShow: () => void;
+  onCopy: () => void;
+  onClear: () => void;
+};
+
+function RevealedPanel({
+  revealed,
+  show,
+  onToggleShow,
+  onCopy,
+  onClear,
+}: RevealedPanelProps) {
+  return (
+    <section className="stack" style={{ gap: 10 }}>
+      <span className="eyebrow">Revealed credential</span>
+      <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+        {revealed.credentialType}
+        {revealed.username ? ` · ${revealed.username}` : ""}
+        {revealed.updatedAt ? ` · ${formatTime(revealed.updatedAt)}` : ""}
+      </p>
+      {show ? (
+        <textarea
+          className="field__input field__textarea"
+          value={revealed.secret}
+          readOnly
+          rows={revealed.credentialType === "private_key" ? 8 : 3}
+        />
+      ) : (
+        <div
+          className="field__input field__textarea"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--muted)",
+            fontSize: 12,
+          }}
+        >
+          Secret hidden.
         </div>
       )}
-    </Drawer>
+      <div className="row">
+        <button type="button" className="btn btn--primary" onClick={onCopy}>
+          Copy secret
+        </button>
+        <button type="button" className="btn" onClick={onToggleShow}>
+          {show ? "Hide" : "Show"}
+        </button>
+        <button type="button" className="btn" onClick={onClear}>
+          Clear
+        </button>
+      </div>
+    </section>
   );
 }
