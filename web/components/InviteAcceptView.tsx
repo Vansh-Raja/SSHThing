@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import { apiRequest } from "./teams/api";
+
 type InviteDetail = {
   id: string;
   teamId: string;
@@ -15,21 +17,6 @@ type InviteDetail = {
   expiresAt: number;
   createdAt: number;
 };
-
-async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
-  const data = (await response.json().catch(() => ({}))) as T & { error?: string };
-  if (!response.ok) {
-    throw new Error(data.error || "request_failed");
-  }
-  return data;
-}
 
 export default function InviteAcceptView({
   inviteId,

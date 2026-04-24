@@ -374,115 +374,18 @@ pre {
   resize: vertical;
 }
 
-.teams-layout {
-  display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
-  gap: clamp(14px, 2vw, 22px);
-  align-items: start;
-}
+/* Legacy row/stat/notice styles — still used by InviteAcceptView until that
+ * page gets its own polish pass. Everything else that used to live in this
+ * section was deleted as part of the Teams dashboard v2 redesign. */
 
-.teams-sidebar,
-.teams-main,
-.teams-panel,
-.teams-subpanel {
-  align-self: start;
-}
-
-.teams-sidebar {
-  position: sticky;
-  top: 92px;
-}
-
-.teams-panel {
-  padding: clamp(14px, 1.5vw, 20px);
-}
-
-.teams-subpanel {
-  padding: clamp(12px, 1.2vw, 16px);
-  background: color-mix(in srgb, var(--paper) 96%, var(--paper-2));
-}
-
-.teams-toolbar {
-  gap: 18px;
-}
-
-.teams-actions {
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.teams-actions .btn,
-.teams-tab {
-  min-height: 42px;
-  padding: 0 14px;
-  font-size: 12px;
-}
-
-.teams-main .text-xl {
-  font-size: clamp(30px, 3.2vw, 38px);
-}
-
-.teams-main .text-lg {
-  font-size: clamp(18px, 1.8vw, 22px);
-}
-
-.teams-main .muted.text-sm,
-.teams-main .text-sm {
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.teams-tabs {
+.teams-stat {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.teams-tab {
-  min-height: 36px;
-  padding: 0 12px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 12px;
   border: 1.5px solid var(--line);
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.teams-tab--active {
-  background: var(--ink);
-  color: var(--paper);
-}
-
-.teams-listItem {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  text-align: left;
-  padding: 12px 14px;
-  border: 1.5px solid var(--line);
-  background: var(--paper);
-  color: var(--ink);
-  box-shadow: var(--shadow-sm);
-}
-
-.teams-listItem--active {
-  background: var(--ink);
-  color: var(--paper);
-}
-
-.teams-listItem__title {
-  font-weight: 700;
-}
-
-.teams-listItem__meta {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.teams-listItem--active .teams-listItem__meta {
-  color: color-mix(in srgb, var(--paper) 72%, transparent);
+  font-size: 13px;
 }
 
 .teams-notice {
@@ -501,82 +404,10 @@ pre {
   border-color: var(--danger);
 }
 
-.teams-empty {
-  padding: 18px;
-  border: 1.5px dashed var(--line);
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.teams-cardRow {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-  padding: 12px 14px;
-  border: 1.5px solid var(--line);
-}
-
-.teams-stat {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 12px;
-  border: 1.5px solid var(--line);
-  font-size: 13px;
-}
-
-@media (max-width: 980px) {
-  .teams-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .teams-sidebar {
-    position: static;
-  }
-}
-
-@media (max-width: 1240px) {
-  .teams-toolbar {
-    flex-direction: column;
-    align-items: stretch !important;
-  }
-
-  .teams-actions {
-    justify-content: flex-start;
-  }
-
-  .teams-actions .btn {
-    min-height: 40px;
-  }
-}
-
 @media (max-width: 720px) {
-  .teams-panel {
-    padding: 14px;
-  }
-
-  .teams-actions {
-    gap: 8px;
-  }
-
-  .teams-actions .btn,
-  .teams-tab {
-    width: 100%;
-    justify-content: center;
-  }
-
-  .teams-cardRow,
   .teams-stat {
     flex-direction: column;
     align-items: flex-start;
-  }
-
-  .teams-listItem {
-    padding: 10px 12px;
   }
 }
 
@@ -1140,4 +971,691 @@ html.dark .bg-canvas {
 .cl-userButtonAvatarBox {
   border: 1.5px solid var(--line);
   border-radius: var(--radius);
+}
+
+/* =========================================================
+ * v2 primitives — team bar, drawers, dialogs, dropdowns, toasts.
+ * All new Teams dashboard UI uses these.
+ * =======================================================*/
+
+/* Danger button variant used by confirm dialogs + per-row actions. */
+.btn--danger {
+  background: var(--danger);
+  color: var(--paper);
+  border-color: var(--danger);
+}
+html.dark .btn--danger {
+  color: var(--paper);
+}
+
+/* ---------- Team bar ---------- */
+
+.teams-page {
+  padding: clamp(14px, 2vw, 24px) 0 clamp(28px, 3vw, 56px);
+}
+
+.team-bar {
+  width: 100%;
+  border-bottom: 1.5px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 96%, transparent);
+  padding: 14px clamp(16px, 3vw, 24px) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: clamp(14px, 2vw, 20px);
+}
+
+.team-bar__row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.team-bar__switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 14px;
+  background: transparent;
+  border: 1.5px solid var(--line);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+.team-bar__switcher:hover,
+.team-bar__switcher[aria-expanded="true"] {
+  background: var(--paper-2);
+}
+.team-bar__switcher-name {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-bar__switcher-chevron {
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 10px;
+}
+
+.team-bar__tabs {
+  display: flex;
+  gap: 0;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+  min-width: 0;
+}
+.team-bar__tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.team-bar__tab {
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 100ms ease, border-color 100ms ease;
+}
+.team-bar__tab:hover {
+  color: var(--ink);
+}
+.team-bar__tab[aria-selected="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+
+.team-bar__trail {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-bar__meta {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  padding-bottom: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.team-bar__meta strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+/* ---------- Per-tab toolbar + content ---------- */
+
+.tab-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 clamp(16px, 3vw, 24px);
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.tab-toolbar__title {
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.tab-toolbar__search {
+  flex: 1;
+  min-width: 180px;
+  max-width: 340px;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1.5px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  border-radius: var(--radius);
+}
+.tab-toolbar__actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tab-content {
+  padding: 0 clamp(16px, 3vw, 24px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tab-content__section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 14px 0 4px;
+}
+
+/* ---------- Dropdown menu (portal) ---------- */
+
+.dropdown-menu {
+  min-width: 220px;
+  max-width: 340px;
+  background: var(--paper);
+  border: 1.5px solid var(--line);
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius);
+  padding: 4px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+}
+.dropdown-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+.dropdown-menu__item:hover:not([disabled]):not([aria-disabled="true"]),
+.dropdown-menu__item:focus-visible {
+  background: var(--paper-2);
+  outline: none;
+}
+.dropdown-menu__item[disabled],
+.dropdown-menu__item[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+.dropdown-menu__item--danger {
+  color: var(--danger);
+}
+.dropdown-menu__item--team {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.dropdown-menu__item--active {
+  background: var(--paper-2);
+}
+.dropdown-menu__item-sub {
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  font-weight: 500;
+}
+.dropdown-menu__separator {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 2px;
+  opacity: 0.35;
+}
+.dropdown-menu__label {
+  padding: 6px 12px 2px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ---------- Per-row ⋯ menu trigger ---------- */
+
+.row-menu {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: 1.5px solid transparent;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius);
+  flex-shrink: 0;
+}
+.row-menu:hover,
+.row-menu[aria-expanded="true"] {
+  background: var(--paper-2);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+/* ---------- Drawer ---------- */
+
+.drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: flex-end;
+}
+.drawer__backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--ink) 40%, transparent);
+  opacity: 0;
+  transition: opacity 180ms ease;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.drawer--entered .drawer__backdrop {
+  opacity: 1;
+}
+.drawer__panel {
+  position: relative;
+  height: 100%;
+  background: var(--paper);
+  border-left: 1.5px solid var(--line);
+  box-shadow: -8px 0 0 -4px var(--shadow-color);
+  transform: translateX(100%);
+  transition: transform 180ms ease;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+.drawer--entered .drawer__panel {
+  transform: translateX(0);
+}
+.drawer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1.5px solid var(--line);
+}
+.drawer__title {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.drawer__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1.5px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius);
+  flex-shrink: 0;
+}
+.drawer__close:hover {
+  color: var(--ink);
+  background: var(--paper-2);
+  border-color: var(--line);
+}
+.drawer__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.drawer__footer {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 14px 18px;
+  border-top: 1.5px solid var(--line);
+  background: var(--paper);
+  flex-wrap: wrap;
+}
+.drawer__footer-left {
+  margin-right: auto;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* ---------- Modal (centered) ---------- */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--ink) 40%, transparent);
+  opacity: 0;
+  transition: opacity 140ms ease;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.modal--entered .modal__backdrop {
+  opacity: 1;
+}
+.modal__panel {
+  position: relative;
+  width: 100%;
+  background: var(--paper);
+  border: 1.5px solid var(--line);
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius);
+  transform: scale(0.96);
+  opacity: 0;
+  transition: transform 140ms ease, opacity 140ms ease;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+.modal--entered .modal__panel {
+  transform: scale(1);
+  opacity: 1;
+}
+.modal__header {
+  padding: 16px 18px 8px;
+}
+.modal__title {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin: 0;
+}
+.modal__body {
+  padding: 6px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.modal__footer {
+  padding: 12px 18px 16px;
+  border-top: 1.5px solid var(--line);
+  background: var(--paper);
+}
+.modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.modal__message {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0;
+}
+.modal__error {
+  color: var(--danger);
+  font-size: 12px;
+  margin: 0;
+}
+
+/* ---------- Toaster ---------- */
+
+.toaster {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 90;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  pointer-events: none;
+  max-width: min(360px, 94vw);
+}
+.toast {
+  pointer-events: auto;
+  text-align: left;
+  padding: 10px 14px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1.5px solid var(--line);
+  border-left: 4px solid var(--line);
+  box-shadow: var(--shadow-sm);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  animation: toast-in 160ms ease;
+  border-radius: var(--radius);
+}
+.toast--success {
+  border-left-color: var(--accent);
+}
+.toast--error {
+  border-left-color: var(--danger);
+}
+.toast--info {
+  border-left-color: var(--ink);
+}
+@keyframes toast-in {
+  from {
+    transform: translateX(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* ---------- Unified data-row (hosts, members, invites, audit) ---------- */
+
+.data-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--paper);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+  transition: background 100ms ease, transform 100ms ease,
+    box-shadow 100ms ease;
+}
+.data-row + .data-row {
+  margin-top: 10px;
+}
+.data-row--clickable {
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.data-row--clickable:hover {
+  background: var(--paper-2);
+}
+.data-row--active {
+  box-shadow: var(--shadow-sm);
+  background: var(--paper-2);
+}
+.data-row__primary {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.data-row__title {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.data-row__meta {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.data-row__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+.data-row__trail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ---------- Chip (small uppercase pill) ---------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: transparent;
+  white-space: nowrap;
+}
+.chip--accent {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+.chip--muted {
+  color: var(--muted);
+  border-color: var(--muted);
+}
+.chip--danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* ---------- Segmented internal tabs (inside drawer) ---------- */
+
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  border: 1.5px solid var(--line);
+  padding: 2px;
+  border-radius: var(--radius);
+  background: var(--paper);
+  align-self: flex-start;
+}
+.segmented__item {
+  padding: 6px 14px;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-radius: calc(var(--radius) - 1px);
+  white-space: nowrap;
+}
+.segmented__item[aria-selected="true"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* ---------- Empty state with CTA ---------- */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 28px 22px;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+.empty-state__title {
+  font-weight: 800;
+  font-size: 13px;
+  color: var(--ink);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.empty-state__body {
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/* ---------- Responsive tweaks ---------- */
+
+@media (max-width: 720px) {
+  .team-bar {
+    padding: 12px 16px 0;
+    gap: 6px;
+  }
+  .team-bar__switcher-name {
+    max-width: 160px;
+  }
+  .tab-toolbar {
+    padding: 0 16px;
+  }
+  .tab-toolbar__search {
+    max-width: none;
+  }
+  .tab-content {
+    padding: 0 16px;
+  }
+  .drawer__panel {
+    width: 92vw !important;
+  }
+  .drawer__header,
+  .drawer__body,
+  .drawer__footer {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
 }

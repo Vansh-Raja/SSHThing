@@ -9,6 +9,8 @@ import ThemeScript from "../components/ThemeScript";
 import ThemeToggle from "../components/ThemeToggle";
 import TerminalBackground from "../components/TerminalBackground";
 import Brand from "../components/Brand";
+import Toaster from "../components/ui/Toaster";
+import DialogHost from "../components/ui/DialogHost";
 import "./globals.css";
 
 const jetbrains = JetBrains_Mono({
@@ -100,6 +102,8 @@ export default function RootLayout({
           </div>
         </footer>
       </div>
+      <Toaster />
+      <DialogHost />
     </>
   );
 

@@ -1,8 +1,23 @@
+import { Suspense } from "react";
 import { auth } from "@clerk/nextjs/server";
 import { SignInButton, SignUpButton } from "@clerk/nextjs";
 
 import TeamsDashboard from "../../components/TeamsDashboard";
 import { hasServerTeamsEnv } from "../../lib/env";
+
+function DashboardFallback() {
+  return (
+    <main className="teams-page">
+      <div className="team-bar">
+        <div className="team-bar__row">
+          <div className="team-bar__switcher" aria-busy="true">
+            Loading teams…
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}
 
 export default async function TeamsPage() {
   if (!hasServerTeamsEnv()) {
@@ -21,11 +36,9 @@ export default async function TeamsPage() {
 
   const { userId } = await auth();
 
-  return (
-    <main className="shell" style={{ padding: "48px 0 64px" }}>
-      {userId ? (
-        <TeamsDashboard />
-      ) : (
+  if (!userId) {
+    return (
+      <main className="shell" style={{ padding: "48px 0 64px" }}>
         <div className="block stack" style={{ maxWidth: 640 }}>
           <span className="eyebrow">Sign in required</span>
           <h1 className="text-xl fw-800">Log in to manage your teams.</h1>
@@ -45,7 +58,13 @@ export default async function TeamsPage() {
             </SignUpButton>
           </div>
         </div>
-      )}
-    </main>
+      </main>
+    );
+  }
+
+  return (
+    <Suspense fallback={<DashboardFallback />}>
+      <TeamsDashboard />
+    </Suspense>
   );
 }
