@@ -51,6 +51,7 @@ const (
 	OverlayDeleteGroup = 9
 	OverlayQuit        = 10
 	OverlayImportHost  = 11
+	OverlayKeyEditor   = 12
 )
 
 // ── List types ────────────────────────────────────────────────────────

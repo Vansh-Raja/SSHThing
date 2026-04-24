@@ -83,6 +83,10 @@ func (s Session) Valid() bool {
 	return s.AccessToken != "" && s.RefreshToken != "" && s.ExpiresAt > 0
 }
 
+func (s Session) Refreshable() bool {
+	return s.RefreshToken != ""
+}
+
 func (s Session) Expired(now time.Time) bool {
 	if s.ExpiresAt == 0 {
 		return true

@@ -17,6 +17,7 @@ import (
 	"github.com/Vansh-Raja/SSHThing/internal/teamssession"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
 	"github.com/Vansh-Raja/SSHThing/internal/update"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -74,6 +75,8 @@ type Model struct {
 	formEditIdx            int // -1 for add, >=0 for edit index
 	formScrollOffset       int
 	formSecretRevealed     bool
+	formKeyEditor          textarea.Model
+	formKeyEditorOriginal  string
 	formTeamHostID         string
 	formTeamCredentialMode string
 	formTeamCredentialType string
@@ -170,10 +173,6 @@ func NewModelWithVersion(version string) Model {
 	cfg, _ := config.Load()
 	teamsSession, _ := teamssession.Load()
 	teamsCache, _ := teamcache.Load()
-	if teamsSession.Valid() && teamsSession.Expired(time.Now()) {
-		teamsSession = teamssession.Session{}
-		teamsCache = teamcache.Cache{}
-	}
 
 	theme, themeIdx := ui.ThemeByName(cfg.UI.Theme)
 	icons, iconIdx := ui.IconSetByName(cfg.UI.IconSet)
@@ -565,24 +564,36 @@ func (m Model) View() string {
 	case OverlayAddHost:
 		if m.formFields != nil {
 			content = r.RenderAddHostOverlay(ui.AddHostViewParams{
-				IsEdit:         m.formEditIdx >= 0 || m.formTeamHostID != "",
-				Fields:         m.formFields,
-				Focus:          m.formFocus,
-				Editing:        m.formEditing,
-				Groups:         m.formGroups,
-				GroupIdx:       m.formGroupIdx,
-				AuthOptions:    m.formAuthOpts,
-				AuthIdx:        m.formAuthIdx,
-				KeyTypes:       m.formKeyTypes,
-				KeyTypeIdx:     m.formKeyIdx,
-				AllowImport:    m.appMode == appModeTeams && m.formEditIdx < 0 && m.formTeamHostID == "",
-				AuthLocked:     m.appMode == appModeTeams && m.formTeamCredentialMode == "per_member",
-				SecretRevealed: m.formSecretRevealed,
-				ScrollOffset:   m.formScrollOffset,
-				Err:            m.err,
+				IsEdit:               m.formEditIdx >= 0 || m.formTeamHostID != "",
+				Fields:               m.formFields,
+				Focus:                m.formFocus,
+				Editing:              m.formEditing,
+				Groups:               m.formGroups,
+				GroupIdx:             m.formGroupIdx,
+				AuthOptions:          m.formAuthOpts,
+				AuthIdx:              m.formAuthIdx,
+				KeyTypes:             m.formKeyTypes,
+				KeyTypeIdx:           m.formKeyIdx,
+				AllowImport:          m.appMode == appModeTeams && m.formEditIdx < 0 && m.formTeamHostID == "",
+				AuthLocked:           m.appMode == appModeTeams && m.formTeamCredentialMode == "per_member",
+				SecretRevealed:       false,
+				PrivateKeyEditorView: "",
+				ScrollOffset:         m.formScrollOffset,
+				Err:                  m.err,
 			})
 			return r.WrapFull(content)
 		}
+
+	case OverlayKeyEditor:
+		width, height := m.privateKeyPopupSize()
+		_ = m.preparePrivateKeyPopupEditor(width-4, max(3, height-6))
+		content = r.RenderPrivateKeyEditorOverlay(ui.PrivateKeyEditorViewParams{
+			EditorView: m.formKeyEditorView(),
+			Width:      width,
+			Height:     height,
+			Err:        m.err,
+		})
+		return r.WrapFull(content)
 
 	case OverlayDeleteHost:
 		if m.appMode == appModeTeams {

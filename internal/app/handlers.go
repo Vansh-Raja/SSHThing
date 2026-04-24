@@ -32,6 +32,8 @@ func (m Model) handleOverlayKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSearchKeys(msg)
 	case OverlayAddHost:
 		return m.handleAddHostKeys(msg)
+	case OverlayKeyEditor:
+		return m.handlePrivateKeyEditorKeys(msg)
 	case OverlayDeleteHost:
 		return m.handleDeleteHostKeys(msg)
 	case OverlayCreateGroup:
@@ -456,8 +458,15 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	submitAndClose := func() (tea.Model, tea.Cmd) {
+		if m.formAuthIdx == 1 && m.formSecretRevealed {
+			m.syncFormKeyFieldFromEditor()
+		}
 		validationErr := m.validateForm()
 		if validationErr != nil {
+			if m.formAuthIdx == 1 {
+				m.formSecretRevealed = true
+				m.formEditing = true
+			}
 			m.err = validationErr
 			return m, nil
 		}
@@ -634,6 +643,29 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return submitAndClose()
 	}
 
+	if privateKeyFocused := m.formAuthIdx == 1 && m.formFocus == ui.FFAuthDet; privateKeyFocused && !m.formEditing {
+		switch {
+		case msg.Type == tea.KeyEnter || msg.String() == "v":
+			cmd := m.openPrivateKeyEditor(false)
+			m.ensureFormFocusVisible()
+			return m, cmd
+		case msg.String() == "c":
+			secret := strings.TrimSpace(m.formFields[ui.FFAuthDet].Value)
+			if secret == "" {
+				m.err = fmt.Errorf("no private key to copy")
+				return m, nil
+			}
+			if err := copyTokenToClipboard(secret); err != nil {
+				m.err = fmt.Errorf("failed to copy private key: %v", err)
+			} else {
+				m.err = fmt.Errorf("\u2713 private key copied to clipboard")
+			}
+			return m, nil
+		case msg.Type == tea.KeyBackspace:
+			return m, nil
+		}
+	}
+
 	cycleGroup := func(dir int) {
 		if len(m.formGroups) == 0 {
 			return
@@ -651,6 +683,8 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	formOrder := []int{ui.FFLabel, ui.FFGroup, ui.FFTags, ui.FFHostname, ui.FFPort, ui.FFUsername, ui.FFAuthMeth, ui.FFAuthDet, ui.FFSave}
+	leftColumn := []int{ui.FFLabel, ui.FFGroup, ui.FFTags, ui.FFHostname, ui.FFPort}
+	rightColumn := []int{ui.FFUsername, ui.FFAuthMeth, ui.FFAuthDet, ui.FFSave}
 
 	findIdx := func(f int) int {
 		for i, v := range formOrder {
@@ -661,9 +695,50 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return 0
 	}
 
+	inList := func(fields []int, focus int) bool {
+		for _, field := range fields {
+			if field == focus {
+				return true
+			}
+		}
+		return false
+	}
+
+	moveHorizontal := func(dir int) {
+		if dir > 0 && inList(leftColumn, m.formFocus) {
+			switch m.formFocus {
+			case ui.FFLabel:
+				m.formFocus = ui.FFUsername
+			case ui.FFGroup:
+				m.formFocus = ui.FFAuthMeth
+			case ui.FFTags, ui.FFHostname:
+				m.formFocus = ui.FFAuthDet
+			default:
+				m.formFocus = ui.FFSave
+			}
+			return
+		}
+		if dir < 0 && inList(rightColumn, m.formFocus) {
+			switch m.formFocus {
+			case ui.FFUsername:
+				m.formFocus = ui.FFLabel
+			case ui.FFAuthMeth:
+				m.formFocus = ui.FFGroup
+			case ui.FFAuthDet:
+				m.formFocus = ui.FFTags
+			default:
+				m.formFocus = ui.FFPort
+			}
+		}
+	}
+
 	switch msg.Type {
 	case tea.KeyEsc:
 		if m.formEditing && isTextField(m.formFocus) {
+			m.formEditing = false
+			return m, nil
+		}
+		if m.formEditing && (m.formFocus == ui.FFGroup || m.formFocus == ui.FFAuthMeth || (m.formFocus == ui.FFAuthDet && m.formAuthIdx == 2)) {
 			m.formEditing = false
 			return m, nil
 		}
@@ -687,28 +762,43 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyLeft:
-		if m.formFocus == ui.FFGroup {
+		if m.formEditing && m.formFocus == ui.FFGroup {
 			cycleGroup(-1)
-		} else if m.formFocus == ui.FFAuthMeth {
+		} else if m.formEditing && m.formFocus == ui.FFAuthMeth {
 			cycleAuth(-1)
 		} else if m.formEditing && isTextField(m.formFocus) {
 			m.formFields[m.formFocus].MoveLeft()
+		} else if m.formEditing && m.formFocus == ui.FFAuthDet && m.formAuthIdx == 2 {
+			m.formKeyIdx = (m.formKeyIdx - 1 + len(m.formKeyTypes)) % len(m.formKeyTypes)
+		} else if !m.formEditing {
+			moveHorizontal(-1)
+			m.ensureFormFocusVisible()
 		}
 		return m, nil
 
 	case tea.KeyRight:
-		if m.formFocus == ui.FFGroup {
+		if m.formEditing && m.formFocus == ui.FFGroup {
 			cycleGroup(1)
-		} else if m.formFocus == ui.FFAuthMeth {
+		} else if m.formEditing && m.formFocus == ui.FFAuthMeth {
 			cycleAuth(1)
 		} else if m.formEditing && isTextField(m.formFocus) {
 			m.formFields[m.formFocus].MoveRight()
+		} else if m.formEditing && m.formFocus == ui.FFAuthDet && m.formAuthIdx == 2 {
+			m.formKeyIdx = (m.formKeyIdx + 1) % len(m.formKeyTypes)
+		} else if !m.formEditing {
+			moveHorizontal(1)
+			m.ensureFormFocusVisible()
 		}
 		return m, nil
 
 	case tea.KeyEnter:
 		if m.formFocus == ui.FFSave {
 			return submitAndClose()
+		}
+		if m.formFocus == ui.FFGroup || m.formFocus == ui.FFAuthMeth || (m.formFocus == ui.FFAuthDet && m.formAuthIdx == 2) {
+			m.formEditing = !m.formEditing
+			m.ensureFormFocusVisible()
+			return m, nil
 		}
 		if isTextField(m.formFocus) {
 			if m.appMode == appModeTeams && m.formTeamCredentialMode == "per_member" && m.formFocus == ui.FFAuthDet {
@@ -727,8 +817,7 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return submitAndClose()
 
 	case tea.KeyBackspace:
-		if isTextField(m.formFocus) {
-			m.formEditing = true
+		if m.formEditing && isTextField(m.formFocus) {
 			m.formFields[m.formFocus].DeleteBack()
 		}
 		m.ensureFormFocusVisible()
@@ -736,8 +825,7 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Rune input
-	if isTextField(m.formFocus) && len(msg.Runes) > 0 {
-		m.formEditing = true
+	if m.formEditing && isTextField(m.formFocus) && len(msg.Runes) > 0 {
 		for _, r := range msg.Runes {
 			m.formFields[m.formFocus].InsertRune(r)
 		}
@@ -748,9 +836,9 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Spacebar for key gen type cycling
 	str := msg.String()
 	if str == "v" && m.formAuthIdx == 1 && !m.formEditing {
-		m.formSecretRevealed = !m.formSecretRevealed
+		cmd := m.openPrivateKeyEditor(false)
 		m.ensureFormFocusVisible()
-		return m, nil
+		return m, cmd
 	}
 	if str == "c" && m.formAuthIdx == 1 && !m.formEditing {
 		secret := strings.TrimSpace(m.formFields[ui.FFAuthDet].Value)
@@ -765,23 +853,23 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if str == " " && m.formFocus == ui.FFAuthDet && m.formAuthIdx == 2 {
+	if str == " " && m.formEditing && m.formFocus == ui.FFAuthDet && m.formAuthIdx == 2 {
 		m.formKeyIdx = (m.formKeyIdx + 1) % len(m.formKeyTypes)
 		return m, nil
 	}
 
 	// Vim nav for selectors
 	if m.cfg.UI.VimMode {
-		if str == "h" && m.formFocus == ui.FFGroup {
+		if str == "h" && m.formEditing && m.formFocus == ui.FFGroup {
 			cycleGroup(-1)
 			return m, nil
-		} else if str == "l" && m.formFocus == ui.FFGroup {
+		} else if str == "l" && m.formEditing && m.formFocus == ui.FFGroup {
 			cycleGroup(1)
 			return m, nil
-		} else if str == "h" && m.formFocus == ui.FFAuthMeth {
+		} else if str == "h" && m.formEditing && m.formFocus == ui.FFAuthMeth {
 			cycleAuth(-1)
 			return m, nil
-		} else if str == "l" && m.formFocus == ui.FFAuthMeth {
+		} else if str == "l" && m.formEditing && m.formFocus == ui.FFAuthMeth {
 			cycleAuth(1)
 			return m, nil
 		}
@@ -806,6 +894,7 @@ func (m *Model) closeAddHostOverlay() {
 	m.formEditIdx = -1
 	m.formScrollOffset = 0
 	m.formSecretRevealed = false
+	m.formKeyEditorOriginal = ""
 	m.formTeamHostID = ""
 	m.formTeamCredentialMode = ""
 	m.formTeamCredentialType = ""
@@ -1857,6 +1946,7 @@ func (m *Model) initAddHostForm(label, groupName, tags, hostname, username, port
 		m.formFields[ui.FFAuthDet] = ui.NewMaskedField("key")
 		m.formFields[ui.FFAuthDet].SetValue(existingKey)
 	}
+	m.initFormKeyEditor(existingKey)
 
 	m.formGroups = groupOptions
 	m.formGroupIdx = groupSelected
@@ -1872,7 +1962,7 @@ func (m *Model) initAddHostForm(label, groupName, tags, hostname, username, port
 	}
 	m.formKeyIdx = keyIdx
 	m.formFocus = ui.FFLabel
-	m.formEditing = true
+	m.formEditing = false
 	m.formScrollOffset = 0
 	m.formSecretRevealed = false
 	m.formTeamHostID = ""

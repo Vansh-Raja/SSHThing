@@ -29,6 +29,8 @@ func TestBuildSettingsItemsIncludesBetaUpdateRows(t *testing.T) {
 
 func TestApplySettingChangeTogglesBetaUpdateSettings(t *testing.T) {
 	m := NewModel()
+	m.cfg.Updates.ReleaseChannel = "stable"
+	m.cfg.Updates.AutoApplyUpdates = false
 
 	m.applySettingChange(20, "toggle")
 	if m.cfg.Updates.ReleaseChannel != "beta" {

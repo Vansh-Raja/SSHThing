@@ -50,7 +50,18 @@ func TestSessionExpiry(t *testing.T) {
 	}
 
 	expired := Session{AccessToken: "a", RefreshToken: "b", ExpiresAt: time.Now().Add(-time.Minute).UnixMilli()}
+	if !expired.Valid() {
+		t.Fatalf("expected expired access session with refresh token to remain structurally valid")
+	}
 	if !expired.Expired(time.Now()) {
 		t.Fatalf("expected session to be expired")
+	}
+	if !expired.Refreshable() {
+		t.Fatalf("expected session with refresh token to be refreshable")
+	}
+
+	noRefresh := Session{AccessToken: "a", ExpiresAt: time.Now().Add(-time.Minute).UnixMilli()}
+	if noRefresh.Refreshable() {
+		t.Fatalf("expected session without refresh token to be non-refreshable")
 	}
 }

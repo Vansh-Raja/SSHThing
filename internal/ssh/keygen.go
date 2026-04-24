@@ -1,11 +1,14 @@
 package ssh
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	xssh "golang.org/x/crypto/ssh"
 )
 
 // KeyType represents the type of SSH key to generate
@@ -71,35 +74,19 @@ func GenerateKey(keyType KeyType, comment string) (privateKey, publicKey string,
 	return string(privateKeyBytes), strings.TrimSpace(string(publicKeyBytes)), nil
 }
 
-// ValidatePrivateKey checks if a string looks like a valid SSH private key.
+// ValidatePrivateKey parses a PEM/OpenSSH private key using x/crypto/ssh.
 func ValidatePrivateKey(key string) error {
 	key = strings.TrimSpace(key)
-
-	// Check for common private key headers
-	validHeaders := []string{
-		"-----BEGIN OPENSSH PRIVATE KEY-----",
-		"-----BEGIN RSA PRIVATE KEY-----",
-		"-----BEGIN EC PRIVATE KEY-----",
-		"-----BEGIN DSA PRIVATE KEY-----",
+	if key == "" {
+		return fmt.Errorf("private key is empty")
 	}
-
-	hasValidHeader := false
-	for _, header := range validHeaders {
-		if strings.HasPrefix(key, header) {
-			hasValidHeader = true
-			break
+	if _, err := xssh.ParsePrivateKey([]byte(key)); err != nil {
+		var passphraseErr *xssh.PassphraseMissingError
+		if errors.As(err, &passphraseErr) {
+			return fmt.Errorf("encrypted private keys are not supported yet")
 		}
+		return fmt.Errorf("invalid SSH private key: %w", err)
 	}
-
-	if !hasValidHeader {
-		return fmt.Errorf("key does not have a valid private key header")
-	}
-
-	// Check for footer
-	if !strings.Contains(key, "-----END") || !strings.HasSuffix(key, "-----") {
-		return fmt.Errorf("key does not have a valid private key footer")
-	}
-
 	return nil
 }
 

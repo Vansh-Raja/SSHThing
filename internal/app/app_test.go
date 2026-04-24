@@ -11,6 +11,19 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+func TestNewModelKeepsExpiredRefreshableTeamsSession(t *testing.T) {
+	t.Setenv("SSHTHING_DATA_DIR", t.TempDir())
+	session := teamSessionForTests(time.Now().Add(-time.Hour))
+	if err := teamssession.Save(session); err != nil {
+		t.Fatalf("save teams session: %v", err)
+	}
+
+	m := NewModel()
+	if m.teamsSession.RefreshToken != session.RefreshToken {
+		t.Fatalf("expected expired refreshable teams session to be kept for refresh")
+	}
+}
+
 func TestBuildSettingsItemsIncludesUpdateNote(t *testing.T) {
 	m := NewModel()
 	items := m.buildSettingsItems()
@@ -332,32 +345,103 @@ func TestValidateForm(t *testing.T) {
 	}
 }
 
-func TestInitAddHostFormStartsEditingOnLabel(t *testing.T) {
+func TestInitAddHostFormStartsInNavigationMode(t *testing.T) {
 	m := NewModel()
 	m.initAddHostForm("", "", "", "", "", "22", "", "")
 
 	if m.formFocus != ui.FFLabel {
 		t.Fatalf("expected label focus, got %d", m.formFocus)
 	}
-	if !m.formEditing {
-		t.Fatalf("expected add-host form to start in editing mode")
+	if m.formEditing {
+		t.Fatalf("expected add-host form to start in navigation mode")
 	}
 }
 
-func TestAddHostTypingStartsEditingAndInsertsRunes(t *testing.T) {
+func TestAddHostTextFieldsRequireEnterBeforeEditing(t *testing.T) {
 	m := NewModel()
 	m.initAddHostForm("", "", "", "", "", "22", "", "")
-	m.formEditing = false
 	m.formFocus = ui.FFHostname
 
 	updated, _ := m.handleAddHostKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
 	got := updated.(Model)
 
+	if got.formEditing {
+		t.Fatalf("expected typing to be ignored before edit mode")
+	}
+	if got.formFields[ui.FFHostname].Value != "" {
+		t.Fatalf("expected hostname to remain empty before edit mode, got %q", got.formFields[ui.FFHostname].Value)
+	}
+
+	updated, _ = got.handleAddHostKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	updated, _ = got.handleAddHostKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	got = updated.(Model)
+
 	if !got.formEditing {
-		t.Fatalf("expected typing to enter edit mode")
+		t.Fatalf("expected enter to enable edit mode")
 	}
 	if got.formFields[ui.FFHostname].Value != "a" {
-		t.Fatalf("expected hostname field to receive typed rune, got %q", got.formFields[ui.FFHostname].Value)
+		t.Fatalf("expected hostname field to receive typed rune in edit mode, got %q", got.formFields[ui.FFHostname].Value)
+	}
+}
+
+func TestAddHostPrivateKeyEnterOpensPopupEditor(t *testing.T) {
+	m := NewModel()
+	m.initAddHostForm("", "", "", "", "", "22", "pasted", "")
+	m.formFocus = ui.FFAuthDet
+
+	updated, _ := m.handleAddHostKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+
+	if got.overlay != OverlayKeyEditor {
+		t.Fatalf("expected key field to open editor overlay, got %d", got.overlay)
+	}
+}
+
+func TestPrivateKeyPopupPastePreservesMultilineText(t *testing.T) {
+	m := NewModel()
+	m.initAddHostForm("", "", "", "", "", "22", "pasted", "")
+	m.formFocus = ui.FFAuthDet
+
+	updated, _ := m.handleAddHostKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+
+	pasted := "-----BEGIN OPENSSH PRIVATE KEY-----\nline-one\nline-two\n-----END OPENSSH PRIVATE KEY-----"
+	updated, _ = got.handlePrivateKeyEditorKeys(tea.KeyMsg{
+		Type:  tea.KeyRunes,
+		Runes: []rune(pasted),
+		Paste: true,
+	})
+	got = updated.(Model)
+
+	if got.formFields[ui.FFAuthDet].Value != pasted {
+		t.Fatalf("expected pasted multiline key to be preserved, got %q", got.formFields[ui.FFAuthDet].Value)
+	}
+}
+
+func TestAddHostPrivateKeyEscDiscardsPopupEdit(t *testing.T) {
+	m := NewModel()
+	original := "original\nprivate\nkey"
+	m.initAddHostForm("", "", "", "", "", "22", "pasted", original)
+	m.formFocus = ui.FFAuthDet
+	m.formEditing = false
+
+	updated, _ := m.handleAddHostKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.overlay != OverlayKeyEditor {
+		t.Fatalf("expected key editor overlay after enter, got %d", got.overlay)
+	}
+	got.formKeyEditor.SetValue("changed")
+	got.syncFormKeyFieldFromEditor()
+
+	updated, _ = got.handlePrivateKeyEditorKeys(tea.KeyMsg{Type: tea.KeyEsc})
+	got = updated.(Model)
+
+	if got.overlay != OverlayAddHost {
+		t.Fatalf("expected escape to return to add host overlay, got %d", got.overlay)
+	}
+	if got.formFields[ui.FFAuthDet].Value != original {
+		t.Fatalf("expected escape to discard edit and restore original key, got %q", got.formFields[ui.FFAuthDet].Value)
 	}
 }
 

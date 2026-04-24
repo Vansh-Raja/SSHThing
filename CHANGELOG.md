@@ -13,9 +13,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for rele
 - Separate `sshthing-beta` Homebrew formula path for macOS beta installs.
 
 ### Changed
+- The add/edit host TUI now starts in navigation mode, uses a two-column layout for host details and credentials, and keeps footer keybinds pinned at the bottom.
+- Private-key editing in the TUI now opens a dedicated multiline popup editor instead of expanding inline in the host form.
 - The updater now supports separate stable and beta release feeds, including prerelease-aware semantic version ordering.
 - `check now` can auto-apply beta updates for standalone installs when `auto apply updates` is enabled.
 - Package-manager installs remain stable/manual for beta in the first implementation and now show guidance instead of trying unsupported beta auto-upgrades.
+
+### Fixed
+- Private-key validation now parses real SSH private keys instead of relying on fragile header/footer string checks.
+- Teams mode now keeps expired access-token sessions after app restarts so the 30-day refresh token can renew access instead of forcing browser sign-in.
 
 ## [v2.1.0-beta.4] — 2026-04-23
 

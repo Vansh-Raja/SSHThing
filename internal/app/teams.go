@@ -309,10 +309,10 @@ func (m *Model) clearTeamsCacheState() error {
 
 func (m *Model) teamsAccessToken(ctx context.Context) (string, error) {
 	m.refreshTeamsClient()
-	if !m.teamsClient.Enabled() || !m.teamsSession.Valid() {
+	if !m.teamsClient.Enabled() || !m.teamsSession.Refreshable() {
 		return "", fmt.Errorf("cloud session unavailable. Return to Profile to sign in again.")
 	}
-	if m.teamsSession.Expired(time.Now()) {
+	if !m.teamsSession.Valid() || m.teamsSession.Expired(time.Now()) {
 		refreshed, err := m.teamsClient.Refresh(ctx, m.teamsSession.RefreshToken)
 		if err != nil {
 			_ = m.clearTeamsSessionState()
