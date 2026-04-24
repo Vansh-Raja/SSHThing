@@ -21,6 +21,18 @@ export type PromptOptions = {
   validate?: (value: string) => string | null;
 };
 
+export type ChoiceOption = {
+  label: string;
+  variant?: "primary" | "default" | "danger";
+};
+
+export type ChoiceOptions = {
+  title: ReactNode;
+  message?: ReactNode;
+  /** Rendered in order, left to right. Enter triggers the last (primary) option. */
+  options: ChoiceOption[];
+};
+
 type ConfirmRequest = {
   kind: "confirm";
   id: number;
@@ -35,7 +47,14 @@ type PromptRequest = {
   resolve: (value: string | null) => void;
 };
 
-export type DialogRequest = ConfirmRequest | PromptRequest;
+type ChoiceRequest = {
+  kind: "choice";
+  id: number;
+  options: ChoiceOptions;
+  resolve: (label: string | null) => void;
+};
+
+export type DialogRequest = ConfirmRequest | PromptRequest | ChoiceRequest;
 
 type Listener = (requests: DialogRequest[]) => void;
 
@@ -71,6 +90,7 @@ export function resolveDialog(id: number, value: boolean | string | null) {
   if (request.kind === "confirm") {
     request.resolve(Boolean(value));
   } else {
+    // prompt + choice both resolve to string | null
     request.resolve((value as string | null) ?? null);
   }
 }
@@ -84,5 +104,15 @@ export function confirmDialog(options: ConfirmOptions): Promise<boolean> {
 export function promptDialog(options: PromptOptions): Promise<string | null> {
   return new Promise<string | null>((resolve) => {
     push({ kind: "prompt", id: nextId++, options, resolve });
+  });
+}
+
+/**
+ * Three-way (or N-way) choice dialog. Resolves to the selected option's
+ * `label`, or `null` on Esc / backdrop click / × button.
+ */
+export function choiceDialog(options: ChoiceOptions): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    push({ kind: "choice", id: nextId++, options, resolve });
   });
 }

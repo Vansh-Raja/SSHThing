@@ -170,7 +170,11 @@ export const create = mutation({
       updatedAt: now,
     });
 
-    if (credentialMode === "shared" && credentialType !== "none" && args.sharedCredentialCiphertext) {
+    // Store a shared credential whenever ciphertext is supplied and the host
+    // has a meaningful credential type. Allowed in per_member mode too, where
+    // the stored row becomes the fallback used when a member has no personal
+    // credential.
+    if (credentialType !== "none" && args.sharedCredentialCiphertext) {
       await ctx.db.insert("teamHostSharedCredentials", {
         hostId,
         credentialType,
@@ -287,7 +291,17 @@ export const update = mutation({
       .withIndex("by_host", (q) => q.eq("hostId", args.hostId))
       .first();
 
-    if (credentialMode !== "shared" || credentialType === "none") {
+    // Shared credential lifecycle:
+    // - Delete if credentialType=="none" (no secret is meaningful).
+    // - Delete if the caller explicitly passes sharedCredentialCiphertext=null.
+    // - Upsert if the caller passes a non-empty ciphertext string. Allowed in
+    //   both "shared" mode and "per_member" mode (where the stored row acts as
+    //   a fallback used when a member has no personal credential).
+    // - Otherwise (undefined/omitted): preserve what's there. This makes mode
+    //   transitions non-destructive by default — an admin flipping a host from
+    //   shared to per_member no longer wipes the secret.
+
+    if (credentialType === "none") {
       if (existingShared) {
         await ctx.db.delete(existingShared._id);
         await writeAuditEvent(ctx, {
@@ -300,7 +314,7 @@ export const update = mutation({
           summary: `Deleted shared credential for ${access.host.label || access.host.hostname}`,
           metadata: {
             hostLabel: access.host.label || access.host.hostname,
-            credentialMode: "shared",
+            credentialMode,
             credentialType: existingShared.credentialType,
           },
         });
@@ -321,7 +335,7 @@ export const update = mutation({
           summary: `Deleted shared credential for ${access.host.label || access.host.hostname}`,
           metadata: {
             hostLabel: access.host.label || access.host.hostname,
-            credentialMode: "shared",
+            credentialMode,
             credentialType: existingShared.credentialType,
           },
         });
@@ -329,7 +343,10 @@ export const update = mutation({
       return { ok: true };
     }
 
-    if (typeof args.sharedCredentialCiphertext === "string" && args.sharedCredentialCiphertext !== "") {
+    if (
+      typeof args.sharedCredentialCiphertext === "string" &&
+      args.sharedCredentialCiphertext !== ""
+    ) {
       if (existingShared) {
         await ctx.db.patch(existingShared._id, {
           credentialType,
@@ -347,7 +364,7 @@ export const update = mutation({
           summary: `Replaced shared credential for ${access.host.label || access.host.hostname}`,
           metadata: {
             hostLabel: access.host.label || access.host.hostname,
-            credentialMode: "shared",
+            credentialMode,
             credentialType,
           },
         });
@@ -370,12 +387,15 @@ export const update = mutation({
           summary: `Configured shared credential for ${access.host.label || access.host.hostname}`,
           metadata: {
             hostLabel: access.host.label || access.host.hostname,
-            credentialMode: "shared",
+            credentialMode,
             credentialType,
           },
         });
       }
     }
+
+    // Ciphertext undefined → preserve existingShared row untouched. This is the
+    // "Keep as fallback" path from the shared→per_member mode-switch prompt.
 
     return { ok: true };
   },
@@ -545,6 +565,17 @@ export const listCredentialRoster = query({
           },
         ];
 
+    // Fetch the shared credential row once so we can compute
+    // usingSharedFallback per roster entry without N+1 queries.
+    const shared = await ctx.db
+      .query("teamHostSharedCredentials")
+      .withIndex("by_host", (q) => q.eq("hostId", args.hostId))
+      .first();
+    const sharedFallbackAvailable =
+      access.host.credentialMode === "per_member" &&
+      access.host.credentialType !== "none" &&
+      Boolean(shared?.ciphertext);
+
     const entries = await Promise.all(
       roster.map(async (member) => {
         const credential = await ctx.db
@@ -553,6 +584,7 @@ export const listCredentialRoster = query({
           .first();
 
         const role = member.clerkUserId === access.team.ownerClerkUserId ? "owner" : member.role;
+        const hasCredential = Boolean(credential?.ciphertext);
         return {
           memberId: member.clerkUserId,
           displayName: memberDisplayName(member, member.clerkUserId),
@@ -560,10 +592,11 @@ export const listCredentialRoster = query({
           role,
           isOwner: member.clerkUserId === access.team.ownerClerkUserId,
           isCurrentUser: member.clerkUserId === args.clerkUserId,
-          hasCredential: Boolean(credential?.ciphertext),
+          hasCredential,
           credentialType: credential?.credentialType ?? "none",
           username: credential?.username ?? null,
           updatedAt: credential?.updatedAt ?? null,
+          usingSharedFallback: !hasCredential && sharedFallbackAvailable,
         };
       }),
     );
@@ -740,28 +773,74 @@ export const getConnectConfig = query({
         credentialMode: access.host.credentialMode,
         credentialType: access.host.credentialType,
         secret: shared?.ciphertext ?? "",
+        usedSharedFallback: false,
       };
     }
 
+    // per_member mode: prefer the caller's personal credential, then silently
+    // fall back to the shared credential if one is stored on this host, then
+    // error. "shared row present while mode is per_member" is the implicit
+    // opt-in for the fallback feature (no separate flag).
     const personal = await ctx.db
       .query("teamHostPersonalCredentials")
-      .withIndex("by_host_and_user", (q) => q.eq("hostId", args.hostId).eq("clerkUserId", args.clerkUserId))
+      .withIndex("by_host_and_user", (q) =>
+        q.eq("hostId", args.hostId).eq("clerkUserId", args.clerkUserId),
+      )
       .first();
-    if (access.host.credentialType !== "none" && !personal) {
-      throw new Error("personal_credential_not_configured");
+
+    if (personal && personal.ciphertext) {
+      return {
+        hostId: access.host._id,
+        teamId: access.host.teamId,
+        label: access.host.label,
+        hostname: access.host.hostname,
+        username: personal.username ?? access.host.username,
+        port: access.host.port,
+        credentialMode: access.host.credentialMode,
+        credentialType: personal.credentialType,
+        secret: personal.ciphertext,
+        usedSharedFallback: false,
+      };
     }
 
-    return {
-      hostId: access.host._id,
-      teamId: access.host.teamId,
-      label: access.host.label,
-      hostname: access.host.hostname,
-      username: personal?.username ?? access.host.username,
-      port: access.host.port,
-      credentialMode: access.host.credentialMode,
-      credentialType: personal?.credentialType ?? access.host.credentialType,
-      secret: personal?.ciphertext ?? "",
-    };
+    if (access.host.credentialType === "none") {
+      // No credential type configured — nothing to resolve, but return a valid
+      // shape so the CLI can still connect (password-prompt / key-agent flow).
+      return {
+        hostId: access.host._id,
+        teamId: access.host.teamId,
+        label: access.host.label,
+        hostname: access.host.hostname,
+        username: personal?.username ?? access.host.username,
+        port: access.host.port,
+        credentialMode: access.host.credentialMode,
+        credentialType: access.host.credentialType,
+        secret: "",
+        usedSharedFallback: false,
+      };
+    }
+
+    const sharedFallback = await ctx.db
+      .query("teamHostSharedCredentials")
+      .withIndex("by_host", (q) => q.eq("hostId", args.hostId))
+      .first();
+
+    if (sharedFallback && sharedFallback.ciphertext) {
+      return {
+        hostId: access.host._id,
+        teamId: access.host.teamId,
+        label: access.host.label,
+        hostname: access.host.hostname,
+        username: personal?.username ?? access.host.username,
+        port: access.host.port,
+        credentialMode: access.host.credentialMode,
+        credentialType: sharedFallback.credentialType,
+        secret: sharedFallback.ciphertext,
+        usedSharedFallback: true,
+      };
+    }
+
+    throw new Error("personal_credential_not_configured");
   },
 });
 

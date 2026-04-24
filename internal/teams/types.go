@@ -80,15 +80,16 @@ type TeamHostDetail struct {
 }
 
 type TeamHostConnectConfig struct {
-	HostID         string `json:"hostId"`
-	TeamID         string `json:"teamId"`
-	Label          string `json:"label"`
-	Hostname       string `json:"hostname"`
-	Username       string `json:"username"`
-	Port           int    `json:"port"`
-	CredentialMode string `json:"credentialMode"`
-	CredentialType string `json:"credentialType"`
-	Secret         string `json:"secret"`
+	HostID             string `json:"hostId"`
+	TeamID             string `json:"teamId"`
+	Label              string `json:"label"`
+	Hostname           string `json:"hostname"`
+	Username           string `json:"username"`
+	Port               int    `json:"port"`
+	CredentialMode     string `json:"credentialMode"`
+	CredentialType     string `json:"credentialType"`
+	Secret             string `json:"secret"`
+	UsedSharedFallback bool   `json:"usedSharedFallback,omitempty"`
 }
 
 type CreateTeamHostRequest struct {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import ChoiceDialog from "./ChoiceDialog";
 import ConfirmDialog from "./ConfirmDialog";
 import PromptDialog from "./PromptDialog";
 import { resolveDialog, subscribeDialogs, type DialogRequest } from "./dialogs";
@@ -30,6 +31,19 @@ export default function DialogHost() {
         variant={current.options.variant}
         onConfirm={() => resolveDialog(current.id, true)}
         onCancel={() => resolveDialog(current.id, false)}
+      />
+    );
+  }
+
+  if (current.kind === "choice") {
+    return (
+      <ChoiceDialog
+        open
+        title={current.options.title}
+        message={current.options.message}
+        options={current.options.options}
+        onSelect={(label) => resolveDialog(current.id, label)}
+        onCancel={() => resolveDialog(current.id, null)}
       />
     );
   }

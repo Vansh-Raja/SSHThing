@@ -60,10 +60,11 @@ export async function POST(request: Request, { params }: Params) {
       credentialMode: body.credentialMode ?? "shared",
       credentialType: body.credentialType ?? "none",
       secretVisibility: body.secretVisibility ?? "revealed_to_access_holders",
-      sharedCredentialCiphertext:
-        body.sharedCredential && body.credentialMode !== "per_member"
-          ? encryptTeamSecret(body.sharedCredential)
-          : undefined,
+      // Accept a shared credential on create regardless of mode: per-member
+      // hosts can optionally ship with a shared fallback preconfigured.
+      sharedCredentialCiphertext: body.sharedCredential
+        ? encryptTeamSecret(body.sharedCredential)
+        : undefined,
     });
     return NextResponse.json(host);
   } catch (error) {

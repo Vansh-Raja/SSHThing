@@ -88,6 +88,9 @@ export type CredentialRosterEntry = {
   credentialType: "none" | "password" | "private_key";
   username: string | null;
   updatedAt: number | null;
+  /** True when the member has no personal credential but the host stores a
+   * shared credential that acts as the fallback on connect. */
+  usingSharedFallback?: boolean;
 };
 
 export type RevealedCredential = {

@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import Drawer from "../ui/Drawer";
-import { confirmDialog } from "../ui/dialogs";
+import { choiceDialog, confirmDialog } from "../ui/dialogs";
 import { toast } from "../ui/toast";
 import { apiRequest, errorMessage } from "./api";
 import { blankHostForm, blankPersonalCredentialForm } from "./forms";
@@ -63,6 +63,16 @@ export default function HostDrawer({
   const [roster, setRoster] = useState<CredentialRosterEntry[]>([]);
   const [revealed, setRevealed] = useState<RevealedCredential | null>(null);
   const [showRevealedSecret, setShowRevealedSecret] = useState(false);
+  // True when the server is currently storing a shared credential row for this
+  // host — needed so we can (a) render the shared-cred editor in the Host creds
+  // tab even under per_member mode, and (b) decide whether to fire the
+  // shared→per_member save-time choice dialog.
+  const [sharedCredentialConfigured, setSharedCredentialConfigured] =
+    useState(false);
+  // credentialMode at last load from the server. Used to detect an in-session
+  // flip from "shared" → "per_member" so the save handler can prompt about the
+  // stored shared credential.
+  const prevModeRef = useRef<"shared" | "per_member" | null>(null);
 
   // Reset state when drawer opens or mode changes.
   useEffect(() => {
@@ -75,6 +85,8 @@ export default function HostDrawer({
       setPersonalCredential(null);
       setPersonalForm(blankPersonalCredentialForm);
       setRoster([]);
+      setSharedCredentialConfigured(false);
+      prevModeRef.current = null;
     }
   }, [open, mode]);
 
@@ -84,6 +96,8 @@ export default function HostDrawer({
   useEffect(() => {
     if (!open || mode !== "edit" || !hostId) return;
     setHostForm(blankHostForm);
+    setSharedCredentialConfigured(false);
+    prevModeRef.current = null;
     let cancelled = false;
     (async () => {
       try {
@@ -101,6 +115,11 @@ export default function HostDrawer({
           credentialType: host.credentialType,
           sharedCredential: host.sharedCredential ?? "",
         });
+        setSharedCredentialConfigured(
+          Boolean(host.sharedCredentialConfigured) ||
+            Boolean(host.sharedCredential),
+        );
+        prevModeRef.current = host.credentialMode;
       } catch (err) {
         if (!cancelled) toast.error(errorMessage(err, "host_load_failed"));
       }
@@ -183,24 +202,107 @@ export default function HostDrawer({
   async function handleSaveHost(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!teamId) return;
+
+    // Build the payload with three-way sharedCredential semantics:
+    //   undefined → "preserve server-side" (don't include key)
+    //   null      → "explicitly clear" (backend deletes the stored row)
+    //   string    → "upsert this secret"
+    // The old code collapsed everything to string-or-null; the new fallback
+    // flow needs the preserve path for the shared→per_member "Keep as
+    // fallback" choice.
+    type HostPayload = {
+      label: string;
+      hostname: string;
+      username: string;
+      port: number;
+      group: string;
+      tags: string[];
+      notes: string;
+      credentialMode: "shared" | "per_member";
+      credentialType: "none" | "password" | "private_key";
+      secretVisibility: string;
+      sharedCredential?: string | null;
+    };
+
+    const payload: HostPayload = {
+      label: hostForm.label.trim() || hostForm.hostname.trim(),
+      hostname: hostForm.hostname.trim(),
+      username: hostForm.username.trim(),
+      port: Number(hostForm.port) || 22,
+      group: hostForm.group.trim(),
+      tags: parseTags(hostForm.tags),
+      notes: hostForm.notes.trim(),
+      credentialMode: hostForm.credentialMode,
+      credentialType: hostForm.credentialType,
+      secretVisibility: "revealed_to_access_holders",
+    };
+
+    if (hostForm.credentialMode === "shared") {
+      if (hostForm.credentialType === "none") {
+        // No secret makes sense; let the backend clean up any stored row.
+        payload.sharedCredential = null;
+      } else {
+        payload.sharedCredential = hostForm.sharedCredential;
+      }
+    } else {
+      // per_member: default is "leave stored shared row alone." Two edits
+      // can override that:
+      //   1. The shared→per_member mode-switch dialog (below) can pick Clear.
+      //   2. Admins can edit/clear the shared row from the Host creds tab's
+      //      editor (see E3). In that case hostForm.sharedCredential will
+      //      differ from what we loaded, and we pass it through.
+      if (
+        sharedCredentialConfigured &&
+        hostForm.sharedCredential.trim() === ""
+      ) {
+        // Admin wiped the shared secret textarea → explicit clear.
+        payload.sharedCredential = null;
+      } else if (hostForm.sharedCredential.trim() !== "") {
+        // Admin entered/edited a shared secret → upsert.
+        payload.sharedCredential = hostForm.sharedCredential;
+      }
+      // else: undefined → preserve
+    }
+
+    // Mode-switch prompt: if the host was in shared mode when we loaded and
+    // has now been flipped to per_member AND a shared credential is stored,
+    // ask the admin what to do with it.
+    if (
+      mode === "edit" &&
+      prevModeRef.current === "shared" &&
+      hostForm.credentialMode === "per_member" &&
+      sharedCredentialConfigured &&
+      hostForm.credentialType !== "none"
+    ) {
+      const choice = await choiceDialog({
+        title: "Keep shared credential?",
+        message:
+          "You're switching this host to per-member mode. A shared credential is stored. Members without a personal credential can fall back to it, or you can clear it now.",
+        options: [
+          { label: "Clear shared", variant: "default" },
+          { label: "Keep as fallback", variant: "primary" },
+        ],
+      });
+      if (choice === null) {
+        // User escaped — revert the mode flip so the drawer stays coherent.
+        setHostForm((cur) => ({
+          ...cur,
+          credentialMode: "shared",
+        }));
+        return;
+      }
+      if (choice === "Clear shared") {
+        payload.sharedCredential = null;
+      } else {
+        // Keep: omit sharedCredential entirely so the backend preserves the
+        // stored row untouched, regardless of what the textarea currently
+        // holds.
+        delete payload.sharedCredential;
+      }
+    }
+
     try {
       setSaving(true);
-      const payload = {
-        label: hostForm.label.trim() || hostForm.hostname.trim(),
-        hostname: hostForm.hostname.trim(),
-        username: hostForm.username.trim(),
-        port: Number(hostForm.port) || 22,
-        group: hostForm.group.trim(),
-        tags: parseTags(hostForm.tags),
-        notes: hostForm.notes.trim(),
-        credentialMode: hostForm.credentialMode,
-        credentialType: hostForm.credentialType,
-        secretVisibility: "revealed_to_access_holders",
-        sharedCredential:
-          hostForm.credentialMode === "shared" && hostForm.credentialType !== "none"
-            ? hostForm.sharedCredential
-            : null,
-      };
       if (mode === "edit" && hostId) {
         await apiRequest(`/api/teams/hosts/${hostId}`, {
           method: "PATCH",
@@ -629,20 +731,43 @@ export default function HostDrawer({
                   lives in Personal creds.
                 </p>
               ) : null}
+
+              {mode === "edit" &&
+              hostForm.credentialMode === "per_member" &&
+              hostForm.credentialType !== "none" ? (
+                sharedCredentialConfigured ? (
+                  <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                    Shared credential stored — used as fallback when a member
+                    has no personal credential. Edit in{" "}
+                    <button
+                      type="button"
+                      className="linklike"
+                      onClick={() => setSegment("host_credentials")}
+                    >
+                      Host creds
+                    </button>
+                    .
+                  </p>
+                ) : (
+                  <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                    No fallback configured. Save a shared credential in{" "}
+                    <button
+                      type="button"
+                      className="linklike"
+                      onClick={() => setSegment("host_credentials")}
+                    >
+                      Host creds
+                    </button>{" "}
+                    to let members without a personal credential connect.
+                  </p>
+                )
+              ) : null}
             </>
           ) : null}
 
           {segment === "host_credentials" ? (
             <>
-              {hostForm.credentialMode !== "shared" ? (
-                <div className="empty-state">
-                  <div className="empty-state__title">Per-member credentials</div>
-                  <p className="empty-state__body">
-                    This host uses per-member credentials. Each member configures
-                    their own in <strong>Personal creds</strong>.
-                  </p>
-                </div>
-              ) : hostForm.credentialType === "none" ? (
+              {hostForm.credentialType === "none" ? (
                 <div className="empty-state">
                   <div className="empty-state__title">No credential configured</div>
                   <p className="empty-state__body">
@@ -650,10 +775,70 @@ export default function HostDrawer({
                     the shared secret editor.
                   </p>
                 </div>
+              ) : hostForm.credentialMode === "per_member" &&
+                !sharedCredentialConfigured &&
+                hostForm.sharedCredential.trim() === "" ? (
+                <div className="empty-state">
+                  <div className="empty-state__title">No fallback configured</div>
+                  <p className="empty-state__body">
+                    This host uses per-member credentials. Save a shared secret
+                    here to let members without a personal credential fall back
+                    to it automatically.
+                  </p>
+                  {canManageHosts ? (
+                    <>
+                      <label className="field" style={{ width: "100%" }}>
+                        <span className="field__label">
+                          Shared{" "}
+                          {hostForm.credentialType === "private_key"
+                            ? "private key"
+                            : "password"}
+                        </span>
+                        <textarea
+                          className="field__input field__textarea"
+                          value={hostForm.sharedCredential}
+                          onChange={(e) =>
+                            setHostForm((cur) => ({
+                              ...cur,
+                              sharedCredential: e.target.value,
+                            }))
+                          }
+                          placeholder={
+                            hostForm.credentialType === "private_key"
+                              ? "Paste the private key"
+                              : "Paste the password"
+                          }
+                          rows={hostForm.credentialType === "private_key" ? 8 : 3}
+                        />
+                      </label>
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        Save host (footer) to persist.
+                      </span>
+                    </>
+                  ) : (
+                    <p className="muted" style={{ fontSize: 12 }}>
+                      Only owners and admins can configure fallback.
+                    </p>
+                  )}
+                </div>
               ) : (
                 <>
                   <div className="stack" style={{ gap: 6 }}>
-                    <span className="eyebrow">Shared credential</span>
+                    <span className="eyebrow">
+                      Shared credential
+                      {hostForm.credentialMode === "per_member" ? (
+                        <span
+                          style={{
+                            marginLeft: 8,
+                            color: "var(--muted)",
+                            fontSize: 10,
+                            letterSpacing: "0.08em",
+                          }}
+                        >
+                          · USED AS FALLBACK
+                        </span>
+                      ) : null}
+                    </span>
                     <p className="muted" style={{ fontSize: 12, margin: 0 }}>
                       Connection username:{" "}
                       <strong style={{ color: "var(--ink)" }}>
@@ -667,6 +852,12 @@ export default function HostDrawer({
                       >
                         Details
                       </button>
+                      {hostForm.credentialMode === "per_member" ? (
+                        <>
+                          {" · "}members with a personal credential won't see
+                          this secret.
+                        </>
+                      ) : null}
                     </p>
                   </div>
 
@@ -696,12 +887,16 @@ export default function HostDrawer({
                     />
                     <span className="muted" style={{ fontSize: 12 }}>
                       {canManageHosts
-                        ? "Save host (footer) to persist changes."
+                        ? sharedCredentialConfigured &&
+                          hostForm.credentialMode === "per_member"
+                          ? "Save host (footer) to update the stored fallback. Empty the textarea to clear it."
+                          : "Save host (footer) to persist changes."
                         : "Only owners and admins can edit the shared secret."}
                     </span>
                   </label>
 
-                  {mode === "edit" && canRevealSecrets ? (
+                  {mode === "edit" && canRevealSecrets &&
+                  sharedCredentialConfigured ? (
                     <section className="stack" style={{ gap: 8 }}>
                       <span className="eyebrow">Reveal stored secret</span>
                       <p className="muted" style={{ fontSize: 12, margin: 0 }}>
@@ -718,7 +913,8 @@ export default function HostDrawer({
                         </button>
                       </div>
                     </section>
-                  ) : mode === "edit" ? (
+                  ) : mode === "edit" && canRevealSecrets ? null : mode ===
+                    "edit" ? (
                     <p className="muted" style={{ fontSize: 12, margin: 0 }}>
                       Only owners and admins can reveal the stored secret.
                     </p>
@@ -874,17 +1070,23 @@ export default function HostDrawer({
                                 {entry.role} · {entry.email || entry.memberId}
                               </span>
                               <span className="data-row__meta">
-                                {entry.hasCredential
-                                  ? `${entry.credentialType}${
-                                      entry.username
-                                        ? ` · ${entry.username}`
-                                        : ""
-                                    }${
-                                      entry.updatedAt
-                                        ? ` · ${formatTime(entry.updatedAt)}`
-                                        : ""
-                                    }`
-                                  : "no credential saved"}
+                                {entry.hasCredential ? (
+                                  `${entry.credentialType}${
+                                    entry.username
+                                      ? ` · ${entry.username}`
+                                      : ""
+                                  }${
+                                    entry.updatedAt
+                                      ? ` · ${formatTime(entry.updatedAt)}`
+                                      : ""
+                                  }`
+                                ) : entry.usingSharedFallback ? (
+                                  <span style={{ color: "var(--accent)" }}>
+                                    using shared fallback
+                                  </span>
+                                ) : (
+                                  "no credential saved"
+                                )}
                               </span>
                             </div>
                             <div className="data-row__trail">
