@@ -9,6 +9,7 @@ import (
 	"github.com/Vansh-Raja/SSHThing/internal/authtoken"
 	"github.com/Vansh-Raja/SSHThing/internal/config"
 	"github.com/Vansh-Raja/SSHThing/internal/db"
+	"github.com/Vansh-Raja/SSHThing/internal/health"
 	"github.com/Vansh-Raja/SSHThing/internal/mount"
 	syncpkg "github.com/Vansh-Raja/SSHThing/internal/sync"
 	"github.com/Vansh-Raja/SSHThing/internal/teamcache"
@@ -158,6 +159,18 @@ type Model struct {
 	updateRunID    int
 	updateLast     *update.CheckResult
 
+	// Health
+	healthChecking           bool
+	healthRunID              int
+	healthTotal              int
+	healthCompleted          int
+	healthInFlight           int
+	healthQueue              []healthTarget
+	healthActiveKeys         map[string]bool
+	healthResults            map[string]health.Result
+	healthProbeDeps          healthProbeDeps
+	teamsHealthAutoRefreshed map[string]bool
+
 	// Error
 	err    error
 	errSeq int
@@ -190,35 +203,37 @@ func NewModelWithVersion(version string) Model {
 	setupFields[1] = ui.NewMaskedField("confirm")
 
 	m := Model{
-		cfg:            cfg,
-		cfgOriginal:    cfg,
-		hosts:          []Host{},
-		groups:         []string{},
-		listItems:      []ListItem{},
-		selectedIdx:    0,
-		appMode:        appModePersonal,
-		page:           PageHome,
-		personalPage:   PageHome,
-		teamsPage:      PageTeams,
-		overlay:        overlay,
-		collapsed:      map[string]bool{},
-		theme:          theme,
-		themeIdx:       themeIdx,
-		icons:          icons,
-		iconIdx:        iconIdx,
-		loginField:     loginField,
-		setupFields:    setupFields,
-		quitCursor:     0,
-		mountManager:   mount.NewManager(),
-		tokenSummaries: []authtoken.TokenSummary{},
-		tokenHostPick:  map[int]bool{},
-		tokenMode:      tokenModeList,
-		teamsClient:    teamsclient.New(cloudServiceBaseURL()),
-		teamsSession:   teamsSession,
-		teamsCache:     teamsCache,
-		teamsState:     teamsStateZero,
-		teamsItems:     append([]teams.TeamHost(nil), teamsCache.Hosts...),
-		teamsList:      append([]teams.TeamSummary(nil), teamsCache.Teams...),
+		cfg:                      cfg,
+		cfgOriginal:              cfg,
+		hosts:                    []Host{},
+		groups:                   []string{},
+		listItems:                []ListItem{},
+		selectedIdx:              0,
+		appMode:                  appModePersonal,
+		page:                     PageHome,
+		personalPage:             PageHome,
+		teamsPage:                PageTeams,
+		overlay:                  overlay,
+		collapsed:                map[string]bool{},
+		theme:                    theme,
+		themeIdx:                 themeIdx,
+		icons:                    icons,
+		iconIdx:                  iconIdx,
+		loginField:               loginField,
+		setupFields:              setupFields,
+		quitCursor:               0,
+		mountManager:             mount.NewManager(),
+		tokenSummaries:           []authtoken.TokenSummary{},
+		tokenHostPick:            map[int]bool{},
+		tokenMode:                tokenModeList,
+		teamsClient:              teamsclient.New(cloudServiceBaseURL()),
+		teamsSession:             teamsSession,
+		teamsCache:               teamsCache,
+		teamsState:               teamsStateZero,
+		teamsItems:               append([]teams.TeamHost(nil), teamsCache.Hosts...),
+		teamsList:                append([]teams.TeamSummary(nil), teamsCache.Teams...),
+		healthResults:            map[string]health.Result{},
+		teamsHealthAutoRefreshed: map[string]bool{},
 		teamsCurrentTeamID: func() string {
 			if teamsSession.CurrentTeamID != "" {
 				return teamsSession.CurrentTeamID
@@ -255,7 +270,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.overlay == OverlayNone && (msg.String() == "T" || msg.String() == "shift+t") {
 			m.toggleAppMode()
-			return m, m.errorAutoClearCmd(prevErr)
+			return m, tea.Batch(m.toggleAppModeCmd(), m.errorAutoClearCmd(prevErr))
 		}
 		// Dispatch to overlay or page
 		var nextModel tea.Model
@@ -426,6 +441,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settingsItems = m.buildSettingsItems()
 		m.err = fmt.Errorf("\u2713 PATH updated. Open a new terminal for changes.")
 		return m, m.errorAutoClearCmd(prevErr)
+
+	case hostHealthResultMsg:
+		cmd := m.handleHealthResult(msg)
+		return m, tea.Batch(cmd, m.errorAutoClearCmd(prevErr))
 
 	case clearErrMsg:
 		if msg.seq == m.errSeq {

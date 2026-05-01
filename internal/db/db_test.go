@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/Vansh-Raja/SSHThing/internal/db"
 )
@@ -194,6 +195,89 @@ func TestDatabaseOperations(t *testing.T) {
 			if g == "Work2" {
 				t.Fatalf("expected deleted group to be hidden")
 			}
+		}
+	})
+
+	t.Run("HostHealth", func(t *testing.T) {
+		store, err := db.Init("testpassword123")
+		if err != nil {
+			t.Fatalf("Init failed: %v", err)
+		}
+		defer store.Close()
+
+		host := &db.HostModel{
+			Label:    "health",
+			Hostname: "health.example.com",
+			Username: "ubuntu",
+			Port:     22,
+			KeyType:  "password",
+		}
+		if err := store.CreateHost(host, ""); err != nil {
+			t.Fatalf("CreateHost failed: %v", err)
+		}
+		hosts, err := store.GetHosts()
+		if err != nil {
+			t.Fatalf("GetHosts failed: %v", err)
+		}
+		hostID := 0
+		for _, h := range hosts {
+			if h.Hostname == "health.example.com" {
+				hostID = h.ID
+				break
+			}
+		}
+		if hostID == 0 {
+			t.Fatalf("expected health host to be inserted")
+		}
+
+		checkedAt := time.Now().UTC().Truncate(time.Second)
+		result := db.HostHealth{
+			HostID:             hostID,
+			Status:             "online",
+			CheckedAt:          checkedAt,
+			LatencyMS:          123,
+			UptimeSeconds:      456,
+			CPUPercent:         12,
+			MemTotalBytes:      1000,
+			MemAvailableBytes:  400,
+			DiskTotalBytes:     2000,
+			DiskAvailableBytes: 1500,
+			GPUPresent:         true,
+			GPUName:            "test gpu",
+		}
+		if err := store.UpsertHostHealth(result); err != nil {
+			t.Fatalf("UpsertHostHealth failed: %v", err)
+		}
+
+		got, ok, err := store.GetHostHealth(hostID)
+		if err != nil {
+			t.Fatalf("GetHostHealth failed: %v", err)
+		}
+		if !ok {
+			t.Fatalf("expected host health")
+		}
+		if got.Status != "online" || got.LatencyMS != 123 || !got.GPUPresent || got.GPUName != "test gpu" {
+			t.Fatalf("unexpected host health: %+v", got)
+		}
+
+		result.Status = "offline"
+		result.Error = "connection refused"
+		if err := store.UpsertHostHealth(result); err != nil {
+			t.Fatalf("second UpsertHostHealth failed: %v", err)
+		}
+		all, err := store.ListHostHealth()
+		if err != nil {
+			t.Fatalf("ListHostHealth failed: %v", err)
+		}
+		if all[hostID].Status != "offline" || all[hostID].Error != "connection refused" {
+			t.Fatalf("expected updated health result, got %+v", all[hostID])
+		}
+
+		if err := store.DeleteHostHealth(hostID); err != nil {
+			t.Fatalf("DeleteHostHealth failed: %v", err)
+		}
+		if _, ok, err := store.GetHostHealth(hostID); err != nil || ok {
+			t.Fatalf("expected deleted health, ok=%v err=%v", ok, err)
 		}
 	})
 

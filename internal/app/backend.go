@@ -62,6 +62,7 @@ func (m *Model) loadHosts() {
 	}
 
 	m.loadGroups()
+	m.loadStoredHostHealth()
 	m.rebuildListItems()
 	m.syncTokenLabelsWithHosts()
 }
@@ -990,6 +991,7 @@ func (m *Model) buildSettingsItems() []ui.SettingsItem {
 	if m.appMode == appModeTeams {
 		return []ui.SettingsItem{
 			{Category: "ui", Label: "wrap labels", Value: boolVal(m.cfg.TeamsUI.WrapLabels), Kind: 0},
+			{Category: "ui", Label: "health display", Value: healthDisplayLabel(m.cfg.UI.HealthDisplayMode), Kind: 1, Options: healthDisplayLabels(), OptIdx: healthDisplayIdx(m.cfg.UI.HealthDisplayMode)},
 			{Category: "ui", Label: "theme", Value: m.cfg.TeamsUI.Theme, Kind: 1, Options: themeNames(), OptIdx: themeIdx(m.cfg.TeamsUI.Theme)},
 			{Category: "ui", Label: "icon set", Value: m.cfg.TeamsUI.IconSet, Kind: 1, Options: iconSetNames(), OptIdx: iconSetIdx(m.cfg.TeamsUI.IconSet)},
 		}
@@ -1000,6 +1002,7 @@ func (m *Model) buildSettingsItems() []ui.SettingsItem {
 		{Category: "ui", Label: "vim mode", Value: boolVal(m.cfg.UI.VimMode), Kind: 0},
 		{Category: "ui", Label: "show icons", Value: boolVal(m.cfg.UI.ShowIcons), Kind: 0},
 		{Category: "ui", Label: "wrap labels", Value: boolVal(m.cfg.UI.WrapLabels), Kind: 0},
+		{Category: "ui", Label: "health display", Value: healthDisplayLabel(m.cfg.UI.HealthDisplayMode), Kind: 1, Options: healthDisplayLabels(), OptIdx: healthDisplayIdx(m.cfg.UI.HealthDisplayMode)},
 		{Category: "ui", Label: "theme", Value: m.cfg.UI.Theme, Kind: 1, Options: themeNames(), OptIdx: themeIdx(m.cfg.UI.Theme)},
 		{Category: "ui", Label: "icon set", Value: m.cfg.UI.IconSet, Kind: 1, Options: iconSetNames(), OptIdx: iconSetIdx(m.cfg.UI.IconSet)},
 		// SSH
@@ -1326,6 +1329,8 @@ func (m *Model) applySettingChange(idx int, action string) {
 		case 0:
 			m.cfg.TeamsUI.WrapLabels = !m.cfg.TeamsUI.WrapLabels
 		case 1:
+			m.cfg.UI.HealthDisplayMode = nextHealthDisplayMode(m.cfg.UI.HealthDisplayMode, action)
+		case 2:
 			names := themeNames()
 			cur := themeIdx(m.cfg.TeamsUI.Theme)
 			if action == "left" {
@@ -1335,7 +1340,7 @@ func (m *Model) applySettingChange(idx int, action string) {
 			}
 			m.cfg.TeamsUI.Theme = names[cur]
 			m.syncModeAppearance()
-		case 2:
+		case 3:
 			iNames := iconSetNames()
 			cur := iconSetIdx(m.cfg.TeamsUI.IconSet)
 			if action == "left" {
@@ -1356,7 +1361,9 @@ func (m *Model) applySettingChange(idx int, action string) {
 		m.cfg.UI.ShowIcons = !m.cfg.UI.ShowIcons
 	case 2: // wrap labels
 		m.cfg.UI.WrapLabels = !m.cfg.UI.WrapLabels
-	case 3: // theme
+	case 3: // health display
+		m.cfg.UI.HealthDisplayMode = nextHealthDisplayMode(m.cfg.UI.HealthDisplayMode, action)
+	case 4: // theme
 		names := themeNames()
 		cur := themeIdx(m.cfg.UI.Theme)
 		if action == "left" {
@@ -1366,7 +1373,7 @@ func (m *Model) applySettingChange(idx int, action string) {
 		}
 		m.cfg.UI.Theme = names[cur]
 		m.theme, m.themeIdx = ui.ThemeByName(m.cfg.UI.Theme)
-	case 4: // icon set
+	case 5: // icon set
 		iNames := iconSetNames()
 		cur := iconSetIdx(m.cfg.UI.IconSet)
 		if action == "left" {
@@ -1376,7 +1383,7 @@ func (m *Model) applySettingChange(idx int, action string) {
 		}
 		m.cfg.UI.IconSet = iNames[cur]
 		m.icons, m.iconIdx = ui.IconSetByName(m.cfg.UI.IconSet)
-	case 5: // host key policy
+	case 6: // host key policy
 		switch m.cfg.SSH.HostKeyPolicy {
 		case config.HostKeyAcceptNew:
 			m.cfg.SSH.HostKeyPolicy = config.HostKeyStrict
@@ -1385,13 +1392,13 @@ func (m *Model) applySettingChange(idx int, action string) {
 		default:
 			m.cfg.SSH.HostKeyPolicy = config.HostKeyAcceptNew
 		}
-	case 6: // keepalive - editable
+	case 7: // keepalive - editable
 		if action == "left" {
 			m.cfg.SSH.KeepAliveSeconds = max(10, m.cfg.SSH.KeepAliveSeconds-5)
 		} else if action == "right" {
 			m.cfg.SSH.KeepAliveSeconds = min(300, m.cfg.SSH.KeepAliveSeconds+5)
 		}
-	case 7: // TERM mode
+	case 8: // TERM mode
 		switch m.cfg.SSH.TermMode {
 		case config.TermAuto:
 			m.cfg.SSH.TermMode = config.TermXterm
@@ -1400,15 +1407,15 @@ func (m *Model) applySettingChange(idx int, action string) {
 		default:
 			m.cfg.SSH.TermMode = config.TermAuto
 		}
-	case 8: // TERM custom - editable
-	case 9: // password auto login
+	case 9: // TERM custom - editable
+	case 10: // password auto login
 		m.cfg.SSH.PasswordAutoLogin = !m.cfg.SSH.PasswordAutoLogin
 		if m.cfg.SSH.PasswordAutoLogin && (runtime.GOOS == "linux" || runtime.GOOS == "darwin") {
 			if err := ssh.CheckSSHPass(); err != nil {
 				m.err = fmt.Errorf("Tip: install sshpass for best password auto-login on %s", runtime.GOOS)
 			}
 		}
-	case 10: // password backend
+	case 11: // password backend
 		if runtime.GOOS != "windows" && m.cfg.SSH.PasswordAutoLogin {
 			switch m.cfg.SSH.PasswordBackendUnix {
 			case config.PasswordBackendSSHPassFirst:
@@ -1417,11 +1424,11 @@ func (m *Model) applySettingChange(idx int, action string) {
 				m.cfg.SSH.PasswordBackendUnix = config.PasswordBackendSSHPassFirst
 			}
 		}
-	case 11: // mount enabled
+	case 12: // mount enabled
 		m.cfg.Mount.Enabled = !m.cfg.Mount.Enabled
-	case 12: // mount remote path - editable
-	case 13: // mount local path - editable
-	case 14: // mount quit behavior
+	case 13: // mount remote path - editable
+	case 14: // mount local path - editable
+	case 15: // mount quit behavior
 		switch m.cfg.Mount.QuitBehavior {
 		case config.MountQuitPrompt:
 			m.cfg.Mount.QuitBehavior = config.MountQuitAlwaysUnmount
@@ -1430,7 +1437,7 @@ func (m *Model) applySettingChange(idx int, action string) {
 		default:
 			m.cfg.Mount.QuitBehavior = config.MountQuitPrompt
 		}
-	case 15: // sync enabled
+	case 16: // sync enabled
 		m.cfg.Sync.Enabled = !m.cfg.Sync.Enabled
 		if m.store != nil {
 			syncMgr, err := syncpkg.NewManager(&m.cfg, m.store, m.masterPassword)
@@ -1438,17 +1445,17 @@ func (m *Model) applySettingChange(idx int, action string) {
 				m.syncManager = syncMgr
 			}
 		}
-	case 16, 17, 18, 19: // sync repo/key/branch/local - editable
-	case 20: // beta releases
+	case 17, 18, 19, 20: // sync repo/key/branch/local - editable
+	case 21: // beta releases
 		if strings.EqualFold(m.cfg.Updates.ReleaseChannel, "beta") {
 			m.cfg.Updates.ReleaseChannel = "stable"
 		} else {
 			m.cfg.Updates.ReleaseChannel = "beta"
 		}
-	case 21: // auto apply updates
+	case 22: // auto apply updates
 		m.cfg.Updates.AutoApplyUpdates = !m.cfg.Updates.AutoApplyUpdates
-	case 30: // manage tokens (opens token page)
-	case 31: // sync token definitions
+	case 31: // manage tokens (opens token page)
+	case 32: // sync token definitions
 		if m.cfg.Sync.Enabled {
 			m.cfg.Automation.SyncTokenDefinitions = !m.cfg.Automation.SyncTokenDefinitions
 		}
@@ -1485,7 +1492,7 @@ func (m *Model) applySettingsEditValue(idx int, val string) bool {
 	}
 
 	switch idx {
-	case 6: // keepalive
+	case 7: // keepalive
 		n, err := strconv.Atoi(val)
 		if err != nil {
 			m.err = fmt.Errorf("keepalive must be a number")
@@ -1498,15 +1505,15 @@ func (m *Model) applySettingsEditValue(idx int, val string) bool {
 			n = 600
 		}
 		m.cfg.SSH.KeepAliveSeconds = n
-	case 8: // TERM custom
+	case 9: // TERM custom
 		m.cfg.SSH.TermCustom = val
-	case 12: // mount remote path
+	case 13: // mount remote path
 		if val != "" && !strings.HasPrefix(val, "/") {
 			m.err = fmt.Errorf("\u26A0 remote path must be absolute (start with /)")
 			return false
 		}
 		m.cfg.Mount.DefaultRemotePath = val
-	case 13: // local mount path
+	case 14: // local mount path
 		if val != "" {
 			if !strings.HasPrefix(val, "/") {
 				m.err = fmt.Errorf("\u26A0 mount path must be absolute (start with /)")
@@ -1524,16 +1531,16 @@ func (m *Model) applySettingsEditValue(idx int, val string) bool {
 			}
 		}
 		m.cfg.Mount.LocalMountPath = val
-	case 16: // sync repo
+	case 17: // sync repo
 		m.cfg.Sync.RepoURL = val
-	case 17: // sync key path
+	case 18: // sync key path
 		m.cfg.Sync.SSHKeyPath = val
-	case 18: // sync branch
+	case 19: // sync branch
 		if val == "" {
 			val = "main"
 		}
 		m.cfg.Sync.Branch = val
-	case 19: // sync local path
+	case 20: // sync local path
 		m.cfg.Sync.LocalPath = val
 	}
 	return true
@@ -1618,6 +1625,7 @@ func (m Model) buildTeamsViewParams() ui.TeamsHomeViewParams {
 				Tags:               append([]string(nil), host.Tags...),
 				Notes:              strings.TrimSpace(host.Notes),
 				Selected:           host.ID == selectedHostID,
+				Health:             m.healthViewForKey(teamHealthKey(host.ID)),
 			})
 		}
 	}
@@ -1652,20 +1660,21 @@ func (m Model) buildTeamsViewParams() ui.TeamsHomeViewParams {
 
 	footer := "enter create team  / search  ? commands  , settings  shift+tab cycle  T personal mode  q quit"
 	if m.profileSignedIn() && len(m.teamsList) > 0 {
-		footer = "a add  ctrl+1..9 switch team  / search  r refresh  , settings  shift+tab cycle  T personal mode  q quit"
+		footer = "a add  ctrl+1..9 switch team  / search  r refresh  R health  , settings  shift+tab cycle  T personal mode  q quit"
 		if len(m.teamsItems) > 0 {
-			footer = "\u2191\u2193 nav  \u23CE connect  a add  e edit  d del  ctrl+1..9 switch team  / search  r refresh  , settings  shift+tab cycle  T personal mode  q quit"
+			footer = "\u2191\u2193 nav  \u23CE connect  R health  a add  e edit  d del  ctrl+1..9 switch team  / search  r refresh  , settings  shift+tab cycle  T personal mode  q quit"
 		}
 	}
 
 	return ui.TeamsHomeViewParams{
-		Page:         m.page,
-		SessionValid: m.profileSignedIn(),
-		HasTeams:     len(m.teamsList) > 0,
-		CurrentTeam:  summary,
-		Items:        items,
-		StatusLines:  statusLines,
-		FooterText:   footer,
+		Page:              m.page,
+		SessionValid:      m.profileSignedIn(),
+		HasTeams:          len(m.teamsList) > 0,
+		CurrentTeam:       summary,
+		Items:             items,
+		StatusLines:       statusLines,
+		FooterText:        footer,
+		HealthDisplayMode: string(m.cfg.UI.HealthDisplayMode),
 	}
 }
 
@@ -1717,6 +1726,7 @@ func (m Model) buildHomeViewParams() ui.HomeViewParams {
 				Mounted:       mounted,
 				MountPath:     mountPath,
 				LastConnected: host.LastConnected,
+				Health:        m.healthViewForKey(localHealthKey(host.ID)),
 			})
 		}
 	}
@@ -1733,13 +1743,14 @@ func (m Model) buildHomeViewParams() ui.HomeViewParams {
 	}
 
 	return ui.HomeViewParams{
-		Items:        items,
-		Cursor:       m.selectedIdx,
-		Err:          m.err,
-		SyncActivity: &ui.SyncActivity{Active: m.syncing, Frame: m.syncAnimFrame, Progress: m.syncProgress, Stage: syncStage},
-		Page:         m.page,
-		HostCount:    len(m.hosts),
-		Connected:    connected,
+		Items:             items,
+		Cursor:            m.selectedIdx,
+		Err:               m.err,
+		SyncActivity:      &ui.SyncActivity{Active: m.syncing, Frame: m.syncAnimFrame, Progress: m.syncProgress, Stage: syncStage},
+		Page:              m.page,
+		HostCount:         len(m.hosts),
+		Connected:         connected,
+		HealthDisplayMode: string(m.cfg.UI.HealthDisplayMode),
 	}
 }
 
@@ -1822,6 +1833,49 @@ func iconSetIdx(name string) int {
 		}
 	}
 	return 0
+}
+
+func healthDisplayLabels() []string {
+	return []string{"minimal", "values", "graph + values"}
+}
+
+func healthDisplayLabel(mode config.HealthDisplayMode) string {
+	switch mode {
+	case config.HealthDisplayMinimal:
+		return "minimal"
+	case config.HealthDisplayValues:
+		return "values"
+	default:
+		return "graph + values"
+	}
+}
+
+func healthDisplayIdx(mode config.HealthDisplayMode) int {
+	label := healthDisplayLabel(mode)
+	for i, option := range healthDisplayLabels() {
+		if option == label {
+			return i
+		}
+	}
+	return 2
+}
+
+func nextHealthDisplayMode(mode config.HealthDisplayMode, action string) config.HealthDisplayMode {
+	modes := []config.HealthDisplayMode{
+		config.HealthDisplayMinimal,
+		config.HealthDisplayValues,
+		config.HealthDisplayGraphValues,
+	}
+	cur := healthDisplayIdx(mode)
+	if cur >= len(modes) {
+		cur = len(modes) - 1
+	}
+	if action == "left" {
+		cur = (cur - 1 + len(modes)) % len(modes)
+	} else {
+		cur = (cur + 1) % len(modes)
+	}
+	return modes[cur]
 }
 
 // ── Error auto-clear ──────────────────────────────────────────────────

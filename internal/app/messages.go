@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Vansh-Raja/SSHThing/internal/config"
+	"github.com/Vansh-Raja/SSHThing/internal/health"
 	syncpkg "github.com/Vansh-Raja/SSHThing/internal/sync"
 	"github.com/Vansh-Raja/SSHThing/internal/teams"
 	"github.com/Vansh-Raja/SSHThing/internal/teamsclient"
@@ -71,6 +72,22 @@ type profileAuthPolledMsg struct {
 	runID  int
 	result teams.CliAuthPollResponse
 	err    error
+}
+
+type healthRefreshStartedMsg struct {
+	runID int
+	total int
+}
+
+type hostHealthResultMsg struct {
+	runID     int
+	targetKey string
+	hostID    int
+	result    health.Result
+}
+
+type healthRefreshFinishedMsg struct {
+	runID int
 }
 
 // ── Command constructors ──────────────────────────────────────────────

@@ -4,8 +4,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vansh-Raja/SSHThing/internal/config"
 	"github.com/Vansh-Raja/SSHThing/internal/db"
 	ssync "github.com/Vansh-Raja/SSHThing/internal/sync"
+	"github.com/Vansh-Raja/SSHThing/internal/teams"
 	"github.com/Vansh-Raja/SSHThing/internal/teamssession"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
 	tea "github.com/charmbracelet/bubbletea"
@@ -87,6 +89,16 @@ func TestBuildSettingsItemsTeamsModeOmitsTeamManagementRows(t *testing.T) {
 	}
 	if !foundWrap {
 		t.Fatalf("expected teams settings to include wrap labels")
+	}
+	foundHealth := false
+	for _, item := range items {
+		if item.Label == "health display" {
+			foundHealth = true
+			break
+		}
+	}
+	if !foundHealth {
+		t.Fatalf("expected teams settings to include health display")
 	}
 }
 
@@ -295,6 +307,151 @@ func TestBuildSpotlightItems_VirtualGroupTagMatchesHost(t *testing.T) {
 	}
 	if !foundHost {
 		t.Fatalf("expected grouped host for virtual group tag query")
+	}
+}
+
+func TestHomeShiftRStartsAllHostHealthRefresh(t *testing.T) {
+	t.Setenv("SSHTHING_DATA_DIR", t.TempDir())
+	store, err := db.Init("testpassword123")
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer store.Close()
+
+	for _, host := range []*db.HostModel{
+		{Label: "one", Hostname: "one.example.com", Username: "ubuntu", Port: 22, KeyType: ""},
+		{Label: "two", Hostname: "two.example.com", Username: "ubuntu", Port: 22, KeyType: ""},
+	} {
+		if err := store.CreateHost(host, ""); err != nil {
+			t.Fatalf("CreateHost failed: %v", err)
+		}
+	}
+
+	m := NewModel()
+	m.store = store
+	m.overlay = OverlayNone
+	m.page = PageHome
+	m.loadHosts()
+
+	updated, cmd := m.handleHomeKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("R")})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("expected health probe command")
+	}
+	if !got.healthChecking {
+		t.Fatalf("expected health refresh to be active")
+	}
+	if got.healthTotal != 2 {
+		t.Fatalf("expected 2 health targets, got %d", got.healthTotal)
+	}
+	if got.healthInFlight != 2 || len(got.healthQueue) != 0 {
+		t.Fatalf("expected two in-flight probes and empty queue, inFlight=%d queue=%d", got.healthInFlight, len(got.healthQueue))
+	}
+	for _, host := range got.hosts {
+		result, ok := got.healthResults[localHealthKey(host.ID)]
+		if !ok {
+			t.Fatalf("missing checking result for host %d", host.ID)
+		}
+		if result.Status != "checking" {
+			t.Fatalf("expected checking status, got %q", result.Status)
+		}
+	}
+}
+
+func TestHealthDisplaySettingCyclesInPersonalAndTeamsMode(t *testing.T) {
+	m := NewModel()
+	m.cfg.UI.HealthDisplayMode = config.HealthDisplayGraphValues
+	items := m.buildSettingsItems()
+	idx := -1
+	for i, item := range items {
+		if item.Label == "health display" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("expected personal settings to include health display")
+	}
+	m.applySettingChange(idx, "toggle")
+	if m.cfg.UI.HealthDisplayMode != config.HealthDisplayMinimal {
+		t.Fatalf("expected health display to cycle to minimal, got %q", m.cfg.UI.HealthDisplayMode)
+	}
+
+	m.appMode = appModeTeams
+	items = m.buildSettingsItems()
+	idx = -1
+	for i, item := range items {
+		if item.Label == "health display" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("expected teams settings to include health display")
+	}
+	m.applySettingChange(idx, "toggle")
+	if m.cfg.UI.HealthDisplayMode != config.HealthDisplayValues {
+		t.Fatalf("expected teams setting to cycle shared health display to values, got %q", m.cfg.UI.HealthDisplayMode)
+	}
+}
+
+func TestLoginHealthRefreshSilentWhenNoHosts(t *testing.T) {
+	t.Setenv("SSHTHING_DATA_DIR", t.TempDir())
+	m := NewModel()
+	store, err := db.Init("testpassword123")
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer store.Close()
+	m.store = store
+	m.loadHosts()
+
+	cmd := m.beginPersonalHealthRefreshWithOptions(healthRefreshOptions{SilentIfEmpty: true, Source: "login"})
+	if cmd != nil {
+		t.Fatalf("did not expect health command with no hosts")
+	}
+	if m.err != nil {
+		t.Fatalf("did not expect no-host error during silent login refresh, got %v", m.err)
+	}
+
+	cmd = m.beginPersonalHealthRefresh()
+	if cmd != nil {
+		t.Fatalf("did not expect manual health command with no hosts")
+	}
+	if m.err == nil || m.err.Error() != "no hosts to refresh" {
+		t.Fatalf("expected manual no-host error, got %v", m.err)
+	}
+}
+
+func TestTeamsAutoHealthRefreshRunsOnlyOnce(t *testing.T) {
+	m := NewModel()
+	m.teamsSession = teamSessionForTests(time.Now().Add(time.Hour))
+	m.profileDisplayName = "Test User"
+	m.profileEmail = "test@example.com"
+	m.teamsCurrentTeamID = "team_1"
+	m.teamsItems = []teams.TeamHost{
+		{ID: "host_1", Label: "GPU", Hostname: "gpu.example.com", Username: "root", Port: 22},
+		{ID: "host_2", Label: "CPU", Hostname: "cpu.example.com", Username: "root", Port: 22},
+	}
+	m.teamsCursor = 0
+	m.appMode = appModeTeams
+	m.page = PageTeams
+	m.teamsClient = nil
+
+	cmd := m.maybeAutoRefreshTeamsHealthOnEnter()
+	if cmd == nil {
+		t.Fatalf("expected first teams entry to schedule health refresh")
+	}
+	if !m.teamsHealthAutoRefreshed["team_1"] {
+		t.Fatalf("expected teams auto refresh to be marked done")
+	}
+	if !m.healthChecking || m.healthTotal != 2 {
+		t.Fatalf("expected all team hosts health refresh, checking=%v total=%d", m.healthChecking, m.healthTotal)
+	}
+
+	cmd = m.maybeAutoRefreshTeamsHealthOnEnter()
+	if cmd != nil {
+		t.Fatalf("did not expect second teams entry to schedule health refresh")
 	}
 }
 

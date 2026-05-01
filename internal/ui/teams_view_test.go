@@ -66,3 +66,56 @@ func TestRenderTeamsViewShowsGroupedHostsAndFooter(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderTeamsViewKeepsFooterWithVerboseHealth(t *testing.T) {
+	renderer := Renderer{
+		Theme: Themes[0],
+		Icons: UnicodeIcons,
+		W:     100,
+		H:     16,
+	}
+
+	out := renderer.RenderTeamsView(TeamsHomeViewParams{
+		Page:              4,
+		SessionValid:      true,
+		HasTeams:          true,
+		HealthDisplayMode: "graph_values",
+		CurrentTeam:       TeamsHomeTeamSummary{Name: "Acme", Slug: "acme", Role: "owner", TeamCount: 1, HostCount: 1},
+		Items: []TeamsHomeListItem{
+			{IsGroup: true, GroupName: "Work", HostCount: 1},
+			{
+				Label:              "GPU Server",
+				Hostname:           "gpu.internal",
+				Username:           "root",
+				Port:               22,
+				Group:              "Work",
+				CredentialType:     "private_key",
+				CredentialMode:     "per_member",
+				LastConnectedLabel: "7 minutes ago",
+				Notes:              "Vaani Deployment Server with a long note that should not push the footer away.",
+				Selected:           true,
+				Health: &HostHealthView{
+					Status:       "online",
+					StatusLabel:  "online",
+					CheckedLabel: "7m ago",
+					LatencyLabel: "1897ms",
+					UptimeLabel:  "12d 19h",
+					CPULabel:     "13%",
+					RAMUsedPct:   23,
+					DiskUsedPct:  58,
+					GPULabel:     "NVIDIA L40S",
+					SummaryLine:  "online · 7m ago · 1897ms",
+					ResourceLine: "cpu 13% · ram 23% · disk 58% used",
+					SystemLine:   "up 12d 19h · gpu NVIDIA L40S",
+				},
+			},
+		},
+	})
+
+	if !strings.Contains(out, "q quit") {
+		t.Fatalf("expected footer to stay visible")
+	}
+	if !strings.Contains(out, "Health") {
+		t.Fatalf("expected detailed health card")
+	}
+}

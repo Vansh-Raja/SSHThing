@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 var defaultCloudBaseURL = "http://localhost:3000"
@@ -122,6 +123,13 @@ func (m *Model) toggleAppMode() {
 	m.syncModeAppearance()
 	m.enterPage(m.teamsPage)
 	m.err = fmt.Errorf("✓ Teams mode")
+}
+
+func (m *Model) toggleAppModeCmd() tea.Cmd {
+	if m.appMode == appModeTeams {
+		return m.maybeAutoRefreshTeamsHealthOnEnter()
+	}
+	return nil
 }
 
 func (m *Model) enterPage(page int) {

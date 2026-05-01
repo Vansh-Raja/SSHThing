@@ -35,23 +35,26 @@ type TeamsHomeListItem struct {
 	LastConnectedLabel string
 	Tags               []string
 	Notes              string
+	Health             *HostHealthView
 }
 
 type TeamsHomeViewParams struct {
-	Page         int
-	SessionValid bool
-	HasTeams     bool
-	CurrentTeam  TeamsHomeTeamSummary
-	Items        []TeamsHomeListItem
-	StatusLines  []TeamsHomeStatusLine
-	FooterText   string
+	Page              int
+	SessionValid      bool
+	HasTeams          bool
+	CurrentTeam       TeamsHomeTeamSummary
+	Items             []TeamsHomeListItem
+	StatusLines       []TeamsHomeStatusLine
+	FooterText        string
+	HealthDisplayMode string
 }
 
 func (r *Renderer) RenderTeamsView(p TeamsHomeViewParams) string {
 	layout := r.buildHomeFrameLayout(len(p.StatusLines))
 	listBlock := lipgloss.NewStyle().Width(layout.listW).Render(r.padListLines(r.renderTeamsListLines(p, layout), layout.bodyH))
+	detail := clampBlockHeight(r.renderTeamsDetail(p, layout.detailW, layout.bodyH), layout.bodyH, r.Icons.Truncation+" more")
 	detailBlock := lipgloss.NewStyle().Width(layout.detailW).Foreground(r.Theme.Subtext).
-		Render(r.renderTeamsDetail(p, layout.detailW, layout.bodyH))
+		Render(detail)
 	body := r.renderHomeBody(listBlock, detailBlock, layout, p.Page)
 
 	headerLine := r.RenderHeader(r.renderTeamsHeaderSummary(p), 0, 0)
@@ -63,13 +66,16 @@ func (r *Renderer) renderTeamsHeaderSummary(p TeamsHomeViewParams) string {
 }
 
 func (r *Renderer) teamsFooterText(p TeamsHomeViewParams) string {
+	if r.W < 95 && p.SessionValid && p.HasTeams {
+		return "\u2191\u2193 nav · enter connect · R health · r refresh · q quit"
+	}
 	if strings.TrimSpace(p.FooterText) != "" {
 		return p.FooterText
 	}
 	if !p.SessionValid || !p.HasTeams {
 		return "enter create team  / search  ? commands  , settings  shift+tab cycle  T personal mode  q quit"
 	}
-	return "\u2191\u2193 nav  \u23CE connect  a add  e edit  d del  ctrl+1..9 switch team  / search  r refresh  , settings  shift+tab cycle  T personal mode  q quit"
+	return "\u2191\u2193 nav  \u23CE connect  R health  a add  e edit  d del  ctrl+1..9 switch team  / search  r refresh  , settings  shift+tab cycle  T personal mode  q quit"
 }
 
 func (r *Renderer) renderTeamsStatusLines(lines []TeamsHomeStatusLine) []string {
@@ -151,13 +157,14 @@ func (r *Renderer) renderTeamsListLines(p TeamsHomeViewParams, layout homeFrameL
 		if label == "" {
 			label = item.Hostname
 		}
-		lines = append(lines, r.renderListEntry(prefix, label, nameStyle, maxLblW)...)
+		entryPrefix := prefix + r.renderHostStatusDot(0, item.Health) + " "
+		lines = append(lines, r.renderListEntry(entryPrefix, label, nameStyle, maxLblW)...)
 	}
 
 	return lines
 }
 
-func (r *Renderer) renderTeamsDetail(p TeamsHomeViewParams, _ int, _ int) string {
+func (r *Renderer) renderTeamsDetail(p TeamsHomeViewParams, w int, h int) string {
 	if !p.SessionValid {
 		return strings.Join([]string{
 			lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render("Teams"),
@@ -219,28 +226,57 @@ func (r *Renderer) renderTeamsDetail(p TeamsHomeViewParams, _ int, _ int) string
 
 	lines := []string{
 		lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render(label),
-		lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(connStr),
-		"",
-		kStyle.Render("team        ") + vStyle.Render(p.CurrentTeam.Name),
-		kStyle.Render("slug        ") + dimStyle.Render(orFallback(p.CurrentTeam.Slug, "(none)")),
-		kStyle.Render("role        ") + dimStyle.Render(orFallback(p.CurrentTeam.Role, "(unknown)")),
-		kStyle.Render("auth        ") + vStyle.Render(orFallback(selected.CredentialType, "none")),
-		kStyle.Render("mode        ") + dimStyle.Render(orFallback(selected.CredentialMode, "shared")),
-		kStyle.Render("group       ") + dimStyle.Render(orFallback(selected.Group, "Ungrouped")),
-		kStyle.Render("last seen   ") + dimStyle.Render(lastSeen),
-		"",
-		kStyle.Render("tags        ") + tagStr,
-		"",
+	}
+	short := h <= 9
+	medium := h <= 15
+	if short {
+		lines = append(lines, r.renderHostStatusLabel(0, selected.Health)+" "+lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(connStr))
+		lines = append(lines, dimStyle.Render("auth "+orFallback(selected.CredentialType, "none")+" · mode "+orFallback(selected.CredentialMode, "shared")))
+	} else {
+		lines = append(lines, r.renderHostStatusLabel(0, selected.Health), lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(connStr), "")
+		if medium {
+			lines = append(lines,
+				dimStyle.Render("team "+orFallback(p.CurrentTeam.Name, "(none)")+" · role "+orFallback(p.CurrentTeam.Role, "(unknown)")),
+				dimStyle.Render("auth "+orFallback(selected.CredentialType, "none")+" · mode "+orFallback(selected.CredentialMode, "shared")),
+			)
+		} else {
+			lines = append(lines,
+				kStyle.Render("team        ")+vStyle.Render(p.CurrentTeam.Name),
+				kStyle.Render("slug        ")+dimStyle.Render(orFallback(p.CurrentTeam.Slug, "(none)")),
+				kStyle.Render("role        ")+dimStyle.Render(orFallback(p.CurrentTeam.Role, "(unknown)")),
+				kStyle.Render("auth        ")+vStyle.Render(orFallback(selected.CredentialType, "none")),
+				kStyle.Render("mode        ")+dimStyle.Render(orFallback(selected.CredentialMode, "shared")),
+				kStyle.Render("group       ")+dimStyle.Render(orFallback(selected.Group, "Ungrouped")),
+				kStyle.Render("last seen   ")+dimStyle.Render(lastSeen),
+			)
+		}
 	}
 
-	if notes := strings.TrimSpace(selected.Notes); notes != "" {
+	if healthLines := r.renderHostHealthBlock(selected.Health, w, h, p.HealthDisplayMode); len(healthLines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, healthLines...)
+	}
+
+	if !short {
+		lines = append(lines, "", kStyle.Render("tags        ")+tagStr)
+	}
+
+	if notes := strings.TrimSpace(selected.Notes); notes != "" && !short {
+		if medium {
+			lines = append(lines, kStyle.Render("notes       ")+dimStyle.Render(r.TruncStr(notes, max(8, w-12))))
+		} else {
+			lines = append(lines,
+				kStyle.Render("notes       ")+dimStyle.Render(r.TruncStr(notes, max(8, w-12))),
+				"",
+			)
+		}
+	}
+
+	if !short {
 		lines = append(lines,
-			kStyle.Render("notes       ")+dimStyle.Render(notes),
-			"",
+			lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("enter connect  ·  a add host  ·  e edit  ·  d delete"),
 		)
 	}
-
-	lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("enter connect  \u00B7  a add host  \u00B7  e edit  \u00B7  d delete"))
 	return strings.Join(lines, "\n")
 }
 

@@ -18,13 +18,14 @@ type SyncActivity struct {
 
 // HomeViewParams holds all data needed to render the home page.
 type HomeViewParams struct {
-	Items        []HomeListItem
-	Cursor       int
-	Err          error
-	SyncActivity *SyncActivity
-	Page         int
-	HostCount    int
-	Connected    int
+	Items             []HomeListItem
+	Cursor            int
+	Err               error
+	SyncActivity      *SyncActivity
+	Page              int
+	HostCount         int
+	Connected         int
+	HealthDisplayMode string
 }
 
 // HomeListItem represents one row in the home list.
@@ -46,6 +47,31 @@ type HomeListItem struct {
 	Mounted       bool
 	MountPath     string
 	LastConnected *time.Time
+	Health        *HostHealthView
+}
+
+type HostHealthView struct {
+	Status         string
+	StatusLabel    string
+	CheckedLabel   string
+	LatencyLabel   string
+	UptimeLabel    string
+	CPULabel       string
+	CPUPercent     int
+	RAMLabel       string
+	RAMUsedPct     int
+	RAMUsedLabel   string
+	RAMTotalLabel  string
+	DiskLabel      string
+	DiskUsedPct    int
+	DiskFreeLabel  string
+	DiskTotalLabel string
+	GPULabel       string
+	Error          string
+	Stale          bool
+	SummaryLine    string
+	ResourceLine   string
+	SystemLine     string
 }
 
 func (r *Renderer) renderListEntry(prefix string, label string, style lipgloss.Style, width int) []string {
@@ -125,7 +151,7 @@ func (r *Renderer) renderHomeBody(listBlock string, detailBlock string, layout h
 		sideGap := lipgloss.NewStyle().Width(2).Render(strings.Repeat("\n", layout.bodyH))
 		body = lipgloss.JoinHorizontal(lipgloss.Top, body, sideGap, sidebar)
 	}
-	return body
+	return clampBlockHeight(body, layout.bodyH, "")
 }
 
 func (r *Renderer) renderHomeFrame(header string, body string, notifLines []string, footerText string) string {
@@ -206,15 +232,7 @@ func (r *Renderer) RenderHomeView(p HomeViewParams) string {
 			prefix := "    "
 			nameStyle := lipgloss.NewStyle().Foreground(r.Theme.Subtext)
 
-			var dot string
-			switch item.Status {
-			case 2:
-				dot = lipgloss.NewStyle().Foreground(r.Theme.Green).Render(r.Icons.Connected)
-			case 1:
-				dot = lipgloss.NewStyle().Foreground(r.Theme.Yellow).Render(r.Icons.Idle)
-			default:
-				dot = lipgloss.NewStyle().Foreground(r.Theme.Surface0).Render(r.Icons.Offline)
-			}
+			dot := r.renderHostStatusDot(item.Status, item.Health)
 
 			if sel {
 				nameStyle = lipgloss.NewStyle().Foreground(r.Theme.Accent).Bold(true)
@@ -235,8 +253,9 @@ func (r *Renderer) RenderHomeView(p HomeViewParams) string {
 	}
 
 	listBlock := lipgloss.NewStyle().Width(layout.listW).Render(r.padListLines(listLines, layout.bodyH))
+	detail := clampBlockHeight(r.renderDetail(p, layout.detailW, layout.bodyH), layout.bodyH, r.Icons.Truncation+" more")
 	detailBlock := lipgloss.NewStyle().Width(layout.detailW).Foreground(r.Theme.Subtext).
-		Render(r.renderDetail(p, layout.detailW, layout.bodyH))
+		Render(detail)
 	body := r.renderHomeBody(listBlock, detailBlock, layout, p.Page)
 
 	// notification area above footer (err + sync status)
@@ -249,8 +268,56 @@ func (r *Renderer) RenderHomeView(p HomeViewParams) string {
 	}
 
 	headerLine := r.RenderHeader("", p.HostCount, p.Connected)
-	footerText := "\u2191\u2193 nav  \u23CE connect  S sftp  M mount  Y sync  / search  a add  e edit  d del  , settings  ? help  q quit"
+	footerText := "\u2191\u2193 nav  \u23CE connect  R health  S sftp  M mount  Y sync  / search  a add  e edit  d del  , settings  ? help  q quit"
+	if r.W < 95 {
+		footerText = "\u2191\u2193 nav · enter connect · R health · , settings · q quit"
+	}
 	return r.renderHomeFrame(headerLine, body, notifLines, footerText)
+}
+
+func (r *Renderer) renderHostStatusDot(status int, health *HostHealthView) string {
+	if health != nil {
+		switch health.Status {
+		case "checking":
+			return lipgloss.NewStyle().Foreground(r.Theme.Yellow).Render(r.Icons.Idle)
+		case "online":
+			if health.Stale {
+				return lipgloss.NewStyle().Foreground(r.Theme.Yellow).Render(r.Icons.Idle)
+			}
+			return lipgloss.NewStyle().Foreground(r.Theme.Green).Render(r.Icons.Connected)
+		case "offline", "timeout", "auth_failed", "error":
+			return lipgloss.NewStyle().Foreground(r.Theme.Red).Render(r.Icons.Offline)
+		case "unsupported":
+			return lipgloss.NewStyle().Foreground(r.Theme.Yellow).Render(r.Icons.Idle)
+		default:
+			return lipgloss.NewStyle().Foreground(r.Theme.Surface0).Render(r.Icons.Offline)
+		}
+	}
+	switch status {
+	case 2:
+		return lipgloss.NewStyle().Foreground(r.Theme.Green).Render(r.Icons.Connected)
+	case 1:
+		return lipgloss.NewStyle().Foreground(r.Theme.Yellow).Render(r.Icons.Idle)
+	default:
+		return lipgloss.NewStyle().Foreground(r.Theme.Surface0).Render(r.Icons.Offline)
+	}
+}
+
+func clampBlockHeight(block string, height int, moreLabel string) string {
+	if height <= 0 {
+		return ""
+	}
+	lines := strings.Split(block, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+		if strings.TrimSpace(moreLabel) != "" {
+			lines[height-1] = moreLabel
+		}
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (r *Renderer) renderDetail(p HomeViewParams, w, h int) string {
@@ -275,15 +342,7 @@ func (r *Renderer) renderDetail(p HomeViewParams, w, h int) string {
 	vStyle := lipgloss.NewStyle().Foreground(r.Theme.Text)
 	dimStyle := lipgloss.NewStyle().Foreground(r.Theme.Subtext)
 
-	var statusR string
-	switch item.Status {
-	case 2:
-		statusR = lipgloss.NewStyle().Foreground(r.Theme.Green).Render("connected")
-	case 1:
-		statusR = lipgloss.NewStyle().Foreground(r.Theme.Yellow).Render("idle")
-	default:
-		statusR = lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("offline")
-	}
+	statusR := r.renderHostStatusLabel(item.Status, item.Health)
 
 	connStr := fmt.Sprintf("%s@%s", item.Username, item.Hostname)
 	if item.Port != 22 && item.Port != 0 {
@@ -317,24 +376,146 @@ func (r *Renderer) renderDetail(p HomeViewParams, w, h int) string {
 		mountLine = kStyle.Render("mount       ") + lipgloss.NewStyle().Foreground(r.Theme.Green).Render(item.MountPath)
 	}
 
-	lines := []string{
-		title,
-		statusR,
-		"",
-		lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(connStr),
-		"",
-		kStyle.Render("auth        ") + vStyle.Render(item.KeyType),
-		kStyle.Render("group       ") + dimStyle.Render(item.GroupName),
-		kStyle.Render("last seen   ") + dimStyle.Render(lastSeen),
+	short := h <= 9
+	medium := h <= 15
+	lines := []string{title}
+	if short {
+		lines = append(lines, statusR+" "+lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(connStr))
+	} else {
+		lines = append(lines, statusR, "", lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(connStr), "")
+		if medium {
+			lines = append(lines, dimStyle.Render("auth "+item.KeyType+" · group "+orFallback(item.GroupName, "Ungrouped")+" · last "+lastSeen))
+		} else {
+			lines = append(lines,
+				kStyle.Render("auth        ")+vStyle.Render(item.KeyType),
+				kStyle.Render("group       ")+dimStyle.Render(item.GroupName),
+				kStyle.Render("last seen   ")+dimStyle.Render(lastSeen),
+			)
+		}
 	}
 	if mountLine != "" {
 		lines = append(lines, mountLine)
 	}
-	lines = append(lines, "", kStyle.Render("tags        ")+tagStr)
-	lines = append(lines, "", "")
-	lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("enter connect  \u00B7  S sftp  \u00B7  M mount  \u00B7  e edit  \u00B7  d delete"))
+	if healthLines := r.renderHostHealthBlock(item.Health, w, h, p.HealthDisplayMode); len(healthLines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, healthLines...)
+	}
+	if !short {
+		lines = append(lines, "", kStyle.Render("tags        ")+tagStr)
+		lines = append(lines, "", lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("enter connect  ·  S sftp  ·  M mount  ·  e edit  ·  d delete"))
+	}
 
 	return strings.Join(lines, "\n")
+}
+
+func (r *Renderer) renderHostHealthBlock(health *HostHealthView, detailW int, bodyH int, mode string) []string {
+	if health == nil {
+		return nil
+	}
+	if bodyH <= 9 {
+		summary := strings.TrimSpace(health.SummaryLine)
+		if health.ResourceLine != "" {
+			summary = strings.TrimSpace(summary + " · " + health.ResourceLine)
+		}
+		return []string{lipgloss.NewStyle().Foreground(r.Theme.Accent).Render("health  ") + r.TruncStr(summary, max(8, detailW-8))}
+	}
+
+	lines := []string{lipgloss.NewStyle().Foreground(r.Theme.Accent).Render("Health")}
+	lines = append(lines, r.TruncStr(health.SummaryLine, detailW))
+	if health.Status == "checking" {
+		if health.ResourceLine != "" {
+			lines = append(lines, r.TruncStr(health.ResourceLine, detailW))
+		}
+		return lines
+	}
+	switch mode {
+	case "minimal":
+		lines = append(lines,
+			"cpu  "+r.renderMiniBar(health.CPUPercent, 8),
+			"ram  "+r.renderMiniBar(health.RAMUsedPct, 8),
+			"disk "+r.renderMiniBar(health.DiskUsedPct, 8),
+		)
+	case "values":
+		if health.ResourceLine != "" {
+			lines = append(lines, r.TruncStr(health.ResourceLine, detailW))
+		}
+		if health.SystemLine != "" {
+			lines = append(lines, r.TruncStr(health.SystemLine, detailW))
+		}
+	default:
+		if detailW < 48 || bodyH < 14 {
+			if health.ResourceLine != "" {
+				lines = append(lines, r.TruncStr(health.ResourceLine, detailW))
+			}
+			if health.SystemLine != "" {
+				lines = append(lines, r.TruncStr(health.SystemLine, detailW))
+			}
+			break
+		}
+		lines = append(lines,
+			"cpu  "+r.renderMiniBar(health.CPUPercent, 8)+" "+health.CPULabel,
+			"ram  "+r.renderMiniBar(health.RAMUsedPct, 8)+" "+health.RAMUsedLabel+"/"+health.RAMTotalLabel+" · "+fmt.Sprintf("%d%%", health.RAMUsedPct),
+			"disk "+r.renderMiniBar(health.DiskUsedPct, 8)+" "+health.DiskFreeLabel+"/"+health.DiskTotalLabel+" free",
+		)
+		if health.SystemLine != "" {
+			lines = append(lines, r.TruncStr(health.SystemLine, detailW))
+		}
+	}
+	if strings.TrimSpace(health.Error) != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Red).Render("error  "+r.TruncStr(health.Error, max(8, detailW-7))))
+	}
+	return lines
+}
+
+func (r *Renderer) renderMiniBar(percent int, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	filled := percent * width / 100
+	if percent > 0 && filled == 0 {
+		filled = 1
+	}
+	return lipgloss.NewStyle().Foreground(r.Theme.Green).Render(strings.Repeat("█", filled)) +
+		lipgloss.NewStyle().Foreground(r.Theme.Surface0).Render(strings.Repeat("░", width-filled))
+}
+
+func (r *Renderer) renderHostStatusLabel(status int, health *HostHealthView) string {
+	if health != nil {
+		label := health.StatusLabel
+		if label == "" {
+			label = "unknown"
+		}
+		if health.Stale && health.Status == "online" {
+			label += " (stale)"
+		}
+		switch health.Status {
+		case "online":
+			if health.Stale {
+				return lipgloss.NewStyle().Foreground(r.Theme.Yellow).Render(label)
+			}
+			return lipgloss.NewStyle().Foreground(r.Theme.Green).Render(label)
+		case "checking", "unsupported":
+			return lipgloss.NewStyle().Foreground(r.Theme.Yellow).Render(label)
+		case "offline", "timeout", "auth_failed", "error":
+			return lipgloss.NewStyle().Foreground(r.Theme.Red).Render(label)
+		default:
+			return lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render(label)
+		}
+	}
+	switch status {
+	case 2:
+		return lipgloss.NewStyle().Foreground(r.Theme.Green).Render("connected")
+	case 1:
+		return lipgloss.NewStyle().Foreground(r.Theme.Yellow).Render("idle")
+	default:
+		return lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("offline")
+	}
 }
 
 func (r *Renderer) renderSyncFooter(activity *SyncActivity) string {

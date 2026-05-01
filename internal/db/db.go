@@ -53,6 +53,22 @@ type MountState struct {
 	MountedAt  time.Time
 }
 
+type HostHealth struct {
+	HostID             int
+	Status             string
+	CheckedAt          time.Time
+	LatencyMS          int64
+	UptimeSeconds      int64
+	CPUPercent         float64
+	MemTotalBytes      int64
+	MemAvailableBytes  int64
+	DiskTotalBytes     int64
+	DiskAvailableBytes int64
+	GPUPresent         bool
+	GPUName            string
+	Error              string
+}
+
 // DBPath returns the path to the database file
 func DBPath() (string, error) {
 	// Allow overriding the DB path for testing or custom setups.
@@ -286,6 +302,10 @@ func hasTable(db *sql.DB, name string) (bool, error) {
 }
 
 func createSchema(db *sql.DB) error {
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		return err
+	}
+
 	// Hosts table
 	_, err := db.Exec(`
 	CREATE TABLE IF NOT EXISTS hosts (
@@ -371,6 +391,27 @@ func createSchema(db *sql.DB) error {
 		local_path TEXT NOT NULL,
 		remote_path TEXT,
 		mounted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+	CREATE TABLE IF NOT EXISTS host_health (
+		host_id INTEGER PRIMARY KEY REFERENCES hosts(id) ON DELETE CASCADE,
+		status TEXT NOT NULL,
+		checked_at DATETIME NOT NULL,
+		latency_ms INTEGER,
+		uptime_seconds INTEGER,
+		cpu_percent REAL,
+		mem_total_bytes INTEGER,
+		mem_available_bytes INTEGER,
+		disk_total_bytes INTEGER,
+		disk_available_bytes INTEGER,
+		gpu_present INTEGER,
+		gpu_name TEXT,
+		error TEXT
 	);
 	`)
 	return err
@@ -830,6 +871,81 @@ func (s *Store) DeleteHost(id int) error {
 	return err
 }
 
+func (s *Store) UpsertHostHealth(result HostHealth) error {
+	_, err := s.db.Exec(`
+		INSERT INTO host_health (
+			host_id, status, checked_at, latency_ms, uptime_seconds, cpu_percent,
+			mem_total_bytes, mem_available_bytes, disk_total_bytes, disk_available_bytes,
+			gpu_present, gpu_name, error
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(host_id) DO UPDATE SET
+			status=excluded.status,
+			checked_at=excluded.checked_at,
+			latency_ms=excluded.latency_ms,
+			uptime_seconds=excluded.uptime_seconds,
+			cpu_percent=excluded.cpu_percent,
+			mem_total_bytes=excluded.mem_total_bytes,
+			mem_available_bytes=excluded.mem_available_bytes,
+			disk_total_bytes=excluded.disk_total_bytes,
+			disk_available_bytes=excluded.disk_available_bytes,
+			gpu_present=excluded.gpu_present,
+			gpu_name=excluded.gpu_name,
+			error=excluded.error
+	`, result.HostID, result.Status, result.CheckedAt, result.LatencyMS, result.UptimeSeconds, result.CPUPercent,
+		result.MemTotalBytes, result.MemAvailableBytes, result.DiskTotalBytes, result.DiskAvailableBytes,
+		boolToInt(result.GPUPresent), result.GPUName, result.Error)
+	return err
+}
+
+func (s *Store) GetHostHealth(hostID int) (HostHealth, bool, error) {
+	row := s.db.QueryRow(`
+		SELECT host_id, status, checked_at, COALESCE(latency_ms, 0), COALESCE(uptime_seconds, 0),
+		       COALESCE(cpu_percent, 0), COALESCE(mem_total_bytes, 0), COALESCE(mem_available_bytes, 0),
+		       COALESCE(disk_total_bytes, 0), COALESCE(disk_available_bytes, 0),
+		       COALESCE(gpu_present, 0), COALESCE(gpu_name, ''), COALESCE(error, '')
+		FROM host_health
+		WHERE host_id = ?
+	`, hostID)
+	result, err := scanHostHealth(row)
+	if err == sql.ErrNoRows {
+		return HostHealth{}, false, nil
+	}
+	if err != nil {
+		return HostHealth{}, false, err
+	}
+	return result, true, nil
+}
+
+func (s *Store) ListHostHealth() (map[int]HostHealth, error) {
+	rows, err := s.db.Query(`
+		SELECT host_id, status, checked_at, COALESCE(latency_ms, 0), COALESCE(uptime_seconds, 0),
+		       COALESCE(cpu_percent, 0), COALESCE(mem_total_bytes, 0), COALESCE(mem_available_bytes, 0),
+		       COALESCE(disk_total_bytes, 0), COALESCE(disk_available_bytes, 0),
+		       COALESCE(gpu_present, 0), COALESCE(gpu_name, ''), COALESCE(error, '')
+		FROM host_health
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[int]HostHealth)
+	for rows.Next() {
+		result, err := scanHostHealth(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[result.HostID] = result
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteHostHealth(hostID int) error {
+	_, err := s.db.Exec(`DELETE FROM host_health WHERE host_id = ?`, hostID)
+	return err
+}
+
 // CreateHostWithID creates a host with a specific ID (used for sync import).
 // The keyData should already be encrypted.
 func (s *Store) CreateHostWithID(h *HostModel, encryptedKeyData string) error {
@@ -861,6 +977,43 @@ func (s *Store) UpdateHostFromSync(h *HostModel, encryptedKeyData string, update
 func normalizeGroupName(name string) string {
 	name = strings.TrimSpace(name)
 	return name
+}
+
+type hostHealthScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanHostHealth(scanner hostHealthScanner) (HostHealth, error) {
+	var result HostHealth
+	var checkedAt string
+	var gpuPresent int
+	if err := scanner.Scan(
+		&result.HostID,
+		&result.Status,
+		&checkedAt,
+		&result.LatencyMS,
+		&result.UptimeSeconds,
+		&result.CPUPercent,
+		&result.MemTotalBytes,
+		&result.MemAvailableBytes,
+		&result.DiskTotalBytes,
+		&result.DiskAvailableBytes,
+		&gpuPresent,
+		&result.GPUName,
+		&result.Error,
+	); err != nil {
+		return HostHealth{}, err
+	}
+	result.CheckedAt = parseTimestamp(checkedAt)
+	result.GPUPresent = gpuPresent != 0
+	return result, nil
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 // GetGroups returns all non-deleted groups (names only), ordered alphabetically.

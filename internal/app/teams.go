@@ -722,6 +722,7 @@ func (m Model) handleTeamsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = err
 		} else if idx < len(m.teamsList) {
 			m.err = fmt.Errorf("✓ %s", m.teamsList[idx].Name)
+			return m, m.maybeAutoRefreshTeamsHealthOnEnter()
 		}
 		return m, nil
 	}
@@ -736,7 +737,9 @@ func (m Model) handleTeamsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab":
 		m.enterPage(m.nextVisiblePage(m.page))
 		return m, nil
-	case "r", "R":
+	case "R":
+		return m, m.beginTeamHealthRefreshWithOptions(healthRefreshOptions{Source: "manual_team"})
+	case "r":
 		if err := m.loadTeamsData(ctx); err != nil {
 			m.err = err
 		} else {

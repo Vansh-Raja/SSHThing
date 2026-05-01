@@ -100,8 +100,9 @@ func (m Model) handleLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m.overlay = OverlayNone
 		m.page = PageHome
+		m.teamsHealthAutoRefreshed = map[string]bool{}
 		_ = unlock.Save(password, time.Duration(m.cfg.Automation.SessionTTLSeconds)*time.Second)
-		return m, nil
+		return m, m.beginPersonalHealthRefreshWithOptions(healthRefreshOptions{SilentIfEmpty: true, Source: "login"})
 
 	case tea.KeyEsc:
 		return m, tea.Quit
@@ -173,7 +174,8 @@ func (m Model) handleSetupKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 			m.overlay = OverlayNone
 			m.page = PageHome
-			return m, nil
+			m.teamsHealthAutoRefreshed = map[string]bool{}
+			return m, m.beginPersonalHealthRefreshWithOptions(healthRefreshOptions{SilentIfEmpty: true, Source: "setup"})
 		}
 
 	case tea.KeyEsc:
@@ -1174,6 +1176,9 @@ func (m Model) handleHomeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab":
 		m.enterPage(m.nextVisiblePage(m.page))
 		return m, nil
+
+	case "R":
+		return m, m.beginPersonalHealthRefresh()
 
 	case "S":
 		m.armedSFTP = !m.armedSFTP

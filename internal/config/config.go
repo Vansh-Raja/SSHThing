@@ -39,6 +39,14 @@ const (
 	MountQuitLeaveMounted  MountQuitBehavior = "leave_mounted"
 )
 
+type HealthDisplayMode string
+
+const (
+	HealthDisplayMinimal     HealthDisplayMode = "minimal"
+	HealthDisplayValues      HealthDisplayMode = "values"
+	HealthDisplayGraphValues HealthDisplayMode = "graph_values"
+)
+
 // SyncAuthMethod represents the authentication method for Git sync
 type SyncAuthMethod string
 
@@ -51,11 +59,13 @@ type Config struct {
 	Version int `json:"version"`
 
 	UI struct {
-		VimMode    bool   `json:"vim_mode"`
-		ShowIcons  bool   `json:"show_icons"`
-		WrapLabels bool   `json:"wrap_labels"`
-		Theme      string `json:"theme"`
-		IconSet    string `json:"icon_set"`
+		VimMode           bool              `json:"vim_mode"`
+		ShowIcons         bool              `json:"show_icons"`
+		WrapLabels        bool              `json:"wrap_labels"`
+		ShowHealthDetails bool              `json:"show_health_details,omitempty"`
+		HealthDisplayMode HealthDisplayMode `json:"health_display_mode,omitempty"`
+		Theme             string            `json:"theme"`
+		IconSet           string            `json:"icon_set"`
 	} `json:"ui"`
 
 	TeamsUI struct {
@@ -117,10 +127,12 @@ type Config struct {
 
 func Default() Config {
 	var c Config
-	c.Version = 6
+	c.Version = 8
 	c.UI.VimMode = true
 	c.UI.ShowIcons = true
 	c.UI.WrapLabels = false
+	c.UI.ShowHealthDetails = true
+	c.UI.HealthDisplayMode = HealthDisplayGraphValues
 	c.UI.Theme = "Catppuccin Mocha"
 	c.UI.IconSet = "Unicode"
 	c.TeamsUI.WrapLabels = false
@@ -262,6 +274,18 @@ func withDefaults(c Config) Config {
 		}
 		c.Version = 6
 	}
+	if c.Version < 7 {
+		c.UI.ShowHealthDetails = true
+		c.Version = 7
+	}
+	if c.Version < 8 {
+		if c.UI.ShowHealthDetails {
+			c.UI.HealthDisplayMode = HealthDisplayGraphValues
+		} else {
+			c.UI.HealthDisplayMode = HealthDisplayMinimal
+		}
+		c.Version = 8
+	}
 
 	// Enums / ints: normalize invalid values.
 	switch c.SSH.HostKeyPolicy {
@@ -312,6 +336,11 @@ func withDefaults(c Config) Config {
 	}
 	if c.Updates.ETagStable == "" && c.Updates.ETagLatest != "" {
 		c.Updates.ETagStable = c.Updates.ETagLatest
+	}
+	switch c.UI.HealthDisplayMode {
+	case HealthDisplayMinimal, HealthDisplayValues, HealthDisplayGraphValues:
+	default:
+		c.UI.HealthDisplayMode = def.UI.HealthDisplayMode
 	}
 
 	if c.Teams.APIBaseURL == "" {

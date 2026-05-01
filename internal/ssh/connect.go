@@ -1,6 +1,8 @@
 package ssh
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -8,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -26,6 +29,20 @@ type Connection struct {
 	HostKeyPolicy    string // "accept-new" | "strict" | "off"
 	KeepAliveSeconds int
 	Term             string // optional TERM override (env SSHTHING_SSH_TERM still wins)
+}
+
+type ExecOptions struct {
+	Timeout           time.Duration
+	ConnectTimeout    time.Duration
+	AllowPasswordAuth bool
+	BatchMode         bool
+}
+
+type ExecResult struct {
+	Stdout   string
+	Stderr   string
+	ExitCode int
+	Duration time.Duration
 }
 
 // TempKeyFile manages a temporary file for the SSH private key
@@ -208,6 +225,124 @@ func ConnectExec(conn Connection, remoteCommand string) (*exec.Cmd, *TempKeyFile
 	cmd.Stderr = os.Stderr
 
 	return cmd, tempKey, nil
+}
+
+func ConnectExecCaptured(ctx context.Context, conn Connection, remoteCommand string, opts ExecOptions) (ExecResult, error) {
+	remoteCommand = strings.TrimSpace(remoteCommand)
+	if remoteCommand == "" {
+		return ExecResult{ExitCode: -1}, fmt.Errorf("remote command is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if opts.Timeout <= 0 {
+		opts.Timeout = 10 * time.Second
+	}
+	if opts.ConnectTimeout <= 0 {
+		opts.ConnectTimeout = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
+	defer cancel()
+
+	var tempKey *TempKeyFile
+	var args []string
+	args = append(args, "-T")
+	args = append(args, "-o", "StrictHostKeyChecking="+strictHostKeyChecking(conn.HostKeyPolicy))
+	args = append(args, "-o", fmt.Sprintf("ConnectTimeout=%d", int(opts.ConnectTimeout.Seconds())))
+	args = append(args, "-o", "ServerAliveInterval=2")
+	args = append(args, "-o", "ServerAliveCountMax=1")
+	args = append(args, "-o", "NumberOfPasswordPrompts=1")
+	if opts.BatchMode {
+		args = append(args, "-o", "BatchMode=yes")
+	}
+	if conn.Port != 22 && conn.Port != 0 {
+		args = append(args, "-p", fmt.Sprintf("%d", conn.Port))
+	}
+	if conn.PrivateKey != "" {
+		var err error
+		tempKey, err = NewTempKeyFile(conn.PrivateKey)
+		if err != nil {
+			return ExecResult{ExitCode: -1}, fmt.Errorf("failed to create temp key file: %w", err)
+		}
+		args = append(args, "-i", tempKey.Path())
+	}
+
+	passwordAuth := conn.PrivateKey == "" && conn.Password != "" && opts.AllowPasswordAuth
+	if passwordAuth {
+		args = append(args, "-o", "PreferredAuthentications=password,keyboard-interactive")
+		args = append(args, "-o", "PubkeyAuthentication=no")
+	}
+	clientConn := conn
+	if !passwordAuth {
+		clientConn.Password = ""
+	}
+
+	target := conn.Username + "@" + conn.Hostname
+	args = append(args, target, remoteCommand)
+
+	cmd, cleanupHolder, err := prepareClientCommand("ssh", args, clientConn, tempKey)
+	if err != nil {
+		if tempKey != nil {
+			_ = tempKey.Cleanup()
+		}
+		return ExecResult{ExitCode: -1}, err
+	}
+	if tempKey == nil {
+		tempKey = cleanupHolder
+	} else {
+		tempKey.merge(cleanupHolder)
+	}
+	if tempKey != nil {
+		defer tempKey.Cleanup()
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdin = nil
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	started := time.Now()
+	if err := cmd.Start(); err != nil {
+		return ExecResult{Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: -1, Duration: time.Since(started)}, err
+	}
+
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	var waitErr error
+	select {
+	case <-ctx.Done():
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		waitErr = <-waitCh
+		if waitErr == nil {
+			waitErr = ctx.Err()
+		}
+	case waitErr = <-waitCh:
+	}
+
+	exitCode := 0
+	if waitErr != nil {
+		exitCode = -1
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+	}
+
+	result := ExecResult{
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+		ExitCode: exitCode,
+		Duration: time.Since(started),
+	}
+	if ctx.Err() != nil {
+		return result, ctx.Err()
+	}
+	return result, waitErr
 }
 
 // ConnectSFTP establishes an interactive SFTP session using the system `sftp` client.
