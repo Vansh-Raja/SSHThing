@@ -8,11 +8,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for rele
 ## [Unreleased]
 
 ### Added
+- `sshthing cp`, `put`, `get` for token-authenticated file transfer. `cp` is scp-style (paths with leading `:` are remote, `-r` recursive, `-p` preserve), `put` streams stdin (or `--in <file>`) to a remote path, `get` writes a remote file to stdout (or `--out <file>`). All three reuse `exec`'s vault, askpass, temp-key, and unlock-session plumbing.
+- `sshthing exec --in <file>` pipes a local file as the remote command's stdin (e.g. `sshthing exec --in ./schema.sql -t DB --auth-file token "psql -f -"`).
+- Manual host health refresh with `R`: personal and Teams modes check all visible hosts with bounded concurrency, and results show online/offline state, uptime, CPU, RAM, disk, and GPU details.
+- Local SQLCipher persistence for personal host health results so the latest status survives restarts.
 - Opt-in `beta` release feed in the Settings `updates` section, including `beta releases`, `auto apply updates`, and a derived `feed` row.
 - GitHub prerelease workflow for beta tags like `vX.Y.Z-beta.N`, with the same cross-platform asset names as stable releases.
 - Separate `sshthing-beta` Homebrew formula path for macOS beta installs.
 
 ### Changed
+- Teams health refresh now checks all team hosts with bounded concurrency instead of only the selected host.
+- Replaced the health details toggle with a `health display` style setting: `minimal`, `values`, and `graph + values`.
+- Reworked host health display into a compact responsive card with configurable detail styles.
+- Host health now refreshes automatically after local login and once when entering Teams mode.
 - The add/edit host TUI now starts in navigation mode, uses a two-column layout for host details and credentials, and keeps footer keybinds pinned at the bottom.
 - Private-key editing in the TUI now opens a dedicated multiline popup editor instead of expanding inline in the host form.
 - The updater now supports separate stable and beta release feeds, including prerelease-aware semantic version ordering.
@@ -20,6 +28,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for rele
 - Package-manager installs remain stable/manual for beta in the first implementation and now show guidance instead of trying unsupported beta auto-upgrades.
 
 ### Fixed
+- Teams health auto-refresh now updates every team host row when entering Teams mode.
+- Kept Home and Teams keybind footers pinned on small or zoomed terminal screens even when detail content overflows.
 - Private-key validation now parses real SSH private keys instead of relying on fragile header/footer string checks.
 - Teams mode now keeps expired access-token sessions after app restarts so the 30-day refresh token can renew access instead of forcing browser sign-in.
 
