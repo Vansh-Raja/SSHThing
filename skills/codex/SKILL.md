@@ -120,6 +120,40 @@ sshthing exec -t "Host Label" --auth-file ~/.sshthing/token.txt "cd /app && git 
 
 Or run separate exec calls for per-command error handling.
 
+## Piping a Local File as Remote stdin (`--in`)
+
+When the remote command reads from stdin, use `--in <local-file>` to pipe a local file's contents in. Avoids staging the file on the remote first.
+
+```bash
+# Run a SQL file against a remote DB
+sshthing exec --in ./schema.sql -t "DB Server" --auth-file token.txt "psql -f -"
+
+# Apply a kubernetes manifest
+sshthing exec --in ./deployment.yaml -t "K8s Bastion" --auth-file token.txt "kubectl apply -f -"
+```
+
+## File Transfer
+
+Three subcommands share `exec`'s token auth:
+- `cp` — scp-style: paths with leading `:` are remote, plain paths are local. Last positional is destination.
+- `put` — upload stdin (or `--in <file>`) to a remote path.
+- `get` — download a remote path to stdout (or `--out <file>`).
+
+```bash
+# Upload (cp)
+sshthing cp -t "Server" --auth-file token.txt ./build/app.tar :/srv/releases/
+sshthing cp -t "Server" --auth-file token.txt -r ./dist/ :/var/www/html/
+
+# Download (cp)
+sshthing cp -t "Server" --auth-file token.txt :/var/log/app.log ./logs/
+
+# Streaming (put / get) — cleaner for pipelines
+echo "log_level=debug" | sshthing put -t "Server" --auth-file token.txt /etc/myapp/conf.d/00-debug.conf
+sshthing get -t "Server" --auth-file token.txt /var/log/app.log > ./app.log
+```
+
+`cp` flags: `-r`/`--recursive`, `-p`/`--preserve` (timestamps + mode), `--progress` (show sftp progress; off by default).
+
 ## Common Patterns
 
 ### Check server status

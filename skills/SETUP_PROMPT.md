@@ -75,7 +75,14 @@ Tell the user:
 >    echo "stk_..." > ~/.sshthing/token.txt && chmod 600 ~/.sshthing/token.txt
 >    ```
 >
-> Once set up, just ask naturally: "Check disk space on my server" or "Restart nginx on production"
+> Once set up, just ask naturally:
+> - "Check disk space on my server"
+> - "Restart nginx on production"
+> - "Upload this build to the staging server"
+> - "Pull the last 1000 lines of app.log from production"
+> - "Apply this SQL file to the prod database"
+>
+> The agent uses `sshthing exec` for commands, `sshthing cp` / `put` / `get` for file transfer, and `sshthing exec --in <file>` for piping local files as remote stdin.
 
 ### 5. Done
 

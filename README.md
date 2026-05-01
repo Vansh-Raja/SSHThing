@@ -357,7 +357,7 @@ cd web && ./node_modules/.bin/next dev
 
 5. Open `http://localhost:3000`, sign in with Clerk, switch or create an organization, and then return to the TUI device-flow page.
 
-## Automation Tokens + `sshthing exec`
+## Automation Tokens (`sshthing exec` / `cp` / `put` / `get`)
 
 Use automation tokens when you want `sshpass`-style command execution for agents/scripts without exposing VPS passwords in plaintext files.
 
@@ -410,6 +410,56 @@ printf 'MASTER_PASSWORD' | sshthing session unlock --password-stdin --ttl 15m
 sshthing session status
 sshthing session lock
 ```
+
+### Piping a local file as remote stdin (`exec --in`)
+
+Pipe a local file to the remote command's stdin without staging it on the
+remote host first. Useful for SQL files, kubernetes manifests, tarballs, etc.
+
+```bash
+sshthing exec --in ./schema.sql -t "DB Server" --auth-file /path/to/token.txt "psql -f -"
+sshthing exec --in ./deployment.yaml -t "K8s Bastion" --auth-file token.txt "kubectl apply -f -"
+sshthing exec --in ./backup.tgz -t "Server" --auth-file token.txt "tar xz -C /var/lib/app"
+```
+
+### File transfer (`cp`, `put`, `get`)
+
+Three subcommands share `exec`'s token auth and connection plumbing:
+
+- **`cp`** — scp-style file copy. Paths with a leading `:` are remote, plain
+  paths are local; the last positional argument is the destination. Supports
+  `-r` (recursive), `-p` (preserve mode + mtime), `--progress` (off by
+  default).
+- **`put`** — upload `stdin` (or `--in <local-file>`) to a remote path.
+- **`get`** — download a remote path to `stdout` (or `--out <local-file>`).
+
+```bash
+# Upload (cp)
+sshthing cp -t "Server" --auth-file /path/to/token.txt ./build/app.tar :/srv/releases/
+
+# Multi-source upload to a remote dir
+sshthing cp -t "Server" --auth-file /path/to/token.txt a.txt b.txt :/tmp/
+
+# Recursive directory upload
+sshthing cp -t "Server" --auth-file /path/to/token.txt -r ./dist/ :/var/www/html/
+
+# Download
+sshthing cp -t "Server" --auth-file /path/to/token.txt :/var/log/app.log ./logs/
+
+# Streaming with put / get (cleaner for pipelines than `cp -`)
+echo "log_level=debug" | sshthing put -t "Server" --auth-file token.txt /etc/myapp/conf.d/00-debug.conf
+sshthing get -t "Server" --auth-file token.txt /var/log/app.log > ./app.log
+sshthing get --out ./app.log -t "Server" --auth-file token.txt /var/log/app.log
+```
+
+`cp` uses the system `sftp` binary under the hood; `put`/`get` use `ssh "cat
+…"` for native stdin/stdout streaming. Both inherit the same encrypted-key
+extraction, askpass machinery, and host-key policy as `exec`. There is no
+new prerequisite — `sftp` was already required.
+
+`cp` rejects mixed semantics up front: at most one path may be remote (and
+only one path total may be the streaming sentinel `-`). Use `sshthing exec`
+for cross-host or shell-piped patterns that don't fit those rules.
 
 ### Multi-host token example
 

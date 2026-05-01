@@ -93,6 +93,29 @@ Press `,` to access settings:
 - **Mount**: Enable/disable, default path, quit behavior
 - **Sync**: Enable, repository URL, SSH key, branch
 
+## Agent / CLI commands
+
+SSHThing also has a non-interactive CLI surface for AI coding assistants and
+scripts. After creating an automation token in the TUI, you can:
+
+```bash
+# Run a remote command (token-authenticated, no master-password prompt)
+sshthing exec -t "Server" --auth-file ~/.sshthing/token.txt "uptime"
+
+# Pipe a local file as the remote command's stdin
+sshthing exec --in ./schema.sql -t "DB" --auth-file token.txt "psql -f -"
+
+# File transfer (cp = scp-style, put/get = streaming)
+sshthing cp  -t "Server" --auth-file token.txt ./build.tar :/srv/releases/
+echo hi | sshthing put -t "Server" --auth-file token.txt /tmp/hi.txt
+sshthing get  -t "Server" --auth-file token.txt /var/log/app.log > ./app.log
+```
+
+See the [README](./README.md#automation-tokens-sshthing-exec--cp--put--get)
+for full token / transfer docs, or install the agent skills at
+[`skills/`](./skills/) so Claude Code / OpenCode / Codex can drive these
+commands for you.
+
 ## Troubleshooting
 
 - Ghostty + remote `clear` errors: if your local `TERM` is `xterm-ghostty`, SSHThing forces `TERM=xterm-256color` for SSH sessions. If you still see issues, set `TERM=xterm-256color` on the remote shell profile.

@@ -67,8 +67,13 @@ Once installed, just ask your agent naturally:
 - "Deploy the latest code to production"
 - "Show me the nginx logs on the web server"
 - "Restart the API service on the deployment server"
+- "Upload this build artifact to the staging server"
+- "Pull the last 1000 lines of `app.log` from production"
+- "Run this SQL file against the prod database"
 
-The agent will use `sshthing exec` to run commands on your servers.
+The agent will use `sshthing exec` to run remote commands, `sshthing cp` /
+`put` / `get` to transfer files, and `sshthing exec --in <file>` to pipe a
+local file as the remote command's stdin.
 
 ## Platform differences
 

@@ -123,6 +123,63 @@ sshthing exec -t "Host Label" --auth-file ~/.sshthing/token.txt "cd /app && git 
 
 Or run separate exec calls for independent commands (allows per-command error handling).
 
+## Piping a Local File as Remote stdin (`--in`)
+
+When the remote command reads from stdin, use `--in <local-file>` to pipe a local file's contents in. Avoids staging the file on the remote first.
+
+```bash
+# Run a SQL file against a remote DB
+sshthing exec --in ./schema.sql -t "DB Server" --auth-file token.txt "psql -f -"
+
+# Apply a kubernetes manifest
+sshthing exec --in ./deployment.yaml -t "K8s Bastion" --auth-file token.txt "kubectl apply -f -"
+
+# Restore a tarball directly to a target directory
+sshthing exec --in ./backup.tgz -t "Server" --auth-file token.txt "tar xz -C /var/lib/app"
+```
+
+## File Transfer
+
+For dedicated file transfer use `cp` (scp-style), `put` (streaming upload), or `get` (streaming download). All three use the same token auth as `exec`.
+
+### `cp` — scp-style copy
+Leading `:` on a path marks the remote side. Without `:`, the path is local. Last positional argument is the destination.
+
+```bash
+# Upload one file
+sshthing cp -t "Server" --auth-file ~/.sshthing/token.txt ./build/app.tar :/srv/releases/
+
+# Upload multiple files to a remote directory
+sshthing cp -t "Server" --auth-file ~/.sshthing/token.txt a.txt b.txt c.txt :/tmp/
+
+# Recursive directory upload
+sshthing cp -t "Server" --auth-file ~/.sshthing/token.txt -r ./dist/ :/var/www/html/
+
+# Download
+sshthing cp -t "Server" --auth-file ~/.sshthing/token.txt :/var/log/app.log ./logs/
+
+# Preserve mode + mtime (-p)
+sshthing cp -t "Server" --auth-file ~/.sshthing/token.txt -p ./bin/* :/usr/local/bin/
+```
+
+### `put` / `get` — streaming verbs
+Cleaner than `cp` for pipeline use. `put` reads stdin (or `--in <file>`), `get` writes stdout (or `--out <file>`).
+
+```bash
+# Write a generated config to the server
+echo "log_level=debug" | sshthing put -t "Server" --auth-file token.txt /etc/myapp/conf.d/00-debug.conf
+
+# Pipe stdout from a producer to a remote file
+./generate-report | sshthing put -t "Server" --auth-file token.txt /var/reports/today.json
+
+# Pull a log into a local file
+sshthing get -t "Server" --auth-file token.txt /var/log/app.log > ./app.log
+sshthing get --out ./app.log -t "Server" --auth-file token.txt /var/log/app.log
+
+# Use get + grep locally
+sshthing get -t "Server" --auth-file token.txt /var/log/syslog | grep -i error
+```
+
 ## Common Patterns
 
 ### Check server status

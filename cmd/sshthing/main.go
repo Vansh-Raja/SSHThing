@@ -1,19 +1,13 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/Vansh-Raja/SSHThing/internal/app"
-	"github.com/Vansh-Raja/SSHThing/internal/authtoken"
-	"github.com/Vansh-Raja/SSHThing/internal/config"
-	"github.com/Vansh-Raja/SSHThing/internal/db"
-	"github.com/Vansh-Raja/SSHThing/internal/securestore"
 	"github.com/Vansh-Raja/SSHThing/internal/ssh"
 	"github.com/Vansh-Raja/SSHThing/internal/unlock"
 	"github.com/Vansh-Raja/SSHThing/internal/update"
@@ -47,6 +41,27 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "cp" {
+		if err := runCp(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "cp error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "put" {
+		if err := runPut(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "put error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "get" {
+		if err := runGet(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "get error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "session" {
 		if err := runSession(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "session error: %v\n", err)
@@ -65,7 +80,10 @@ func main() {
 			fmt.Println()
 			fmt.Println("Usage:")
 			fmt.Println("  sshthing            Run the TUI")
-			fmt.Println("  sshthing exec       Run one token-auth command")
+			fmt.Println("  sshthing exec       Run one token-auth command on a remote host")
+			fmt.Println("  sshthing cp         Copy files to/from a remote host (scp-style)")
+			fmt.Println("  sshthing put        Upload stdin (or --in <file>) to a remote path")
+			fmt.Println("  sshthing get        Download a remote file to stdout (or --out <file>)")
 			fmt.Println("  sshthing session    Manage local unlock session cache")
 			fmt.Println("  sshthing --version  Print version")
 			fmt.Println("  sshthing --help     Show this help")
@@ -74,6 +92,19 @@ func main() {
 			fmt.Println("  sshthing exec -t <target_label> --auth <token> \"command\"")
 			fmt.Println("  sshthing exec -t <target_label> --auth-file <path> \"command\"")
 			fmt.Println("  sshthing exec -t <target_label> --auth-stdin \"command\"")
+			fmt.Println("  sshthing exec --in <local_file> -t <target> --auth-file <path> \"cmd reading stdin\"")
+			fmt.Println()
+			fmt.Println("File Transfer:")
+			fmt.Println("  # Upload (scp-style; leading ':' marks the remote side)")
+			fmt.Println("  sshthing cp -t <target> --auth-file <path> ./local :/remote/dir/")
+			fmt.Println("  sshthing cp -t <target> --auth-file <path> -r ./dist/ :/srv/www/")
+			fmt.Println()
+			fmt.Println("  # Download")
+			fmt.Println("  sshthing cp -t <target> --auth-file <path> :/var/log/app.log ./logs/")
+			fmt.Println()
+			fmt.Println("  # Streaming (verb form is cleaner for pipelines)")
+			fmt.Println("  echo \"hello\" | sshthing put -t <target> --auth-file <path> /tmp/hello.txt")
+			fmt.Println("  sshthing get -t <target> --auth-file <path> /tmp/hello.txt > ./local.txt")
 			fmt.Println()
 			fmt.Println("Session Usage:")
 			fmt.Println("  printf 'MASTER_PASSWORD' | sshthing session unlock --password-stdin --ttl 15m")
@@ -113,213 +144,76 @@ func main() {
 }
 
 func runExec(args []string) error {
-	target, token, command, authMode, err := parseExecArgs(args)
+	target, token, command, authMode, inPath, err := parseExecArgs(args)
 	if err != nil {
 		return err
 	}
 	if authMode == "direct" {
 		fmt.Fprintln(os.Stderr, "warning: --auth may leak via shell history/process args; prefer --auth-file or --auth-stdin")
 	}
-	vault, err := authtoken.LoadVault()
-	if err != nil {
-		return fmt.Errorf("failed to load token vault: %w", err)
-	}
-	pepper, _ := securestore.GetDevicePepper()
-	resolved, err := vault.Resolve(token, target, pepper)
+
+	rc, err := resolveTokenAndConn(target, token)
 	if err != nil {
 		return err
 	}
-	tokenIdx := resolved.TokenIndex
+	if rc.DBStore != nil {
+		defer rc.DBStore.Close()
+	}
+	defer rc.FinalizeAfterRun()
 
-	if resolved.LegacyPayload != nil {
-		p := resolved.LegacyPayload
-		conn := ssh.Connection{
-			Hostname:            p.Hostname,
-			Username:            p.Username,
-			Port:                p.Port,
-			PasswordBackendUnix: p.PasswordBackendUnix,
-			HostKeyPolicy:       p.HostKeyPolicy,
-			KeepAliveSeconds:    p.KeepAliveSeconds,
-			Term:                p.Term,
-		}
-		if p.KeyType == "password" {
-			conn.Password = p.Secret
-		} else {
-			conn.PrivateKey = p.Secret
-		}
-		cmd, tempKey, err := ssh.ConnectExec(conn, command)
-		if err != nil {
-			return err
-		}
-		if tempKey != nil {
-			defer tempKey.Cleanup()
-		}
-		err = cmd.Run()
-		vault.MarkUsed(tokenIdx)
-		_ = authtoken.SaveVault(vault)
-		if err == nil {
-			return nil
-		}
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ProcessState != nil {
-			os.Exit(exitErr.ProcessState.ExitCode())
-		}
-		return err
-	}
-
-	dbUnlock := strings.TrimSpace(resolved.DBUnlockSecret)
-	if dbUnlock == "" {
-		cached, _, ok, _ := unlock.Load()
-		if ok {
-			dbUnlock = strings.TrimSpace(cached)
-		}
-	}
-	if dbUnlock == "" {
-		return fmt.Errorf("token is not active on this device and no unlock session is available")
-	}
-
-	store, err := db.Init(dbUnlock)
-	if err != nil {
-		return fmt.Errorf("failed to unlock database: %w", err)
-	}
-	defer store.Close()
-
-	host, err := store.GetHostByID(resolved.HostID)
-	if err != nil {
-		return fmt.Errorf("failed to load target host: %w", err)
-	}
-	secret, err := store.GetHostSecret(resolved.HostID)
-	if err != nil {
-		return fmt.Errorf("failed to decrypt host secret: %w", err)
-	}
-	cfg, cfgErr := config.Load()
-	if cfgErr != nil {
-		cfg = config.Default()
-	}
-	term := ""
-	switch cfg.SSH.TermMode {
-	case config.TermXterm:
-		term = "xterm-256color"
-	case config.TermCustom:
-		term = strings.TrimSpace(cfg.SSH.TermCustom)
-	}
-
-	conn := ssh.Connection{
-		Hostname:            host.Hostname,
-		Username:            host.Username,
-		Port:                host.Port,
-		PasswordBackendUnix: string(cfg.SSH.PasswordBackendUnix),
-		HostKeyPolicy:       string(cfg.SSH.HostKeyPolicy),
-		KeepAliveSeconds:    cfg.SSH.KeepAliveSeconds,
-		Term:                term,
-	}
-	if host.KeyType == "password" {
-		conn.Password = secret
-	} else {
-		conn.PrivateKey = secret
-	}
-
-	cmd, tempKey, err := ssh.ConnectExec(conn, command)
+	cmd, tempKey, err := ssh.ConnectExec(rc.Conn, command)
 	if err != nil {
 		return err
 	}
 	if tempKey != nil {
 		defer tempKey.Cleanup()
 	}
-	err = cmd.Run()
-	ttl := time.Duration(cfg.Automation.SessionTTLSeconds) * time.Second
-	_ = unlock.Save(dbUnlock, ttl)
-	vault.MarkUsed(tokenIdx)
-	_ = authtoken.SaveVault(vault)
-	if err == nil {
-		return nil
+
+	// --in <file> overrides the inherited stdin so the local file's contents
+	// are piped to the remote command (e.g. `psql -f -`, `kubectl apply -f -`).
+	if inPath != "" {
+		f, openErr := os.Open(inPath)
+		if openErr != nil {
+			return fmt.Errorf("--in: %w", openErr)
+		}
+		defer f.Close()
+		cmd.Stdin = f
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ProcessState != nil {
-		os.Exit(exitErr.ProcessState.ExitCode())
-	}
-	return err
+
+	return propagateExitCode(cmd.Run())
 }
 
-func parseExecArgs(args []string) (target string, token string, command string, authMode string, err error) {
-	var authFile string
-	remaining := make([]string, 0)
-
+// parseExecArgs walks `sshthing exec` argv. Returns the resolved target,
+// token, remote command, auth source mode, and an optional --in path that
+// overrides stdin. The auth flag parsing is delegated to extractAuthFlags so
+// cp/put/get can share it.
+func parseExecArgs(args []string) (target string, token string, command string, authMode string, inPath string, err error) {
+	// Pull --in out before passing the rest to extractAuthFlags so it doesn't
+	// land in the leftover positional args.
+	filtered := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		switch a {
-		case "-t", "--target":
+		if a == "--in" {
 			i++
 			if i >= len(args) {
-				return "", "", "", "", fmt.Errorf("missing value for %s", a)
+				return "", "", "", "", "", fmt.Errorf("missing value for --in")
 			}
-			target = strings.TrimSpace(args[i])
-		case "--auth":
-			if authMode != "" {
-				return "", "", "", "", fmt.Errorf("only one auth source can be provided")
-			}
-			i++
-			if i >= len(args) {
-				return "", "", "", "", fmt.Errorf("missing value for --auth")
-			}
-			token = strings.TrimSpace(args[i])
-			authMode = "direct"
-		case "--auth-file":
-			if authMode != "" {
-				return "", "", "", "", fmt.Errorf("only one auth source can be provided")
-			}
-			i++
-			if i >= len(args) {
-				return "", "", "", "", fmt.Errorf("missing value for --auth-file")
-			}
-			authFile = strings.TrimSpace(args[i])
-			authMode = "file"
-		case "--auth-stdin":
-			if authMode != "" {
-				return "", "", "", "", fmt.Errorf("only one auth source can be provided")
-			}
-			authMode = "stdin"
-		case "--":
-			if i+1 < len(args) {
-				remaining = append(remaining, args[i+1:]...)
-			}
-			i = len(args)
-		default:
-			remaining = append(remaining, a)
+			inPath = strings.TrimSpace(args[i])
+			continue
 		}
+		filtered = append(filtered, a)
 	}
 
-	if target == "" {
-		return "", "", "", "", fmt.Errorf("target label is required (use -t)")
-	}
-	if authMode == "" {
-		return "", "", "", "", fmt.Errorf("auth token is required (--auth, --auth-file, or --auth-stdin)")
+	af, leftover, perr := extractAuthFlags(filtered)
+	if perr != nil {
+		return "", "", "", "", "", perr
 	}
 
-	switch authMode {
-	case "file":
-		b, readErr := os.ReadFile(authFile)
-		if readErr != nil {
-			return "", "", "", "", fmt.Errorf("failed to read auth file: %w", readErr)
-		}
-		token = strings.TrimSpace(string(b))
-	case "stdin":
-		b, readErr := io.ReadAll(os.Stdin)
-		if readErr != nil {
-			return "", "", "", "", fmt.Errorf("failed to read auth from stdin: %w", readErr)
-		}
-		token = strings.TrimSpace(string(b))
-	}
-
-	if token == "" {
-		return "", "", "", "", fmt.Errorf("auth token cannot be empty")
-	}
-
-	command = strings.TrimSpace(strings.Join(remaining, " "))
+	command = strings.TrimSpace(strings.Join(leftover, " "))
 	if command == "" {
-		return "", "", "", "", fmt.Errorf("remote command is required")
+		return "", "", "", "", "", fmt.Errorf("remote command is required")
 	}
-	return target, token, command, authMode, nil
+	return af.Target, af.Token, command, af.AuthMode, inPath, nil
 }
 
 func runSession(args []string) error {

@@ -12,6 +12,7 @@ This document is a best‑effort review of SSHThing’s security posture based o
 
 - The app shells out to system tools: `ssh`, `sftp`, `ssh-keygen`, `sshfs` (FUSE‑T), `umount`, `mount`, `open`.
 - Hostnames/ports/usernames come from user input and are passed as **exec arguments** (no shell interpolation), reducing command‑injection risk.
+- The `sshthing cp`, `put`, and `get` subcommands reuse `exec`'s token-auth, temp-key, and askpass paths — they don't broaden the trust model. `cp` invokes the system `sftp` binary with an auto-generated batch file (0600, removed on Cleanup); `put`/`get` invoke `ssh "cat …"` for stdin/stdout streaming. Remote paths passed to `cat` are single-quoted by SSHThing, which rejects embedded `'`/newline/NUL up front rather than escaping them, so an agent feeding a pathological filename gets a clean error instead of a smuggled command.
 
 ## Findings & Risks
 
