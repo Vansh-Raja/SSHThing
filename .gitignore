@@ -44,6 +44,7 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+blogs/
 .gocache/
 .gopath/
 .gemini-clipboard/
