@@ -915,6 +915,21 @@ func (m *Model) loadTokenSummaries() {
 	}
 }
 
+func (m *Model) enableExistingTokenDefinitionSyncIfNeeded() {
+	if !m.cfg.Sync.Scope.TokenDefinitions {
+		return
+	}
+	vault, err := authtoken.LoadVault()
+	if err != nil || vault == nil {
+		return
+	}
+	if !vault.EnableSyncDefinitionsForAll() {
+		return
+	}
+	_ = authtoken.SaveVault(vault)
+	m.loadTokenSummaries()
+}
+
 func (m *Model) loadTeamTokenSummaries() {
 	team, ok := m.teamsCurrentTeam()
 	if !ok {
@@ -1707,6 +1722,7 @@ func (m *Model) applySettingChange(idx int, action string) {
 		if m.cfg.Sync.Provider != config.SyncProviderOff {
 			m.cfg.Sync.Scope.TokenDefinitions = !m.cfg.Sync.Scope.TokenDefinitions
 			m.cfg.Automation.SyncTokenDefinitions = m.cfg.Sync.Scope.TokenDefinitions
+			m.enableExistingTokenDefinitionSyncIfNeeded()
 		}
 	case 21: // sync health
 		if m.cfg.Sync.Provider != config.SyncProviderOff {
@@ -1730,6 +1746,7 @@ func (m *Model) applySettingChange(idx int, action string) {
 		if m.cfg.Sync.Provider != config.SyncProviderOff {
 			m.cfg.Sync.Scope.TokenDefinitions = !m.cfg.Sync.Scope.TokenDefinitions
 			m.cfg.Automation.SyncTokenDefinitions = m.cfg.Sync.Scope.TokenDefinitions
+			m.enableExistingTokenDefinitionSyncIfNeeded()
 		}
 	}
 }

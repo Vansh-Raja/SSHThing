@@ -45,6 +45,24 @@ export type PersonalGroup = {
   deleted_at?: string;
 };
 
+export type PersonalTokenHost = {
+  host_id: number;
+  display_label: string;
+};
+
+export type PersonalTokenDef = {
+  token_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  revoked_at?: string | null;
+  deleted_at?: string | null;
+  expires_at?: string | null;
+  max_uses?: number;
+  sync_enabled?: boolean;
+  hosts: PersonalTokenHost[];
+};
+
 export type PersonalActivityEvent = {
   source: string;
   action: string;

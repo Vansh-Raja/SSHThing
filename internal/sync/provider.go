@@ -111,11 +111,11 @@ func (p *ConvexProvider) Pull(ctx context.Context, password string) (*SyncData, 
 	}
 	vault, err := p.client.GetPersonalVault(ctx, accessToken)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("personal cloud vault unavailable: %w", err)
 	}
 	resp, err := p.client.ListPersonalVaultItems(ctx, accessToken, "")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("personal cloud items unavailable: %w", err)
 	}
 	data, err := decryptVaultItems(resp.Items, password, vault.KDF.Salt)
 	if err != nil {
@@ -132,7 +132,7 @@ func (p *ConvexProvider) Push(ctx context.Context, data *SyncData, password stri
 	}
 	vault, err := p.client.GetPersonalVault(ctx, accessToken)
 	if err != nil {
-		return err
+		return fmt.Errorf("personal cloud vault unavailable: %w", err)
 	}
 	items, err := encryptVaultItems(data, password, vault.KDF.Salt)
 	if err != nil {
@@ -148,7 +148,7 @@ func (p *ConvexProvider) Push(ctx context.Context, data *SyncData, password stri
 		Items:        items,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("personal cloud items save failed: %w", err)
 	}
 	if len(resp.Conflicts) > 0 {
 		return fmt.Errorf("personal cloud sync conflict: pull and retry")

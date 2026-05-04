@@ -140,6 +140,30 @@ func TestSyncDefinitionsMerge(t *testing.T) {
 	}
 }
 
+func TestEnableSyncDefinitionsForAll(t *testing.T) {
+	v := &Vault{Version: vaultVersion}
+	raw, rec, err := CreateToken("deploy", []HostGrant{{HostID: 1, DisplayLabel: "GPU"}}, "pw", CreateOptions{})
+	if err != nil {
+		t.Fatalf("CreateToken failed: %v", err)
+	}
+	if err := v.AddToken(raw, rec); err != nil {
+		t.Fatalf("AddToken failed: %v", err)
+	}
+	if len(v.ExportSyncDefinitions()) != 0 {
+		t.Fatalf("expected unsynced token to be excluded")
+	}
+	if !v.EnableSyncDefinitionsForAll() {
+		t.Fatalf("expected sync enable change")
+	}
+	defs := v.ExportSyncDefinitions()
+	if len(defs) != 1 || defs[0].TokenID != rec.TokenID {
+		t.Fatalf("expected token definition export, got %+v", defs)
+	}
+	if v.EnableSyncDefinitionsForAll() {
+		t.Fatalf("expected second enable call to be no-op")
+	}
+}
+
 func TestLoadSaveVault(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("SSHTHING_DATA_DIR", tmp)

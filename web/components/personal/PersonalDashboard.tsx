@@ -11,11 +11,12 @@ import type {
   PersonalActivityEvent,
   PersonalGroup,
   PersonalHost,
+  PersonalTokenDef,
   PersonalVaultItem,
   PersonalVaultSummary,
 } from "./types";
 
-type Tab = "hosts" | "groups" | "settings" | "activity";
+type Tab = "hosts" | "groups" | "tokens" | "settings" | "activity";
 
 type ItemsResponse = {
   revision: string;
@@ -37,6 +38,7 @@ export default function PersonalDashboard() {
   const [unlockError, setUnlockError] = useState("");
   const [hosts, setHosts] = useState<PersonalHost[]>([]);
   const [groups, setGroups] = useState<PersonalGroup[]>([]);
+  const [tokens, setTokens] = useState<PersonalTokenDef[]>([]);
   const [events, setEvents] = useState<PersonalActivityEvent[]>([]);
   const [tab, setTab] = useState<Tab>("hosts");
   const [drawerHost, setDrawerHost] = useState<PersonalHost | null | undefined>(undefined);
@@ -64,16 +66,20 @@ export default function PersonalDashboard() {
       const response = await apiRequest<ItemsResponse>("/api/personal/vault/items");
       const nextHosts: PersonalHost[] = [];
       const nextGroups: PersonalGroup[] = [];
+      const nextTokens: PersonalTokenDef[] = [];
       for (const item of response.items) {
         if (item.deletedAt) continue;
         if (item.itemType === "host") {
           nextHosts.push(await decryptPersonalItem<PersonalHost>(key, item.ciphertext));
         } else if (item.itemType === "group") {
           nextGroups.push(await decryptPersonalItem<PersonalGroup>(key, item.ciphertext));
+        } else if (item.itemType === "token_def") {
+          nextTokens.push(await decryptPersonalItem<PersonalTokenDef>(key, item.ciphertext));
         }
       }
       setHosts(nextHosts.sort((a, b) => (a.label || a.hostname).localeCompare(b.label || b.hostname)));
       setGroups(nextGroups.sort((a, b) => a.name.localeCompare(b.name)));
+      setTokens(nextTokens.sort((a, b) => (a.name || a.token_id).localeCompare(b.name || b.token_id)));
     },
     [],
   );
@@ -168,6 +174,56 @@ export default function PersonalDashboard() {
     toast.success("Personal host deleted.");
   }
 
+  async function saveTokenDef(token: PersonalTokenDef, action: "edit" | "delete") {
+    if (!cryptoKey) return;
+    const updatedAt = Date.now();
+    const normalized: PersonalTokenDef = {
+      ...token,
+      name: token.name.trim() || token.token_id,
+      updated_at: new Date(updatedAt).toISOString(),
+      sync_enabled: true,
+    };
+    const deletedAt = action === "delete" ? updatedAt : undefined;
+    await uploadItems([
+      {
+        itemType: "token_def",
+        syncId: normalized.token_id,
+        ciphertext: await encryptPersonalItem(cryptoKey, normalized),
+        nonce: "",
+        updatedAt,
+        deletedAt,
+        schemaVersion: 5,
+      },
+    ]);
+    if (action === "delete") {
+      setTokens((cur) => cur.filter((tokenDef) => tokenDef.token_id !== normalized.token_id));
+      toast.success("Token definition deleted.");
+      return;
+    }
+    setTokens((cur) => {
+      const rest = cur.filter((tokenDef) => tokenDef.token_id !== normalized.token_id);
+      return [...rest, normalized].sort((a, b) => (a.name || a.token_id).localeCompare(b.name || b.token_id));
+    });
+  }
+
+  async function renameToken(token: PersonalTokenDef) {
+    const nextName = window.prompt("Token name", token.name || token.token_id);
+    if (!nextName?.trim()) return;
+    await saveTokenDef({ ...token, name: nextName.trim() }, "edit");
+    toast.success("Token definition renamed.");
+  }
+
+  async function revokeToken(token: PersonalTokenDef) {
+    if (token.revoked_at) return;
+    await saveTokenDef({ ...token, revoked_at: nowISO() }, "edit");
+    toast.success("Token definition revoked.");
+  }
+
+  async function deleteToken(token: PersonalTokenDef) {
+    if (!window.confirm(`Delete token definition "${token.name || token.token_id}"?`)) return;
+    await saveTokenDef({ ...token, deleted_at: nowISO() }, "delete");
+  }
+
   async function addGroup() {
     if (!cryptoKey) return;
     const name = window.prompt("Group name");
@@ -217,7 +273,7 @@ export default function PersonalDashboard() {
         <div className="team-bar__row">
           <div className="team-bar__switcher">Personal Library</div>
           <div className="team-tabs" role="tablist">
-            {(["hosts", "groups", "settings", "activity"] as Tab[]).map((next) => (
+            {(["hosts", "groups", "tokens", "settings", "activity"] as Tab[]).map((next) => (
               <button
                 key={next}
                 className={`team-tab ${tab === next ? "team-tab--active" : ""}`}
@@ -285,6 +341,54 @@ export default function PersonalDashboard() {
                 <span className="data-row__title">{group.name}</span>
               </div>
             ))}
+          </div>
+        ) : null}
+
+        {tab === "tokens" ? (
+          <div className="block stack">
+            <div>
+              <span className="eyebrow">Encrypted token definitions</span>
+              <h1 className="text-xl fw-800">{tokens.length} tokens</h1>
+              <p className="muted text-sm">
+                Synced definitions do not include token secrets. Activate or recreate usable token values from the TUI.
+              </p>
+            </div>
+            {tokens.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-state__title">No synced token definitions</div>
+                <p className="muted text-sm">
+                  Enable sync token defs in SSHThing and run sync from the TUI.
+                </p>
+              </div>
+            ) : (
+              tokens.map((token) => (
+                <div className="data-row" key={token.token_id}>
+                  <div className="data-row__primary">
+                    <span className="data-row__title">{token.name || token.token_id}</span>
+                    <span className="muted text-sm">
+                      {token.revoked_at ? "revoked" : "active definition"} · {token.hosts?.length ?? 0} hosts · created{" "}
+                      {new Date(token.created_at).toLocaleDateString()}
+                    </span>
+                    {(token.hosts ?? []).length > 0 ? (
+                      <span className="muted text-sm">
+                        {(token.hosts ?? []).map((host) => host.display_label || `host ${host.host_id}`).join(", ")}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="row">
+                    <button className="btn" type="button" onClick={() => void renameToken(token)}>
+                      Rename
+                    </button>
+                    <button className="btn" type="button" disabled={Boolean(token.revoked_at)} onClick={() => void revokeToken(token)}>
+                      Revoke
+                    </button>
+                    <button className="btn btn--danger" type="button" onClick={() => void deleteToken(token)}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         ) : null}
 

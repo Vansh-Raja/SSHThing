@@ -315,6 +315,26 @@ func (v *Vault) ExportSyncDefinitions() []SyncTokenDef {
 	return out
 }
 
+func (v *Vault) EnableSyncDefinitionsForAll() bool {
+	if v == nil {
+		return false
+	}
+	changed := false
+	now := time.Now().UTC()
+	for i := range v.Tokens {
+		t := &v.Tokens[i]
+		if t.DeletedAt != nil || t.SyncEnabled {
+			continue
+		}
+		t.SyncEnabled = true
+		if t.UpdatedAt.IsZero() || t.UpdatedAt.Before(now) {
+			t.UpdatedAt = now
+		}
+		changed = true
+	}
+	return changed
+}
+
 func (v *Vault) MergeSyncDefinitions(defs []SyncTokenDef) bool {
 	if v == nil {
 		return false

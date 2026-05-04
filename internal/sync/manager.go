@@ -175,6 +175,9 @@ func (m *Manager) Sync() *SyncResult {
 	if m.cfg.Sync.Scope.TokenDefinitions {
 		vault, err := authtoken.LoadVault()
 		if err == nil && vault != nil {
+			if vault.EnableSyncDefinitionsForAll() {
+				_ = authtoken.SaveVault(vault)
+			}
 			if hosts, herr := m.store.GetHosts(); herr == nil {
 				labels := make(map[int]string, len(hosts))
 				for _, h := range hosts {

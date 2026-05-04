@@ -24,6 +24,30 @@ type apiError struct {
 	Error string `json:"error"`
 }
 
+type HTTPError struct {
+	Method      string
+	URL         string
+	Path        string
+	StatusCode  int
+	ContentType string
+	BodyPreview string
+	HTML        bool
+}
+
+func (e *HTTPError) Error() string {
+	target := e.URL
+	if target == "" {
+		target = e.Path
+	}
+	if e.HTML {
+		return fmt.Sprintf("teams api %s %s returned HTTP %d with an HTML page; check that the API base URL is correct and that the server has been deployed with this route", e.Method, target, e.StatusCode)
+	}
+	if strings.TrimSpace(e.BodyPreview) != "" {
+		return fmt.Sprintf("teams api %s %s returned HTTP %d: %s", e.Method, target, e.StatusCode, e.BodyPreview)
+	}
+	return fmt.Sprintf("teams api %s %s returned HTTP %d", e.Method, target, e.StatusCode)
+}
+
 func New(baseURL string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
@@ -257,7 +281,8 @@ func (c *Client) doJSON(ctx context.Context, method, path, accessToken string, b
 		payload = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, payload)
+	requestURL := c.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, method, requestURL, payload)
 	if err != nil {
 		return err
 	}
@@ -279,19 +304,60 @@ func (c *Client) doJSON(ctx context.Context, method, path, accessToken string, b
 		return err
 	}
 
+	contentType := res.Header.Get("Content-Type")
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		var apiErr apiError
 		if len(data) > 0 && json.Unmarshal(data, &apiErr) == nil && strings.TrimSpace(apiErr.Error) != "" {
 			return fmt.Errorf("%s", apiErr.Error)
 		}
-		if len(data) > 0 {
-			return fmt.Errorf("teams api %s %s failed: %s", method, path, strings.TrimSpace(string(data)))
+		return &HTTPError{
+			Method:      method,
+			URL:         requestURL,
+			Path:        path,
+			StatusCode:  res.StatusCode,
+			ContentType: contentType,
+			BodyPreview: responsePreview(data),
+			HTML:        looksLikeHTMLResponse(contentType, data),
 		}
-		return fmt.Errorf("teams api %s %s failed with status %d", method, path, res.StatusCode)
 	}
 
 	if out == nil || len(data) == 0 {
 		return nil
 	}
-	return json.Unmarshal(data, out)
+	if looksLikeHTMLResponse(contentType, data) {
+		return &HTTPError{
+			Method:      method,
+			URL:         requestURL,
+			Path:        path,
+			StatusCode:  res.StatusCode,
+			ContentType: contentType,
+			BodyPreview: responsePreview(data),
+			HTML:        true,
+		}
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("teams api %s %s returned invalid JSON: %w", method, requestURL, err)
+	}
+	return nil
+}
+
+func looksLikeHTMLResponse(contentType string, data []byte) bool {
+	ct := strings.ToLower(contentType)
+	if strings.Contains(ct, "text/html") {
+		return true
+	}
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	return strings.HasPrefix(lower, "<!doctype html") || strings.HasPrefix(lower, "<html")
+}
+
+func responsePreview(data []byte) string {
+	preview := strings.Join(strings.Fields(string(data)), " ")
+	if len(preview) > 240 {
+		preview = preview[:240] + "..."
+	}
+	return preview
 }
