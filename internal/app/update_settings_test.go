@@ -32,12 +32,12 @@ func TestApplySettingChangeTogglesBetaUpdateSettings(t *testing.T) {
 	m.cfg.Updates.ReleaseChannel = "stable"
 	m.cfg.Updates.AutoApplyUpdates = false
 
-	m.applySettingChange(21, "toggle")
+	m.applySettingChange(27, "toggle")
 	if m.cfg.Updates.ReleaseChannel != "beta" {
 		t.Fatalf("expected beta release channel after toggle, got %q", m.cfg.Updates.ReleaseChannel)
 	}
 
-	m.applySettingChange(22, "toggle")
+	m.applySettingChange(28, "toggle")
 	if !m.cfg.Updates.AutoApplyUpdates {
 		t.Fatalf("expected auto apply updates enabled after toggle")
 	}

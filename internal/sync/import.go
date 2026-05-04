@@ -33,8 +33,12 @@ func Import(store *db.Store, remote *SyncData, password string) (*ImportResult, 
 			return nil, fmt.Errorf("failed to get local groups: %w", err)
 		}
 		localByName := make(map[string]db.GroupModel, len(localGroups))
+		localBySyncID := make(map[string]db.GroupModel, len(localGroups))
 		for _, g := range localGroups {
 			localByName[strings.ToLower(g.Name)] = g
+			if strings.TrimSpace(g.SyncID) != "" {
+				localBySyncID[g.SyncID] = g
+			}
 		}
 
 		for _, rg := range remote.Groups {
@@ -43,13 +47,18 @@ func Import(store *db.Store, remote *SyncData, password string) (*ImportResult, 
 				continue
 			}
 			lg, exists := localByName[strings.ToLower(name)]
+			if strings.TrimSpace(rg.SyncID) != "" {
+				if bySync, ok := localBySyncID[rg.SyncID]; ok {
+					lg, exists = bySync, true
+				}
+			}
 			if exists {
 				// If local is newer, keep it.
 				if lg.UpdatedAt.After(rg.UpdatedAt) {
 					continue
 				}
 			}
-			if err := store.UpsertGroupFromSync(name, rg.CreatedAt, rg.UpdatedAt, rg.DeletedAt); err != nil {
+			if err := store.UpsertGroupFromSync(rg.SyncID, name, rg.CreatedAt, rg.UpdatedAt, rg.DeletedAt); err != nil {
 				return nil, fmt.Errorf("failed to apply group %q: %w", name, err)
 			}
 		}
@@ -70,14 +79,22 @@ func Import(store *db.Store, remote *SyncData, password string) (*ImportResult, 
 
 	// Build a map of local hosts by ID for quick lookup
 	localByID := make(map[int]db.HostModel)
+	localBySyncID := make(map[string]db.HostModel)
 	for _, h := range localHosts {
 		localByID[h.ID] = h
+		if strings.TrimSpace(h.SyncID) != "" {
+			localBySyncID[h.SyncID] = h
+		}
 	}
 
 	result := &ImportResult{}
 
 	// Helper to get key data, re-encrypting if needed
-	getKeyData := func(keyData string) (string, error) {
+	getKeyData := func(remoteHost SyncHost) (string, error) {
+		if strings.TrimSpace(remoteHost.PlainSecret) != "" {
+			return store.EncryptSecret(remoteHost.PlainSecret)
+		}
+		keyData := remoteHost.KeyData
 		if !needsReencrypt || keyData == "" {
 			return keyData, nil
 		}
@@ -86,14 +103,23 @@ func Import(store *db.Store, remote *SyncData, password string) (*ImportResult, 
 
 	for _, remoteHost := range remote.Hosts {
 		localHost, exists := localByID[remoteHost.ID]
+		if strings.TrimSpace(remoteHost.SyncID) != "" {
+			if bySync, ok := localBySyncID[remoteHost.SyncID]; ok {
+				localHost, exists = bySync, true
+			}
+		}
 
 		if !exists {
 			// New host from remote - add it
-			keyData, err := getKeyData(remoteHost.KeyData)
+			keyData, err := getKeyData(remoteHost)
 			if err != nil {
 				return nil, fmt.Errorf("failed to re-encrypt key for host %d: %w", remoteHost.ID, err)
 			}
-			if err := addHostFromSync(store, remoteHost, keyData); err != nil {
+			if _, idCollision := localByID[remoteHost.ID]; idCollision && strings.TrimSpace(remoteHost.SyncID) != "" {
+				if err := addHostFromSyncAutoID(store, remoteHost, keyData); err != nil {
+					return nil, fmt.Errorf("failed to add host %d: %w", remoteHost.ID, err)
+				}
+			} else if err := addHostFromSync(store, remoteHost, keyData); err != nil {
 				return nil, fmt.Errorf("failed to add host %d: %w", remoteHost.ID, err)
 			}
 			result.Added++
@@ -103,7 +129,8 @@ func Import(store *db.Store, remote *SyncData, password string) (*ImportResult, 
 		// Host exists locally - check timestamps for conflict resolution
 		if remoteHost.UpdatedAt.After(localHost.UpdatedAt) {
 			// Remote is newer - update local
-			keyData, err := getKeyData(remoteHost.KeyData)
+			remoteHost.ID = localHost.ID
+			keyData, err := getKeyData(remoteHost)
 			if err != nil {
 				return nil, fmt.Errorf("failed to re-encrypt key for host %d: %w", remoteHost.ID, err)
 			}
@@ -134,7 +161,7 @@ func Import(store *db.Store, remote *SyncData, password string) (*ImportResult, 
 		}
 
 		// Mark as processed
-		delete(localByID, remoteHost.ID)
+		delete(localByID, localHost.ID)
 	}
 
 	// Remaining hosts in localByID exist only locally - they will be pushed on next sync
@@ -157,6 +184,7 @@ func addHostFromSync(store *db.Store, h SyncHost, keyData string) error {
 
 	host := &db.HostModel{
 		ID:            h.ID,
+		SyncID:        h.SyncID,
 		Label:         h.Label,
 		GroupName:     h.GroupName,
 		Tags:          db.NormalizeTags(h.Tags),
@@ -173,6 +201,29 @@ func addHostFromSync(store *db.Store, h SyncHost, keyData string) error {
 	return store.CreateHostWithID(host, keyData)
 }
 
+func addHostFromSyncAutoID(store *db.Store, h SyncHost, keyData string) error {
+	if h.GroupName != "" {
+		if err := store.UpsertGroup(h.GroupName); err != nil {
+			return err
+		}
+	}
+
+	host := &db.HostModel{
+		SyncID:        h.SyncID,
+		Label:         h.Label,
+		GroupName:     h.GroupName,
+		Tags:          db.NormalizeTags(h.Tags),
+		Hostname:      h.Hostname,
+		Username:      h.Username,
+		Port:          h.Port,
+		KeyType:       h.KeyType,
+		CreatedAt:     h.CreatedAt,
+		UpdatedAt:     h.UpdatedAt,
+		LastConnected: h.LastConnected,
+	}
+	return store.CreateHostFromSync(host, keyData)
+}
+
 // updateHostFromSync updates an existing host with sync data.
 func updateHostFromSync(store *db.Store, h SyncHost, keyData string) error {
 	if h.GroupName != "" {
@@ -183,6 +234,7 @@ func updateHostFromSync(store *db.Store, h SyncHost, keyData string) error {
 
 	host := &db.HostModel{
 		ID:            h.ID,
+		SyncID:        h.SyncID,
 		Label:         h.Label,
 		GroupName:     h.GroupName,
 		Tags:          db.NormalizeTags(h.Tags),
@@ -243,17 +295,25 @@ func Merge(local, remote *SyncData) *SyncData {
 		groups = append(groups, g)
 	}
 
-	// Build map of all hosts, preferring the newer version
-	merged := make(map[int]SyncHost)
+	// Build map of all hosts, preferring the newer version. Prefer SyncID when
+	// present so separately-created local integer IDs do not collide.
+	merged := make(map[string]SyncHost)
+	hostKey := func(h SyncHost) string {
+		if strings.TrimSpace(h.SyncID) != "" {
+			return "sync:" + strings.TrimSpace(h.SyncID)
+		}
+		return fmt.Sprintf("id:%d", h.ID)
+	}
 
 	for _, h := range remote.Hosts {
-		merged[h.ID] = h
+		merged[hostKey(h)] = h
 	}
 
 	for _, h := range local.Hosts {
-		existing, exists := merged[h.ID]
+		k := hostKey(h)
+		existing, exists := merged[k]
 		if !exists || h.UpdatedAt.After(existing.UpdatedAt) {
-			merged[h.ID] = h
+			merged[k] = h
 		}
 	}
 

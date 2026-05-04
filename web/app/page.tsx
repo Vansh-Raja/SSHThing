@@ -52,8 +52,8 @@ export default function HomePage() {
                   <Link className="cta cta--primary cta--arrow" href="/teams">
                     Open teams
                   </Link>
-                  <Link className="cta" href="/">
-                    Home
+                  <Link className="cta" href="/personal">
+                    Personal library
                   </Link>
                 </Show>
               </div>

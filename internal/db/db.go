@@ -1,6 +1,7 @@
 package db
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
@@ -23,6 +24,7 @@ type Store struct {
 // HostModel mirrors the Host struct but for DB interactions
 type HostModel struct {
 	ID            int
+	SyncID        string
 	Label         string
 	GroupName     string
 	Tags          []string
@@ -40,6 +42,7 @@ type HostModel struct {
 // Groups are identified by Name (case-insensitive uniqueness in DB).
 // Deleted groups are tombstoned via DeletedAt and may be garbage collected later.
 type GroupModel struct {
+	SyncID    string
 	Name      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -310,6 +313,7 @@ func createSchema(db *sql.DB) error {
 	_, err := db.Exec(`
 	CREATE TABLE IF NOT EXISTS hosts (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		sync_id TEXT,
 		label TEXT,
 		group_name TEXT,
 		tags TEXT,
@@ -347,6 +351,9 @@ func createSchema(db *sql.DB) error {
 	if err := ensureColumn(db, "hosts", "tags", "TEXT"); err != nil {
 		return err
 	}
+	if err := ensureColumn(db, "hosts", "sync_id", "TEXT"); err != nil {
+		return err
+	}
 
 	// If the legacy `notes` column exists, migrate it away entirely by rebuilding
 	// the table without the column and copying values into `label` (when label empty).
@@ -363,6 +370,7 @@ func createSchema(db *sql.DB) error {
 	// Groups table (for organizing hosts)
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS groups (
+			sync_id TEXT,
 			name TEXT PRIMARY KEY COLLATE NOCASE,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -370,6 +378,12 @@ func createSchema(db *sql.DB) error {
 		);
 	`)
 	if err != nil {
+		return err
+	}
+	if err := ensureColumn(db, "groups", "sync_id", "TEXT"); err != nil {
+		return err
+	}
+	if err := ensureSyncIDs(db); err != nil {
 		return err
 	}
 
@@ -417,6 +431,62 @@ func createSchema(db *sql.DB) error {
 	return err
 }
 
+func ensureSyncIDs(db *sql.DB) error {
+	if err := backfillSyncIDs(db, "hosts", "id"); err != nil {
+		return err
+	}
+	if err := backfillSyncIDs(db, "groups", "name"); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_hosts_sync_id ON hosts(sync_id)`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_sync_id ON groups(sync_id)`); err != nil {
+		return err
+	}
+	return nil
+}
+
+func backfillSyncIDs(db *sql.DB, table, keyColumn string) error {
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM %s WHERE sync_id IS NULL OR TRIM(sync_id) = ''`, keyColumn, table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	keys := make([]any, 0)
+	for rows.Next() {
+		var key any
+		if keyColumn == "id" {
+			var id int
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			key = id
+		} else {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				return err
+			}
+			key = name
+		}
+		keys = append(keys, key)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		syncID, err := GenerateSyncID()
+		if err != nil {
+			return err
+		}
+		if _, err := db.Exec(fmt.Sprintf(`UPDATE %s SET sync_id = ? WHERE %s = ?`, table, keyColumn), syncID, key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func hasColumn(db *sql.DB, table, column string) (bool, error) {
 	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
 	if err != nil {
@@ -453,6 +523,7 @@ func migrateHostsDropNotes(db *sql.DB) error {
 	_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS hosts_new (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			sync_id TEXT,
 			label TEXT,
 			group_name TEXT,
 			tags TEXT,
@@ -471,9 +542,10 @@ func migrateHostsDropNotes(db *sql.DB) error {
 	}
 
 	_, err = tx.Exec(`
-		INSERT INTO hosts_new (id, label, group_name, tags, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
+		INSERT INTO hosts_new (id, sync_id, label, group_name, tags, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
 		SELECT
 			id,
+			NULL,
 			CASE WHEN COALESCE(label, '') != '' THEN label ELSE COALESCE(notes, '') END,
 			'',
 			'',
@@ -520,6 +592,18 @@ func ensureColumn(db *sql.DB, table, column, typ string) error {
 
 	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, typ))
 	return err
+}
+
+// GenerateSyncID returns a globally unique ID for cross-device sync records.
+func GenerateSyncID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	// UUID v4 layout without adding an external dependency.
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
 func getSalt(db *sql.DB) ([]byte, error) {
@@ -663,12 +747,19 @@ func (s *Store) CreateHost(h *HostModel, plainKey string) error {
 	if err != nil {
 		return err
 	}
+	syncID := strings.TrimSpace(h.SyncID)
+	if syncID == "" {
+		syncID, err = GenerateSyncID()
+		if err != nil {
+			return err
+		}
+	}
 
 	now := time.Now()
 	_, err = s.db.Exec(`
-		INSERT INTO hosts (label, group_name, tags, hostname, username, port, key_data, key_type, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, h.Label, normalizeGroupName(h.GroupName), tagsValue, h.Hostname, h.Username, h.Port, encryptedKey, h.KeyType, now, now)
+		INSERT INTO hosts (sync_id, label, group_name, tags, hostname, username, port, key_data, key_type, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, syncID, h.Label, normalizeGroupName(h.GroupName), tagsValue, h.Hostname, h.Username, h.Port, encryptedKey, h.KeyType, now, now)
 
 	return err
 }
@@ -684,7 +775,7 @@ func (s *Store) GetHosts() ([]HostModel, error) {
 	var query string
 	if hasUpdatedAt {
 		query = `
-			SELECT id, COALESCE(label, ''), COALESCE(group_name, ''), COALESCE(tags, ''), hostname, username, port,
+			SELECT id, COALESCE(sync_id, ''), COALESCE(label, ''), COALESCE(group_name, ''), COALESCE(tags, ''), hostname, username, port,
 			       COALESCE(key_type, ''), COALESCE(key_data, ''),
 			       created_at, COALESCE(updated_at, created_at), last_connected
 			FROM hosts
@@ -692,7 +783,7 @@ func (s *Store) GetHosts() ([]HostModel, error) {
 		`
 	} else {
 		query = `
-			SELECT id, COALESCE(label, ''), COALESCE(group_name, ''), COALESCE(tags, ''), hostname, username, port,
+			SELECT id, COALESCE(sync_id, ''), COALESCE(label, ''), COALESCE(group_name, ''), COALESCE(tags, ''), hostname, username, port,
 			       COALESCE(key_type, ''), COALESCE(key_data, ''),
 			       created_at, created_at, last_connected
 			FROM hosts
@@ -712,7 +803,7 @@ func (s *Store) GetHosts() ([]HostModel, error) {
 		var tagsRaw string
 		var createdAtStr, updatedAtStr string
 		var lastConnStr sql.NullString
-		if err := rows.Scan(&h.ID, &h.Label, &h.GroupName, &tagsRaw, &h.Hostname, &h.Username, &h.Port, &h.KeyType, &h.KeyData, &createdAtStr, &updatedAtStr, &lastConnStr); err != nil {
+		if err := rows.Scan(&h.ID, &h.SyncID, &h.Label, &h.GroupName, &tagsRaw, &h.Hostname, &h.Username, &h.Port, &h.KeyType, &h.KeyData, &createdAtStr, &updatedAtStr, &lastConnStr); err != nil {
 			return nil, err
 		}
 		h.GroupName = normalizeGroupName(h.GroupName)
@@ -736,7 +827,7 @@ func (s *Store) GetHosts() ([]HostModel, error) {
 // GetHostByID returns one host by stable integer ID.
 func (s *Store) GetHostByID(id int) (*HostModel, error) {
 	rows, err := s.db.Query(`
-		SELECT id, COALESCE(label, ''), COALESCE(group_name, ''), COALESCE(tags, ''), hostname, username, port,
+		SELECT id, COALESCE(sync_id, ''), COALESCE(label, ''), COALESCE(group_name, ''), COALESCE(tags, ''), hostname, username, port,
 		       COALESCE(key_type, ''), COALESCE(key_data, ''),
 		       created_at, COALESCE(updated_at, created_at), last_connected
 		FROM hosts
@@ -755,7 +846,52 @@ func (s *Store) GetHostByID(id int) (*HostModel, error) {
 	var tagsRaw string
 	var createdAtStr, updatedAtStr string
 	var lastConnStr sql.NullString
-	if err := rows.Scan(&h.ID, &h.Label, &h.GroupName, &tagsRaw, &h.Hostname, &h.Username, &h.Port, &h.KeyType, &h.KeyData, &createdAtStr, &updatedAtStr, &lastConnStr); err != nil {
+	if err := rows.Scan(&h.ID, &h.SyncID, &h.Label, &h.GroupName, &tagsRaw, &h.Hostname, &h.Username, &h.Port, &h.KeyType, &h.KeyData, &createdAtStr, &updatedAtStr, &lastConnStr); err != nil {
+		return nil, err
+	}
+	h.GroupName = normalizeGroupName(h.GroupName)
+	h.Tags = DecodeTags(tagsRaw)
+	h.CreatedAt = parseTimestamp(createdAtStr)
+	h.UpdatedAt = parseTimestamp(updatedAtStr)
+	if h.UpdatedAt.IsZero() {
+		h.UpdatedAt = h.CreatedAt
+	}
+	if lastConnStr.Valid && lastConnStr.String != "" {
+		t := parseTimestamp(lastConnStr.String)
+		if !t.IsZero() {
+			h.LastConnected = &t
+		}
+	}
+	return &h, nil
+}
+
+// GetHostBySyncID returns one host by its cross-device sync ID.
+func (s *Store) GetHostBySyncID(syncID string) (*HostModel, error) {
+	syncID = strings.TrimSpace(syncID)
+	if syncID == "" {
+		return nil, sql.ErrNoRows
+	}
+	rows, err := s.db.Query(`
+		SELECT id, COALESCE(sync_id, ''), COALESCE(label, ''), COALESCE(group_name, ''), COALESCE(tags, ''), hostname, username, port,
+		       COALESCE(key_type, ''), COALESCE(key_data, ''),
+		       created_at, COALESCE(updated_at, created_at), last_connected
+		FROM hosts
+		WHERE sync_id = ?
+		LIMIT 1
+	`, syncID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, sql.ErrNoRows
+	}
+
+	var h HostModel
+	var tagsRaw string
+	var createdAtStr, updatedAtStr string
+	var lastConnStr sql.NullString
+	if err := rows.Scan(&h.ID, &h.SyncID, &h.Label, &h.GroupName, &tagsRaw, &h.Hostname, &h.Username, &h.Port, &h.KeyType, &h.KeyData, &createdAtStr, &updatedAtStr, &lastConnStr); err != nil {
 		return nil, err
 	}
 	h.GroupName = normalizeGroupName(h.GroupName)
@@ -816,6 +952,13 @@ func (s *Store) GetHostSecret(id int) (string, error) {
 		return "", err
 	}
 	return string(decrypted), nil
+}
+
+func (s *Store) EncryptSecret(plain string) (string, error) {
+	if plain == "" {
+		return "", nil
+	}
+	return crypto.Encrypt([]byte(plain), s.masterKey)
 }
 
 // GetHostKey retrieves the decrypted private key for a host.
@@ -953,10 +1096,38 @@ func (s *Store) CreateHostWithID(h *HostModel, encryptedKeyData string) error {
 	if err != nil {
 		return err
 	}
+	syncID := strings.TrimSpace(h.SyncID)
+	if syncID == "" {
+		syncID, err = GenerateSyncID()
+		if err != nil {
+			return err
+		}
+	}
 	_, err = s.db.Exec(`
-		INSERT INTO hosts (id, label, group_name, tags, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
+		INSERT INTO hosts (id, sync_id, label, group_name, tags, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, h.ID, syncID, h.Label, normalizeGroupName(h.GroupName), tagsValue, h.Hostname, h.Username, h.Port, encryptedKeyData, h.KeyType, h.CreatedAt, h.UpdatedAt, h.LastConnected)
+	return err
+}
+
+// CreateHostFromSync creates a synced host with an auto-assigned local ID.
+// The keyData should already be encrypted for this database.
+func (s *Store) CreateHostFromSync(h *HostModel, encryptedKeyData string) error {
+	tagsValue, err := EncodeTags(h.Tags)
+	if err != nil {
+		return err
+	}
+	syncID := strings.TrimSpace(h.SyncID)
+	if syncID == "" {
+		syncID, err = GenerateSyncID()
+		if err != nil {
+			return err
+		}
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO hosts (sync_id, label, group_name, tags, hostname, username, port, key_data, key_type, created_at, updated_at, last_connected)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, h.ID, h.Label, normalizeGroupName(h.GroupName), tagsValue, h.Hostname, h.Username, h.Port, encryptedKeyData, h.KeyType, h.CreatedAt, h.UpdatedAt, h.LastConnected)
+	`, syncID, h.Label, normalizeGroupName(h.GroupName), tagsValue, h.Hostname, h.Username, h.Port, encryptedKeyData, h.KeyType, h.CreatedAt, h.UpdatedAt, h.LastConnected)
 	return err
 }
 
@@ -967,10 +1138,17 @@ func (s *Store) UpdateHostFromSync(h *HostModel, encryptedKeyData string, update
 	if err != nil {
 		return err
 	}
+	syncID := strings.TrimSpace(h.SyncID)
+	if syncID == "" {
+		syncID, err = GenerateSyncID()
+		if err != nil {
+			return err
+		}
+	}
 	_, err = s.db.Exec(`
-		UPDATE hosts SET label=?, group_name=?, tags=?, hostname=?, username=?, port=?, key_type=?, key_data=?, updated_at=?, last_connected=?
+		UPDATE hosts SET sync_id=?, label=?, group_name=?, tags=?, hostname=?, username=?, port=?, key_type=?, key_data=?, updated_at=?, last_connected=?
 		WHERE id=?
-	`, h.Label, normalizeGroupName(h.GroupName), tagsValue, h.Hostname, h.Username, h.Port, h.KeyType, encryptedKeyData, updatedAt, h.LastConnected, h.ID)
+	`, syncID, h.Label, normalizeGroupName(h.GroupName), tagsValue, h.Hostname, h.Username, h.Port, h.KeyType, encryptedKeyData, updatedAt, h.LastConnected, h.ID)
 	return err
 }
 
@@ -1052,7 +1230,8 @@ func (s *Store) GetGroups() ([]string, error) {
 func (s *Store) GetGroupsForSync(retention time.Duration) ([]GroupModel, error) {
 	cutoff := time.Now().Add(-retention)
 	rows, err := s.db.Query(`
-		SELECT name,
+		SELECT COALESCE(sync_id, ''),
+		       name,
 		       created_at,
 		       COALESCE(updated_at, created_at),
 		       deleted_at
@@ -1070,7 +1249,7 @@ func (s *Store) GetGroupsForSync(retention time.Duration) ([]GroupModel, error) 
 		var gm GroupModel
 		var createdStr, updatedStr string
 		var deletedStr sql.NullString
-		if err := rows.Scan(&gm.Name, &createdStr, &updatedStr, &deletedStr); err != nil {
+		if err := rows.Scan(&gm.SyncID, &gm.Name, &createdStr, &updatedStr, &deletedStr); err != nil {
 			return nil, err
 		}
 		gm.Name = normalizeGroupName(gm.Name)
@@ -1100,13 +1279,17 @@ func (s *Store) UpsertGroup(name string) error {
 		return nil
 	}
 	now := time.Now()
-	_, err := s.db.Exec(`
-		INSERT INTO groups (name, created_at, updated_at, deleted_at)
-		VALUES (?, ?, ?, NULL)
+	syncID, err := GenerateSyncID()
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO groups (sync_id, name, created_at, updated_at, deleted_at)
+		VALUES (?, ?, ?, ?, NULL)
 		ON CONFLICT(name) DO UPDATE SET
 			updated_at=excluded.updated_at,
 			deleted_at=NULL
-	`, name, now, now)
+	`, syncID, name, now, now)
 	return err
 }
 
@@ -1130,14 +1313,18 @@ func (s *Store) RenameGroup(oldName, newName string) error {
 	defer func() { _ = tx.Rollback() }()
 
 	now := time.Now()
+	newSyncID, err := GenerateSyncID()
+	if err != nil {
+		return err
+	}
 	// Ensure new group exists and is active.
 	if _, err := tx.Exec(`
-		INSERT INTO groups (name, created_at, updated_at, deleted_at)
-		VALUES (?, ?, ?, NULL)
+		INSERT INTO groups (sync_id, name, created_at, updated_at, deleted_at)
+		VALUES (?, ?, ?, ?, NULL)
 		ON CONFLICT(name) DO UPDATE SET
 			updated_at=excluded.updated_at,
 			deleted_at=NULL
-	`, newName, now, now); err != nil {
+	`, newSyncID, newName, now, now); err != nil {
 		return err
 	}
 
@@ -1150,14 +1337,18 @@ func (s *Store) RenameGroup(oldName, newName string) error {
 		return err
 	}
 
+	oldSyncID, err := GenerateSyncID()
+	if err != nil {
+		return err
+	}
 	// Tombstone old group.
 	if _, err := tx.Exec(`
-		INSERT INTO groups (name, created_at, updated_at, deleted_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO groups (sync_id, name, created_at, updated_at, deleted_at)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(name) DO UPDATE SET
 			updated_at=excluded.updated_at,
 			deleted_at=excluded.deleted_at
-	`, oldName, now, now, now); err != nil {
+	`, oldSyncID, oldName, now, now, now); err != nil {
 		return err
 	}
 
@@ -1186,13 +1377,17 @@ func (s *Store) DeleteGroup(name string) error {
 		return err
 	}
 
+	syncID, err := GenerateSyncID()
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`
-		INSERT INTO groups (name, created_at, updated_at, deleted_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO groups (sync_id, name, created_at, updated_at, deleted_at)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(name) DO UPDATE SET
 			updated_at=excluded.updated_at,
 			deleted_at=excluded.deleted_at
-	`, name, now, now, now); err != nil {
+	`, syncID, name, now, now, now); err != nil {
 		return err
 	}
 
@@ -1211,10 +1406,18 @@ func (s *Store) PurgeDeletedGroups(olderThan time.Duration) error {
 
 // UpsertGroupFromSync applies group state from a sync payload, preserving timestamps.
 // If deletedAt is non-nil, hosts assigned to the group are ungrouped (hosts updated_at is set to now).
-func (s *Store) UpsertGroupFromSync(name string, createdAt, updatedAt time.Time, deletedAt *time.Time) error {
+func (s *Store) UpsertGroupFromSync(syncID, name string, createdAt, updatedAt time.Time, deletedAt *time.Time) error {
 	name = normalizeGroupName(name)
 	if name == "" {
 		return nil
+	}
+	syncID = strings.TrimSpace(syncID)
+	if syncID == "" {
+		var err error
+		syncID, err = GenerateSyncID()
+		if err != nil {
+			return err
+		}
 	}
 
 	tx, err := s.db.Begin()
@@ -1224,12 +1427,13 @@ func (s *Store) UpsertGroupFromSync(name string, createdAt, updatedAt time.Time,
 	defer func() { _ = tx.Rollback() }()
 
 	_, err = tx.Exec(`
-		INSERT INTO groups (name, created_at, updated_at, deleted_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO groups (sync_id, name, created_at, updated_at, deleted_at)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(name) DO UPDATE SET
+			sync_id=CASE WHEN TRIM(COALESCE(groups.sync_id, '')) = '' THEN excluded.sync_id ELSE groups.sync_id END,
 			updated_at=excluded.updated_at,
 			deleted_at=excluded.deleted_at
-	`, name, createdAt, updatedAt, deletedAt)
+	`, syncID, name, createdAt, updatedAt, deletedAt)
 	if err != nil {
 		return err
 	}

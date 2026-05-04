@@ -38,6 +38,7 @@ func Export(store *db.Store) (*SyncData, error) {
 	for _, g := range groups {
 		seenGroups[strings.ToLower(strings.TrimSpace(g.Name))] = true
 		syncGroups = append(syncGroups, SyncGroup{
+			SyncID:    g.SyncID,
 			Name:      g.Name,
 			CreatedAt: g.CreatedAt,
 			UpdatedAt: g.UpdatedAt,
@@ -51,12 +52,13 @@ func Export(store *db.Store) (*SyncData, error) {
 			k := strings.ToLower(gn)
 			if !seenGroups[k] {
 				now := time.Now()
-				syncGroups = append(syncGroups, SyncGroup{Name: gn, CreatedAt: now, UpdatedAt: now})
+				syncGroups = append(syncGroups, SyncGroup{SyncID: "", Name: gn, CreatedAt: now, UpdatedAt: now})
 				seenGroups[k] = true
 			}
 		}
 		syncHosts[i] = SyncHost{
 			ID:            h.ID,
+			SyncID:        h.SyncID,
 			Label:         h.Label,
 			GroupName:     h.GroupName,
 			Tags:          append([]string(nil), h.Tags...),

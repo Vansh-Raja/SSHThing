@@ -112,6 +112,9 @@ func TestDatabaseOperations(t *testing.T) {
 		if hosts[0].KeyData != "" {
 			t.Fatalf("Expected empty key_data for password auth, got: %q", hosts[0].KeyData)
 		}
+		if hosts[0].SyncID == "" {
+			t.Fatalf("Expected generated sync_id for host")
+		}
 
 		fmt.Printf("✓ GetHosts works: %+v\n", hosts[0])
 	})
@@ -127,6 +130,13 @@ func TestDatabaseOperations(t *testing.T) {
 		// Create group
 		if err := store.UpsertGroup("Work"); err != nil {
 			t.Fatalf("UpsertGroup failed: %v", err)
+		}
+		groupsForSync, err := store.GetGroupsForSync(24 * time.Hour)
+		if err != nil {
+			t.Fatalf("GetGroupsForSync failed: %v", err)
+		}
+		if len(groupsForSync) == 0 || groupsForSync[0].SyncID == "" {
+			t.Fatalf("Expected generated sync_id for group")
 		}
 
 		// Add a host in that group

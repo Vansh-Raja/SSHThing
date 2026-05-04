@@ -55,6 +55,23 @@ const (
 	SyncAuthNone   SyncAuthMethod = "none"
 )
 
+type SyncProvider string
+
+const (
+	SyncProviderOff    SyncProvider = "off"
+	SyncProviderGit    SyncProvider = "git"
+	SyncProviderConvex SyncProvider = "convex"
+)
+
+type SyncScope struct {
+	Hosts            bool `json:"hosts"`
+	Groups           bool `json:"groups"`
+	Credentials      bool `json:"credentials"`
+	TokenDefinitions bool `json:"token_definitions"`
+	Health           bool `json:"health"`
+	MountState       bool `json:"mount_state"`
+}
+
 type Config struct {
 	Version int `json:"version"`
 
@@ -92,12 +109,15 @@ type Config struct {
 	} `json:"mount"`
 
 	Sync struct {
-		Enabled    bool           `json:"enabled"`
-		RepoURL    string         `json:"repo_url"`
-		AuthMethod SyncAuthMethod `json:"auth_method"`
-		SSHKeyPath string         `json:"ssh_key_path"`
-		Branch     string         `json:"branch"`
-		LocalPath  string         `json:"local_path"`
+		Enabled       bool           `json:"enabled"`
+		Provider      SyncProvider   `json:"provider,omitempty"`
+		RepoURL       string         `json:"repo_url"`
+		AuthMethod    SyncAuthMethod `json:"auth_method"`
+		SSHKeyPath    string         `json:"ssh_key_path"`
+		Branch        string         `json:"branch"`
+		LocalPath     string         `json:"local_path"`
+		ConvexVaultID string         `json:"convex_vault_id,omitempty"`
+		Scope         SyncScope      `json:"scope"`
 	} `json:"sync"`
 
 	Updates struct {
@@ -127,7 +147,7 @@ type Config struct {
 
 func Default() Config {
 	var c Config
-	c.Version = 8
+	c.Version = 9
 	c.UI.VimMode = true
 	c.UI.ShowIcons = true
 	c.UI.WrapLabels = false
@@ -151,11 +171,18 @@ func Default() Config {
 	c.Mount.QuitBehavior = MountQuitPrompt
 
 	c.Sync.Enabled = false
+	c.Sync.Provider = SyncProviderOff
 	c.Sync.RepoURL = ""
 	c.Sync.AuthMethod = SyncAuthSSHKey
 	c.Sync.SSHKeyPath = ""
 	c.Sync.Branch = "main"
 	c.Sync.LocalPath = "" // empty means default path
+	c.Sync.Scope.Hosts = true
+	c.Sync.Scope.Groups = true
+	c.Sync.Scope.Credentials = true
+	c.Sync.Scope.TokenDefinitions = true
+	c.Sync.Scope.Health = false
+	c.Sync.Scope.MountState = false
 
 	c.Automation.SyncTokenDefinitions = false
 	c.Automation.SessionTTLSeconds = 900
@@ -286,6 +313,16 @@ func withDefaults(c Config) Config {
 		}
 		c.Version = 8
 	}
+	if c.Version < 9 {
+		if c.Sync.Enabled {
+			c.Sync.Provider = SyncProviderGit
+		} else {
+			c.Sync.Provider = SyncProviderOff
+		}
+		c.Sync.Scope = def.Sync.Scope
+		c.Sync.Scope.TokenDefinitions = c.Automation.SyncTokenDefinitions
+		c.Version = 9
+	}
 
 	// Enums / ints: normalize invalid values.
 	switch c.SSH.HostKeyPolicy {
@@ -314,6 +351,28 @@ func withDefaults(c Config) Config {
 	}
 
 	// Sync defaults
+	switch strings.ToLower(strings.TrimSpace(string(c.Sync.Provider))) {
+	case "", string(SyncProviderOff):
+		if c.Sync.Enabled && c.Version >= 9 {
+			c.Sync.Provider = SyncProviderGit
+		} else {
+			c.Sync.Provider = SyncProviderOff
+		}
+	case string(SyncProviderGit):
+		c.Sync.Provider = SyncProviderGit
+	case string(SyncProviderConvex):
+		c.Sync.Provider = SyncProviderConvex
+	default:
+		c.Sync.Provider = def.Sync.Provider
+	}
+	c.Sync.Enabled = c.Sync.Provider != SyncProviderOff
+	if c.Sync.Provider != SyncProviderOff && !c.Sync.Scope.Hosts && !c.Sync.Scope.Groups && !c.Sync.Scope.Credentials && !c.Sync.Scope.TokenDefinitions && !c.Sync.Scope.Health && !c.Sync.Scope.MountState {
+		c.Sync.Scope = def.Sync.Scope
+	}
+	if !c.Sync.Scope.Hosts {
+		c.Sync.Scope.Credentials = false
+	}
+	c.Automation.SyncTokenDefinitions = c.Sync.Scope.TokenDefinitions
 	switch c.Sync.AuthMethod {
 	case SyncAuthSSHKey, SyncAuthNone:
 	default:

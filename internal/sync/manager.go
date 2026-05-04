@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ type Manager struct {
 	cfg        *config.Config
 	store      *db.Store
 	git        *GitManager
+	provider   Provider
 	password   string // Master password for re-encrypting keys during import
 	lastSync   time.Time
 	lastResult *SyncResult
@@ -25,8 +27,18 @@ type Manager struct {
 	stage      string
 }
 
+type ManagerOptions struct {
+	CloudClient         PersonalCloudClient
+	AccessTokenProvider func(context.Context) (string, error)
+	DeviceID            string
+}
+
 // NewManager creates a new sync manager
 func NewManager(cfg *config.Config, store *db.Store, password string) (*Manager, error) {
+	return NewManagerWithOptions(cfg, store, password, ManagerOptions{})
+}
+
+func NewManagerWithOptions(cfg *config.Config, store *db.Store, password string, opts ManagerOptions) (*Manager, error) {
 	if !cfg.Sync.Enabled {
 		return &Manager{
 			cfg:      cfg,
@@ -37,22 +49,38 @@ func NewManager(cfg *config.Config, store *db.Store, password string) (*Manager,
 		}, nil
 	}
 
-	syncPath, err := cfg.SyncPath()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get sync path: %w", err)
+	var git *GitManager
+	var provider Provider
+	switch cfg.Sync.Provider {
+	case config.SyncProviderConvex:
+		provider = NewConvexProvider(opts.CloudClient, opts.AccessTokenProvider, opts.DeviceID)
+	case config.SyncProviderGit:
+		syncPath, err := cfg.SyncPath()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get sync path: %w", err)
+		}
+		git = NewGitManager(
+			syncPath,
+			cfg.Sync.RepoURL,
+			cfg.Sync.Branch,
+			cfg.Sync.SSHKeyPath,
+		)
+		provider = NewGitProvider(git)
+	default:
+		return &Manager{
+			cfg:      cfg,
+			store:    store,
+			password: password,
+			status:   SyncStatusDisabled,
+			stage:    "",
+		}, nil
 	}
-
-	git := NewGitManager(
-		syncPath,
-		cfg.Sync.RepoURL,
-		cfg.Sync.Branch,
-		cfg.Sync.SSHKeyPath,
-	)
 
 	return &Manager{
 		cfg:      cfg,
 		store:    store,
 		git:      git,
+		provider: provider,
 		password: password,
 		status:   SyncStatusIdle,
 		stage:    "",
@@ -65,11 +93,11 @@ func (m *Manager) Init() error {
 		return nil
 	}
 
-	if m.git == nil {
-		return fmt.Errorf("git manager not initialized")
+	if m.provider == nil {
+		return fmt.Errorf("sync provider not initialized")
 	}
 
-	return m.git.Init()
+	return m.provider.Init(context.Background())
 }
 
 // Sync performs a full sync operation: pull -> import -> export -> commit -> push
@@ -85,7 +113,9 @@ func (m *Manager) Sync() *SyncResult {
 	m.setSyncState(SyncStatusSyncing, "initializing", nil, false)
 	result := &SyncResult{Timestamp: time.Now()}
 
-	// Step 1: Initialize repository if needed
+	ctx := context.Background()
+
+	// Step 1: Initialize provider if needed
 	m.setStage("initializing")
 	if err := m.Init(); err != nil {
 		result.Error = err
@@ -95,22 +125,11 @@ func (m *Manager) Sync() *SyncResult {
 	}
 
 	// Step 2: Pull remote changes
-	if m.git.HasRemote() {
-		m.setStage("pulling")
-		if err := m.git.Pull(); err != nil {
-			result.Error = err
-			result.Message = fmt.Sprintf("Pull failed: %v", err)
-			m.setSyncState(SyncStatusError, "", result, false)
-			return result
-		}
-	}
-
-	// Step 3: Load remote data and import
-	m.setStage("loading")
-	remoteData, err := LoadFromFile(m.git.GetSyncFilePath(), m.password)
+	m.setStage("pulling")
+	remoteData, remoteState, err := m.provider.Pull(ctx, m.password)
 	if err != nil {
 		result.Error = err
-		result.Message = fmt.Sprintf("Load failed: %v", err)
+		result.Message = fmt.Sprintf("Pull failed: %v", err)
 		m.setSyncState(SyncStatusError, "", result, false)
 		return result
 	}
@@ -129,7 +148,7 @@ func (m *Manager) Sync() *SyncResult {
 		result.HostsPulled = importResult.Added + importResult.Updated
 		result.Conflicts = importResult.Conflicts
 
-		if m.cfg.Automation.SyncTokenDefinitions {
+		if m.cfg.Sync.Scope.TokenDefinitions {
 			vault, err := authtoken.LoadVault()
 			if err == nil && vault != nil {
 				if vault.MergeSyncDefinitions(remoteData.TokenDefs) {
@@ -153,7 +172,7 @@ func (m *Manager) Sync() *SyncResult {
 		return result
 	}
 	result.HostsPushed = computeHostsPushed(localData, remoteData)
-	if m.cfg.Automation.SyncTokenDefinitions {
+	if m.cfg.Sync.Scope.TokenDefinitions {
 		vault, err := authtoken.LoadVault()
 		if err == nil && vault != nil {
 			if hosts, herr := m.store.GetHosts(); herr == nil {
@@ -172,32 +191,13 @@ func (m *Manager) Sync() *SyncResult {
 			localData.TokenDefs = vault.ExportSyncDefinitions()
 		}
 	}
-	if err := ExportDataToFile(localData, m.git.GetSyncFilePath(), m.password); err != nil {
+	applyScope(localData, m.cfg.Sync.Scope)
+	m.setStage("pushing")
+	if err := m.provider.Push(ctx, localData, m.password, remoteState); err != nil {
 		result.Error = err
-		result.Message = fmt.Sprintf("Export failed: %v", err)
+		result.Message = fmt.Sprintf("Push failed: %v", err)
 		m.setSyncState(SyncStatusError, "", result, false)
 		return result
-	}
-
-	// Step 5: Commit changes
-	m.setStage("committing")
-	commitMsg := fmt.Sprintf("Sync: %s", time.Now().Format(time.RFC3339))
-	if err := m.git.CommitChanges(commitMsg); err != nil {
-		result.Error = err
-		result.Message = fmt.Sprintf("Commit failed: %v", err)
-		m.setSyncState(SyncStatusError, "", result, false)
-		return result
-	}
-
-	// Step 6: Push to remote
-	if m.git.HasRemote() {
-		m.setStage("pushing")
-		if err := m.git.Push(); err != nil {
-			result.Error = err
-			result.Message = fmt.Sprintf("Push failed: %v", err)
-			m.setSyncState(SyncStatusError, "", result, false)
-			return result
-		}
 	}
 
 	// Success
@@ -338,4 +338,23 @@ func computeHostsPushed(local, remote *SyncData) int {
 		}
 	}
 	return pushed
+}
+
+func applyScope(data *SyncData, scope config.SyncScope) {
+	if data == nil {
+		return
+	}
+	if !scope.Groups {
+		data.Groups = nil
+	}
+	if !scope.Hosts {
+		data.Hosts = nil
+	} else if !scope.Credentials {
+		for i := range data.Hosts {
+			data.Hosts[i].KeyData = ""
+		}
+	}
+	if !scope.TokenDefinitions {
+		data.TokenDefs = nil
+	}
 }

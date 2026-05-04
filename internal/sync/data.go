@@ -37,6 +37,7 @@ type SyncFile struct {
 // SyncGroup represents a named group entry in the sync file.
 // Deleted groups are tombstoned via DeletedAt.
 type SyncGroup struct {
+	SyncID    string     `json:"sync_id,omitempty"`
 	Name      string     `json:"name"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
@@ -47,13 +48,15 @@ type SyncGroup struct {
 // This mirrors db.HostModel but is designed for JSON serialization.
 type SyncHost struct {
 	ID            int        `json:"id"`
+	SyncID        string     `json:"sync_id,omitempty"`
 	Label         string     `json:"label"`
 	GroupName     string     `json:"group_name,omitempty"`
 	Tags          []string   `json:"tags,omitempty"`
 	Hostname      string     `json:"hostname"`
 	Username      string     `json:"username"`
 	Port          int        `json:"port"`
-	KeyData       string     `json:"key_data"` // Encrypted blob (stays encrypted)
+	KeyData       string     `json:"key_data"`         // Encrypted blob (stays encrypted)
+	PlainSecret   string     `json:"secret,omitempty"` // Browser E2EE edit path; encrypted into local DB during import.
 	KeyType       string     `json:"key_type"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
@@ -95,7 +98,7 @@ type SyncConflict struct {
 }
 
 // CurrentSyncVersion is the version of the sync data format
-const CurrentSyncVersion = 4
+const CurrentSyncVersion = 5
 
 // GroupTombstoneRetention is how long we retain deleted group tombstones for sync.
 // After this window, tombstones may be garbage collected, and very stale devices may resurrect old groups.
