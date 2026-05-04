@@ -15,12 +15,14 @@ type ProfileViewParams struct {
 	AppModeLabel     string
 	Err              error
 	Page             int
+	CommandLine      *CommandLineView
 }
 
 func (r *Renderer) RenderProfileView(p ProfileViewParams) string {
 	cw := r.PageContentWidth()
 	pad := r.LeftPad()
-	bodyH := r.H - 8
+	footerH := r.FooterBlockHeight(p.CommandLine)
+	bodyH := r.H - 7 - footerH
 	if bodyH < 6 {
 		bodyH = 6
 	}
@@ -71,21 +73,9 @@ func (r *Renderer) RenderProfileView(p ProfileViewParams) string {
 		lines = append(lines, r.renderErrLine(p.Err))
 	}
 
-	footer := "enter sign in  shift+tab cycle  q home"
-	switch {
-	case p.SigningIn:
-		footer = "o open browser  c cancel  T teams mode  shift+tab cycle  q home"
-	case p.SignedIn && p.ShowOpenTeamsCTA:
-		footer = "T teams mode  s sign out  shift+tab cycle  q home"
-	case p.SignedIn:
-		footer = "T teams mode  s sign out  shift+tab cycle  q home"
-	default:
-		footer = "enter sign in  T teams mode  shift+tab cycle  q home"
-	}
-
 	lines = append(lines, "")
 	lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Surface0).Render(strings.Repeat(r.Icons.Rule, min(cw, 40))))
-	lines = append(lines, r.RenderFooter(footer))
+	lines = append(lines, r.RenderFooterBlock(r.MainFooterText(), p.CommandLine))
 
 	inner := strings.Join(lines, "\n")
 	if r.ShowSidebar() {

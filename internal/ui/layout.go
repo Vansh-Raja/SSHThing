@@ -129,6 +129,221 @@ func (r *Renderer) RenderFooter(text string) string {
 	return lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(text)
 }
 
+func (r *Renderer) RenderMainFooter() string {
+	return r.RenderFooter(r.MainFooterText())
+}
+
+func (r *Renderer) MainFooterText() string {
+	if r.W < 72 {
+		return "\u2191\u2193 \u00B7 enter \u00B7 / \u00B7 : \u00B7 q"
+	}
+	return "\u2191\u2193 nav \u00B7 enter select \u00B7 / search \u00B7 : commands \u00B7 q quit"
+}
+
+type CommandLineItem struct {
+	Name           string
+	Description    string
+	Disabled       bool
+	DisabledReason string
+	Danger         bool
+}
+
+type CommandLineView struct {
+	Query  string
+	Cursor int
+	Items  []CommandLineItem
+}
+
+func (r *Renderer) RenderCommandLine(p CommandLineView) string {
+	return r.RenderCommandLineWithHeight(p, r.CommandLineHeight(&p))
+}
+
+func (r *Renderer) FooterBlockHeight(commandLine *CommandLineView) int {
+	if commandLine == nil {
+		return 1
+	}
+	return r.CommandLineHeight(commandLine)
+}
+
+func (r *Renderer) CommandLineHeight(p *CommandLineView) int {
+	if p == nil {
+		return 1
+	}
+	switch {
+	case r.H < 12:
+		return 1
+	case r.H < 18 || r.W < 72:
+		return 2
+	case r.H >= 34:
+		return 7
+	case r.H >= 26:
+		return 6
+	default:
+		return 5
+	}
+}
+
+func (r *Renderer) RenderFooterBlock(footerText string, commandLine *CommandLineView) string {
+	if commandLine != nil {
+		return r.RenderCommandLineWithHeight(*commandLine, r.CommandLineHeight(commandLine))
+	}
+	return r.RenderFooter(footerText)
+}
+
+func (r *Renderer) RenderCommandLineWithHeight(p CommandLineView, height int) string {
+	if height <= 1 {
+		return r.renderCommandPromptLine(p, true)
+	}
+	if height == 2 {
+		return r.renderCommandSuggestionStrip(p) + "\n" + r.renderCommandPromptLine(p, false)
+	}
+
+	maxItems := height - 2
+	items, offset := visibleCommandLineItems(p.Items, p.Cursor, maxItems)
+
+	var lines []string
+	nameW := 13
+	for i, item := range items {
+		sel := offset+i == p.Cursor
+		prefix := "  "
+		nameStyle := lipgloss.NewStyle().Foreground(r.Theme.Subtext)
+		descStyle := lipgloss.NewStyle().Foreground(r.Theme.Overlay)
+		if item.Danger {
+			nameStyle = nameStyle.Foreground(r.Theme.Red)
+		}
+		if item.Disabled {
+			nameStyle = nameStyle.Foreground(r.Theme.Overlay)
+			descStyle = descStyle.Foreground(r.Theme.Surface0)
+		}
+		if sel {
+			prefix = lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(r.Icons.Selected + " ")
+			nameStyle = nameStyle.Foreground(r.Theme.Accent).Bold(true)
+			if item.Danger {
+				nameStyle = nameStyle.Foreground(r.Theme.Red).Bold(true)
+			}
+			descStyle = descStyle.Foreground(r.Theme.Subtext)
+		}
+		desc := item.Description
+		if item.Disabled && strings.TrimSpace(item.DisabledReason) != "" {
+			desc = "disabled: " + item.DisabledReason
+		}
+		lines = append(lines, prefix+nameStyle.Width(nameW).Render(":"+r.TruncStr(item.Name, nameW-2))+" "+descStyle.Render(r.TruncStr(desc, max(8, r.PageContentWidth()-nameW-4))))
+	}
+	if len(lines) == 0 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("  no commands"))
+	}
+
+	for len(lines) < height-2 {
+		lines = append(lines, "")
+	}
+	if len(lines) > height-2 {
+		lines = lines[:height-2]
+	}
+
+	lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Surface0).Render(strings.Repeat(r.Icons.Rule, min(r.PageContentWidth(), 40))))
+	lines = append(lines, r.renderCommandPromptLine(p, false))
+	return strings.Join(lines, "\n")
+}
+
+func (r *Renderer) renderCommandPromptLine(p CommandLineView, compact bool) string {
+	cursor := ""
+	if r.Tick%2 == 0 {
+		cursor = lipgloss.NewStyle().Foreground(r.Theme.Accent).Render(r.Icons.Cursor)
+	} else {
+		cursor = lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(r.Icons.Cursor)
+	}
+	input := lipgloss.NewStyle().Foreground(r.Theme.Accent).Bold(true).Render(":") +
+		lipgloss.NewStyle().Foreground(r.Theme.Text).Render(p.Query) + cursor
+	if compact {
+		hint := ""
+		if item, ok := r.commandLineSelectedItem(p); ok {
+			desc := item.Description
+			if item.Disabled && strings.TrimSpace(item.DisabledReason) != "" {
+				desc = "disabled: " + item.DisabledReason
+			}
+			if strings.TrimSpace(desc) != "" {
+				hint = "  " + lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("→ "+r.TruncStr(desc, max(8, r.PageContentWidth()-lipgloss.Width(p.Query)-8)))
+			}
+		}
+		return input + hint
+	}
+	return input + "  " + lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("enter run · tab complete · esc cancel")
+}
+
+func (r *Renderer) renderCommandSuggestionStrip(p CommandLineView) string {
+	items := p.Items
+	if len(items) == 0 {
+		return lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("no commands")
+	}
+
+	var parts []string
+	availableW := r.PageContentWidth()
+	window, offset := visibleCommandLineItems(items, p.Cursor, 4)
+	for i, item := range window {
+		style := lipgloss.NewStyle().Foreground(r.Theme.Subtext)
+		if item.Danger {
+			style = style.Foreground(r.Theme.Red)
+		}
+		if item.Disabled {
+			style = style.Foreground(r.Theme.Overlay)
+		}
+		sel := offset+i == p.Cursor
+		if sel {
+			style = style.Foreground(r.Theme.Accent).Bold(true)
+			if item.Danger {
+				style = style.Foreground(r.Theme.Red).Bold(true)
+			}
+		}
+		part := style.Render(":" + item.Name)
+		if sel && strings.TrimSpace(item.Description) != "" {
+			part += lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render(" " + r.TruncStr(item.Description, 22))
+		}
+		next := strings.Join(append(parts, part), "  ·  ")
+		if lipgloss.Width(next) > availableW {
+			if sel && len(parts) == 0 {
+				parts = append(parts, r.TruncStr(":"+item.Name+" "+item.Description, availableW))
+			}
+			break
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		item, _ := r.commandLineSelectedItem(p)
+		return r.TruncStr(":"+item.Name, availableW)
+	}
+	return strings.Join(parts, "  ·  ")
+}
+
+func visibleCommandLineItems(items []CommandLineItem, cursor int, limit int) ([]CommandLineItem, int) {
+	if limit <= 0 || len(items) == 0 {
+		return nil, 0
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor >= len(items) {
+		cursor = len(items) - 1
+	}
+	if len(items) <= limit {
+		return items, 0
+	}
+	start := cursor - limit + 1
+	if start < 0 {
+		start = 0
+	}
+	if start+limit > len(items) {
+		start = len(items) - limit
+	}
+	return items[start : start+limit], start
+}
+
+func (r *Renderer) commandLineSelectedItem(p CommandLineView) (CommandLineItem, bool) {
+	if p.Cursor < 0 || p.Cursor >= len(p.Items) {
+		return CommandLineItem{}, false
+	}
+	return p.Items[p.Cursor], true
+}
+
 // RenderSidebarItem renders a single sidebar icon with active/inactive state.
 func (r *Renderer) RenderSidebarItem(icon string, active bool) string {
 	dotStyle := lipgloss.NewStyle().Foreground(r.Theme.Surface0)

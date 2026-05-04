@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,6 +54,12 @@ func (m Model) handleOverlayKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // ── Page key dispatch ─────────────────────────────────────────────────
 
 func (m Model) handlePageKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.commandModeActive() {
+		return m.handleCommandLineKeys(msg)
+	}
+	if msg.String() == ":" && m.commandLineAllowed() {
+		return m.openCommandLine()
+	}
 	switch m.page {
 	case PageHome:
 		return m.handleHomeKeys(msg)
@@ -66,6 +73,16 @@ func (m Model) handlePageKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleTeamsKeys(msg)
 	}
 	return m, nil
+}
+
+func (m Model) commandLineAllowed() bool {
+	if m.page == PageSettings {
+		return !m.settingsSearching && !m.settingsEditing
+	}
+	if m.page == PageTokens {
+		return m.tokenMode == tokenModeList && !m.tokenRevealOpen
+	}
+	return true
 }
 
 // ── Login overlay ─────────────────────────────────────────────────────
@@ -92,7 +109,7 @@ func (m Model) handleLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.restoreMountsFromDB()
 
 		if m.store != nil {
-			syncMgr, err := syncpkg.NewManager(&m.cfg, m.store, password)
+			syncMgr, err := syncpkg.NewManagerWithOptions(&m.cfg, m.store, password, m.syncManagerOptions())
 			if err == nil {
 				m.syncManager = syncMgr
 			}
@@ -166,7 +183,7 @@ func (m Model) handleSetupKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.restoreMountsFromDB()
 
 			if m.store != nil {
-				syncMgr, err := syncpkg.NewManager(&m.cfg, m.store, password)
+				syncMgr, err := syncpkg.NewManagerWithOptions(&m.cfg, m.store, password, m.syncManagerOptions())
 				if err == nil {
 					m.syncManager = syncMgr
 				}
@@ -1279,71 +1296,16 @@ func (m Model) handleHomeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selectedIdx = 0
 
 	case "a", "ctrl+n":
-		if item, ok := m.selectedListItem(); ok && item.Kind == ListItemNewGroup {
-			m.groupInputValue = ""
-			m.groupInputCursor = 0
-			m.groupFocus = 0
-			m.overlay = OverlayCreateGroup
-			return m, nil
-		}
-		groupPrefill := ""
-		if g, ok := m.selectedGroup(); ok {
-			groupPrefill = g
-		}
-		m.initAddHostForm("", groupPrefill, "", "", "", "22", "", "")
-		m.overlay = OverlayAddHost
-		m.formEditIdx = -1
+		return runAddCommand(m)
 
 	case "e":
-		if item, ok := m.selectedListItem(); ok && item.Kind == ListItemGroup {
-			if item.GroupName == "Ungrouped" {
-				m.err = fmt.Errorf("cannot rename Ungrouped")
-				return m, nil
-			}
-			m.groupOldName = item.GroupName
-			m.groupInputValue = item.GroupName
-			m.groupInputCursor = len([]rune(item.GroupName))
-			m.groupFocus = 0
-			m.overlay = OverlayRenameGroup
-			return m, nil
-		}
-		host, ok := m.selectedHost()
-		if ok {
-			var existingKey string
-			if m.store != nil && host.HasKey && host.KeyType != "password" {
-				key, err := m.store.GetHostSecret(host.ID)
-				if err == nil {
-					existingKey = key
-				}
-			}
-			tagInput := strings.Join(host.Tags, ", ")
-			m.initAddHostForm(host.Label, host.GroupName, tagInput, host.Hostname, host.Username, fmt.Sprintf("%d", host.Port), host.KeyType, existingKey)
-			m.formEditIdx = m.selectedIdx
-			m.overlay = OverlayAddHost
-		}
+		return m.openPersonalEditFlow()
 
 	case "d", "delete":
-		if item, ok := m.selectedListItem(); ok && item.Kind == ListItemGroup {
-			if item.GroupName == "Ungrouped" {
-				m.err = fmt.Errorf("cannot delete Ungrouped")
-				return m, nil
-			}
-			m.groupOldName = item.GroupName
-			m.groupDeleteCursor = 1 // default to cancel
-			m.overlay = OverlayDeleteGroup
-			return m, nil
-		}
-		if _, ok := m.selectedHost(); ok {
-			m.deleteCursor = 1 // default to cancel
-			m.overlay = OverlayDeleteHost
-		}
+		return m.openPersonalDeleteFlow()
 
 	case "ctrl+g":
-		m.groupInputValue = ""
-		m.groupInputCursor = 0
-		m.groupFocus = 0
-		m.overlay = OverlayCreateGroup
-		return m, nil
+		return runGroupCommand(m)
 
 	case "enter":
 		item, ok := m.selectedListItem()
@@ -1380,27 +1342,61 @@ func (m Model) handleHomeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.err = nil
 
 	case "Y":
-		if m.syncing {
-			m.err = fmt.Errorf("\u2139 sync already in progress")
-			return m, nil
-		}
-		if m.syncManager == nil {
-			m.err = fmt.Errorf("\u26A0 sync manager is nil")
-			return m, nil
-		}
-		if !m.syncManager.IsEnabled() {
-			m.err = fmt.Errorf("\u26A0 sync is disabled \u2014 enable in settings")
-			return m, nil
-		}
-		m.syncing = true
-		m.syncRunID++
-		m.syncAnimFrame = 0
-		m.syncProgress = 0.02
-		runID := m.syncRunID
-		m.err = fmt.Errorf("\u2139 Syncing...")
-		return m, tea.Batch(runSyncCmd(runID, m.syncManager), syncAnimTickCmd(runID))
+		return runSyncCommand(m)
 	}
 
+	return m, nil
+}
+
+func (m Model) openPersonalEditFlow() (tea.Model, tea.Cmd) {
+	if item, ok := m.selectedListItem(); ok && item.Kind == ListItemGroup {
+		if item.GroupName == "Ungrouped" {
+			m.err = fmt.Errorf("cannot rename Ungrouped")
+			return m, nil
+		}
+		m.groupOldName = item.GroupName
+		m.groupInputValue = item.GroupName
+		m.groupInputCursor = len([]rune(item.GroupName))
+		m.groupFocus = 0
+		m.overlay = OverlayRenameGroup
+		return m, nil
+	}
+	host, ok := m.selectedHost()
+	if !ok {
+		m.err = fmt.Errorf("select a host or group first")
+		return m, nil
+	}
+	var existingKey string
+	if m.store != nil && host.HasKey && host.KeyType != "password" {
+		key, err := m.store.GetHostSecret(host.ID)
+		if err == nil {
+			existingKey = key
+		}
+	}
+	tagInput := strings.Join(host.Tags, ", ")
+	m.initAddHostForm(host.Label, host.GroupName, tagInput, host.Hostname, host.Username, fmt.Sprintf("%d", host.Port), host.KeyType, existingKey)
+	m.formEditIdx = m.selectedIdx
+	m.overlay = OverlayAddHost
+	return m, nil
+}
+
+func (m Model) openPersonalDeleteFlow() (tea.Model, tea.Cmd) {
+	if item, ok := m.selectedListItem(); ok && item.Kind == ListItemGroup {
+		if item.GroupName == "Ungrouped" {
+			m.err = fmt.Errorf("cannot delete Ungrouped")
+			return m, nil
+		}
+		m.groupOldName = item.GroupName
+		m.groupDeleteCursor = 1
+		m.overlay = OverlayDeleteGroup
+		return m, nil
+	}
+	if _, ok := m.selectedHost(); ok {
+		m.deleteCursor = 1
+		m.overlay = OverlayDeleteHost
+		return m, nil
+	}
+	m.err = fmt.Errorf("select a host or group first")
 	return m, nil
 }
 
@@ -1479,7 +1475,7 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.cfg.Sync != m.cfgOriginal.Sync && m.store != nil {
-				syncMgr, err := syncpkg.NewManager(&m.cfg, m.store, m.masterPassword)
+				syncMgr, err := syncpkg.NewManagerWithOptions(&m.cfg, m.store, m.masterPassword, m.syncManagerOptions())
 				if err == nil {
 					m.syncManager = syncMgr
 				}
@@ -1497,7 +1493,7 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.cfg.Sync != m.cfgOriginal.Sync && m.store != nil {
-				syncMgr, err := syncpkg.NewManager(&m.cfg, m.store, m.masterPassword)
+				syncMgr, err := syncpkg.NewManagerWithOptions(&m.cfg, m.store, m.masterPassword, m.syncManagerOptions())
 				if err == nil {
 					m.syncManager = syncMgr
 				}
@@ -1614,7 +1610,7 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.settingsItems = m.buildSettingsItems()
 			return m, nil
-		case "feed", "channel", "version", "PATH health", updateSettingsNoteLabel():
+		case "cloud status", "feed", "channel", "version", "PATH health", updateSettingsNoteLabel():
 			return m, nil
 		case "check now":
 			if !m.updateChecking {
@@ -1662,6 +1658,27 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) leaveSettings() (tea.Model, tea.Cmd) {
+	if m.cfg != m.cfgOriginal {
+		if err := config.Save(m.cfg); err != nil {
+			m.err = fmt.Errorf("failed to save settings: %v", err)
+			return m, nil
+		}
+		if m.cfg.Sync != m.cfgOriginal.Sync && m.store != nil {
+			syncMgr, err := syncpkg.NewManagerWithOptions(&m.cfg, m.store, m.masterPassword, m.syncManagerOptions())
+			if err == nil {
+				m.syncManager = syncMgr
+			}
+		}
+		m.cfgOriginal = m.cfg
+		m.err = fmt.Errorf("\u2713 Settings saved")
+	}
+	m.page = m.modeHomePage()
+	m.settingsSearching = false
+	m.settingsEditing = false
+	return m, nil
+}
+
 // ── Tokens page ───────────────────────────────────────────────────────
 
 func (m Model) handleTokensKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1700,6 +1717,7 @@ func (m Model) handleTokensKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.tokenMode = tokenModeList
 			m.tokenNameValue = ""
 			m.tokenHostPick = map[int]bool{}
+			m.teamTokenHostPick = map[string]bool{}
 			m.err = nil
 			return m, nil
 		case "enter":
@@ -1710,6 +1728,7 @@ func (m Model) handleTokensKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.tokenMode = tokenModeCreateScope
 			m.tokenHostPick = map[int]bool{}
+			m.teamTokenHostPick = map[string]bool{}
 			m.tokenHostIdx = 0
 			m.err = fmt.Errorf("select hosts and press Enter to create token")
 			return m, nil
@@ -1730,6 +1749,7 @@ func (m Model) handleTokensKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.tokenMode = tokenModeList
 			m.tokenHostPick = map[int]bool{}
+			m.teamTokenHostPick = map[string]bool{}
 			m.tokenHostIdx = 0
 			m.tokenNameValue = ""
 			m.err = nil
@@ -1746,35 +1766,56 @@ func (m Model) handleTokensKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if key == "j" && !m.cfg.UI.VimMode {
 				return m, nil
 			}
-			if m.tokenHostIdx < len(m.hosts)-1 {
+			if m.tokenHostIdx < len(m.buildTokenHostItems())-1 {
 				m.tokenHostIdx++
 			}
 			return m, nil
 		case " ":
-			if len(m.hosts) > 0 {
-				h := m.hosts[m.tokenHostIdx]
-				if m.tokenHostPick[h.ID] {
-					delete(m.tokenHostPick, h.ID)
+			items := m.buildTokenHostItems()
+			if len(items) > 0 {
+				item := items[m.tokenHostIdx]
+				if m.appMode == appModeTeams {
+					if m.teamTokenHostPick[item.ID] {
+						delete(m.teamTokenHostPick, item.ID)
+					} else {
+						m.teamTokenHostPick[item.ID] = true
+					}
 				} else {
-					m.tokenHostPick[h.ID] = true
+					id, _ := strconv.Atoi(item.ID)
+					if m.tokenHostPick[id] {
+						delete(m.tokenHostPick, id)
+					} else {
+						m.tokenHostPick[id] = true
+					}
 				}
 			}
 			return m, nil
 		case "enter":
-			if len(m.tokenHostPick) == 0 {
+			if (m.appMode == appModeTeams && len(m.teamTokenHostPick) == 0) || (m.appMode != appModeTeams && len(m.tokenHostPick) == 0) {
 				m.err = fmt.Errorf("select at least one host")
 				return m, nil
 			}
 			name := strings.TrimSpace(m.tokenNameValue)
-			raw, err := m.createToken(name)
+			var raw string
+			var err error
+			if m.appMode == appModeTeams {
+				raw, err = m.createTeamToken(name)
+			} else {
+				raw, err = m.createToken(name)
+			}
 			if err != nil {
 				m.err = err
 				return m, nil
 			}
 			m.tokenMode = tokenModeList
 			m.tokenHostPick = map[int]bool{}
+			m.teamTokenHostPick = map[string]bool{}
 			m.tokenNameValue = ""
-			m.loadTokenSummaries()
+			if m.appMode == appModeTeams {
+				m.loadTeamTokenSummaries()
+			} else {
+				m.loadTokenSummaries()
+			}
 			m.tokenRevealOpen = true
 			m.tokenRevealValue = raw
 			m.tokenRevealCopied = false
@@ -1785,9 +1826,13 @@ func (m Model) handleTokensKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Token list mode
+	tokenCount := len(m.tokenSummaries)
+	if m.appMode == appModeTeams {
+		tokenCount = len(m.teamTokenSummaries)
+	}
 	switch key {
 	case "esc", "q", "Q":
-		m.page = PageHome
+		m.enterPage(m.modeHomePage())
 		m.err = nil
 		return m, nil
 
@@ -1808,7 +1853,7 @@ func (m Model) handleTokensKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if key == "j" && !m.cfg.UI.VimMode {
 			return m, nil
 		}
-		if m.tokenIdx < len(m.tokenSummaries)-1 {
+		if m.tokenIdx < tokenCount-1 {
 			m.tokenIdx++
 		}
 		return m, nil
@@ -1816,49 +1861,64 @@ func (m Model) handleTokensKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		m.tokenMode = tokenModeCreateName
 		m.tokenHostPick = map[int]bool{}
+		m.teamTokenHostPick = map[string]bool{}
 		m.tokenHostIdx = 0
 		m.tokenNameValue = ""
 		m.err = fmt.Errorf("enter token name and press Enter")
 		return m, nil
 
 	case "r":
-		if len(m.tokenSummaries) == 0 {
-			m.err = fmt.Errorf("no tokens to revoke")
-			return m, nil
-		}
-		t := m.tokenSummaries[m.tokenIdx]
-		if t.RevokedAt != nil {
-			m.err = fmt.Errorf("token already revoked")
-			return m, nil
-		}
-		if err := revokeToken(t.TokenID); err != nil {
-			m.err = err
-			return m, nil
-		}
-		m.loadTokenSummaries()
-		m.err = fmt.Errorf("\u2713 Token revoked")
-		return m, nil
+		return m.revokeSelectedToken()
 
 	case "d":
-		if len(m.tokenSummaries) == 0 {
-			m.err = fmt.Errorf("no tokens to delete")
-			return m, nil
-		}
-		t := m.tokenSummaries[m.tokenIdx]
-		deleted, err := deleteRevokedToken(t.TokenID)
-		if err != nil {
-			m.err = err
-			return m, nil
-		}
-		if !deleted {
-			m.err = fmt.Errorf("token not found")
-			return m, nil
-		}
-		m.loadTokenSummaries()
-		m.err = fmt.Errorf("\u2713 Revoked token deleted")
-		return m, nil
+		return m.deleteSelectedRevokedToken()
 	}
 
+	return m, nil
+}
+
+func (m Model) revokeSelectedToken() (tea.Model, tea.Cmd) {
+	if m.appMode == appModeTeams {
+		return m.revokeSelectedTeamToken()
+	}
+	if len(m.tokenSummaries) == 0 {
+		m.err = fmt.Errorf("no tokens to revoke")
+		return m, nil
+	}
+	t := m.tokenSummaries[m.tokenIdx]
+	if t.RevokedAt != nil {
+		m.err = fmt.Errorf("token already revoked")
+		return m, nil
+	}
+	if err := revokeToken(t.TokenID); err != nil {
+		m.err = err
+		return m, nil
+	}
+	m.loadTokenSummaries()
+	m.err = fmt.Errorf("\u2713 Token revoked")
+	return m, nil
+}
+
+func (m Model) deleteSelectedRevokedToken() (tea.Model, tea.Cmd) {
+	if m.appMode == appModeTeams {
+		return m.deleteSelectedRevokedTeamToken()
+	}
+	if len(m.tokenSummaries) == 0 {
+		m.err = fmt.Errorf("no tokens to delete")
+		return m, nil
+	}
+	t := m.tokenSummaries[m.tokenIdx]
+	deleted, err := deleteRevokedToken(t.TokenID)
+	if err != nil {
+		m.err = err
+		return m, nil
+	}
+	if !deleted {
+		m.err = fmt.Errorf("token not found")
+		return m, nil
+	}
+	m.loadTokenSummaries()
+	m.err = fmt.Errorf("\u2713 Revoked token deleted")
 	return m, nil
 }
 

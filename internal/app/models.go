@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/Vansh-Raja/SSHThing/internal/teams"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Host represents an SSH host configuration
@@ -91,6 +92,36 @@ type SpotlightItem struct {
 	Team      teams.TeamSummary
 	Score     int
 	Indent    int
+}
+
+type commandContext string
+
+const (
+	commandContextGlobal   commandContext = "global"
+	commandContextHome     commandContext = "home"
+	commandContextTeams    commandContext = "teams"
+	commandContextProfile  commandContext = "profile"
+	commandContextSettings commandContext = "settings"
+	commandContextTokens   commandContext = "tokens"
+)
+
+type appCommand struct {
+	ID          string
+	Name        string
+	Aliases     []string
+	Title       string
+	Description string
+	Contexts    []commandContext
+	Danger      bool
+	Run         func(Model) (tea.Model, tea.Cmd)
+	Enabled     func(Model) (bool, string)
+}
+
+type commandItem struct {
+	Command        appCommand
+	Score          int
+	Disabled       bool
+	DisabledReason string
 }
 
 type teamsImportConflictState struct {

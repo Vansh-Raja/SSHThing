@@ -26,6 +26,7 @@ type SettingsViewParams struct {
 	FilteredIdxs []int // indices into Items that match filter
 	Page         int
 	Err          error
+	CommandLine  *CommandLineView
 }
 
 // RenderSettingsView renders the settings page.
@@ -53,7 +54,8 @@ func (r *Renderer) RenderSettingsView(p SettingsViewParams) string {
 		labelW = 20
 	}
 
-	bodyH := r.H - 8
+	footerH := r.FooterBlockHeight(p.CommandLine)
+	bodyH := r.H - 7 - footerH
 
 	var lines []string
 	lines = append(lines, headerLine)
@@ -175,13 +177,15 @@ func (r *Renderer) RenderSettingsView(p SettingsViewParams) string {
 	// Fixed footer — always visible
 	lines = append(lines, "")
 	lines = append(lines, lipgloss.NewStyle().Foreground(r.Theme.Surface0).Render(strings.Repeat(r.Icons.Rule, ruleW)))
-	footerHint := "\u2191\u2193 navigate  space toggle  \u25C4\u25BA cycle  / filter  q home"
-	if p.Searching {
-		footerHint = "type to filter  enter confirm  esc clear"
-	} else if p.Filter != "" {
-		footerHint = "\u2191\u2193 navigate  space toggle  \u25C4\u25BA cycle  / filter  esc clear  q home"
+	footerHint := r.MainFooterText()
+	if p.CommandLine == nil {
+		if p.Searching {
+			footerHint = "type to filter  enter confirm  esc clear"
+		} else if p.Filter != "" {
+			footerHint = "↑↓ navigate  / filter  : commands  esc clear  q home"
+		}
 	}
-	lines = append(lines, r.RenderFooter(footerHint))
+	lines = append(lines, r.RenderFooterBlock(footerHint, p.CommandLine))
 
 	inner := strings.Join(lines, "\n")
 
@@ -256,7 +260,7 @@ func (r *Renderer) RenderSettingsEditOverlay(p SettingsEditParams) string {
 
 // TokenHostItem represents one host row in the token host picker.
 type TokenHostItem struct {
-	ID       int
+	ID       string
 	Label    string
 	Detail   string // user@host:port
 	Selected bool
@@ -293,10 +297,11 @@ type TokenViewItem struct {
 
 // TokensViewParams holds data for the tokens page view.
 type TokensViewParams struct {
-	Tokens []TokenViewItem
-	Cursor int
-	Page   int
-	Err    error
+	Tokens      []TokenViewItem
+	Cursor      int
+	Page        int
+	Err         error
+	CommandLine *CommandLineView
 }
 
 // RenderTokensView renders the tokens page.
@@ -311,7 +316,8 @@ func (r *Renderer) RenderTokensView(p TokensViewParams) string {
 		ruleW = 40
 	}
 
-	bodyH := r.H - 6
+	footerH := r.FooterBlockHeight(p.CommandLine)
+	bodyH := r.H - 5 - footerH
 	if bodyH < 4 {
 		bodyH = 4
 	}
@@ -368,8 +374,11 @@ func (r *Renderer) RenderTokensView(p TokensViewParams) string {
 		}
 	}
 
-	// footer
-	lines = append(lines, r.RenderFooter("\u2191\u2193 navigate  a create  r revoke  d delete  shift+tab pages  esc home  q quit"))
+	maxContentLines := bodyH + 2
+	if len(lines) > maxContentLines {
+		lines = lines[:maxContentLines]
+	}
+	lines = append(lines, r.RenderFooterBlock(r.MainFooterText(), p.CommandLine))
 
 	inner := strings.Join(lines, "\n")
 

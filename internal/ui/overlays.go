@@ -77,21 +77,19 @@ func (r *Renderer) RenderQuitOverlay(p QuitViewParams) string {
 
 // RenderHelpOverlay renders the keyboard shortcuts help overlay.
 func (r *Renderer) RenderHelpOverlay() string {
-	title := lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render("shortcuts")
+	title := lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render("commands")
 	pairs := [][2]string{
 		{"\u2191 \u2193  j k", "navigate"},
-		{"enter", "connect or toggle"},
+		{"enter", "select / connect / run"},
 		{"/", "search"},
-		{"S", "sftp"},
-		{"M", "mount / unmount"},
-		{"Y", "sync now"},
-		{",", "settings"},
-		{"ctrl+g", "new group"},
-		{"a", "add host"},
-		{"e", "edit"},
-		{"d", "delete"},
-		{"shift+tab", "switch page"},
-		{"?", "help"},
+		{":", "commands"},
+		{":add", "add host"},
+		{":edit", "edit selected item"},
+		{":delete", "delete selected item"},
+		{":health", "refresh health"},
+		{":sync", "sync hosts"},
+		{":settings", "settings"},
+		{":help", "this help"},
 		{"q", "quit"},
 	}
 

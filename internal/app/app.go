@@ -63,6 +63,11 @@ type Model struct {
 	searchQuery    string
 	spotlightItems []SpotlightItem
 
+	// Command palette
+	commandQuery  string
+	commandCursor int
+	commandItems  []commandItem
+
 	// Add/Edit host form
 	formFields             []ui.FormField // [label, tags, hostname, port, username, authDetail]
 	formGroups             []string
@@ -113,15 +118,17 @@ type Model struct {
 	settingsEditVal   string
 
 	// Tokens
-	tokenSummaries    []authtoken.TokenSummary
-	tokenIdx          int
-	tokenHostIdx      int
-	tokenHostPick     map[int]bool
-	tokenMode         int
-	tokenNameValue    string
-	tokenRevealOpen   bool
-	tokenRevealValue  string
-	tokenRevealCopied bool
+	tokenSummaries     []authtoken.TokenSummary
+	teamTokenSummaries []teams.TeamAutomationToken
+	tokenIdx           int
+	tokenHostIdx       int
+	tokenHostPick      map[int]bool
+	teamTokenHostPick  map[string]bool
+	tokenMode          int
+	tokenNameValue     string
+	tokenRevealOpen    bool
+	tokenRevealValue   string
+	tokenRevealCopied  bool
 
 	// Teams
 	teamsClient         *teamsclient.Client
@@ -224,7 +231,9 @@ func NewModelWithVersion(version string) Model {
 		quitCursor:               0,
 		mountManager:             mount.NewManager(),
 		tokenSummaries:           []authtoken.TokenSummary{},
+		teamTokenSummaries:       []teams.TeamAutomationToken{},
 		tokenHostPick:            map[int]bool{},
+		teamTokenHostPick:        map[string]bool{},
 		tokenMode:                tokenModeList,
 		teamsClient:              teamsclient.New(cloudServiceBaseURL()),
 		teamsSession:             teamsSession,
@@ -737,6 +746,7 @@ func (m Model) View() string {
 			FilteredIdxs: m.filteredSettingsIdxs(),
 			Page:         m.page,
 			Err:          m.err,
+			CommandLine:  m.buildCommandLineView(),
 		})
 	case PageTokens:
 		// Token sub-overlays take priority over the list
@@ -771,10 +781,11 @@ func (m Model) View() string {
 			return r.WrapFull(content)
 		}
 		content = r.RenderTokensView(ui.TokensViewParams{
-			Tokens: m.tokenManagerTokenRows(),
-			Cursor: m.tokenIdx,
-			Page:   m.page,
-			Err:    m.err,
+			Tokens:      m.tokenManagerTokenRows(),
+			Cursor:      m.tokenIdx,
+			Page:        m.page,
+			Err:         m.err,
+			CommandLine: m.buildCommandLineView(),
 		})
 	case PageTeams:
 		content = r.RenderTeamsView(m.buildTeamsViewParams())

@@ -395,6 +395,121 @@ func TestHealthDisplaySettingCyclesInPersonalAndTeamsMode(t *testing.T) {
 	}
 }
 
+func TestColonOpensCommandLineFromHome(t *testing.T) {
+	m := NewModel()
+	m.overlay = OverlayNone
+	m.page = PageHome
+
+	updated, cmd := m.handlePageKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("did not expect command")
+	}
+	if len(got.commandItems) == 0 {
+		t.Fatalf("expected command suggestions")
+	}
+	if !got.commandModeActive() {
+		t.Fatalf("expected command mode")
+	}
+}
+
+func TestColonTogglesCommandLineClosed(t *testing.T) {
+	m := NewModel()
+	m.overlay = OverlayNone
+	m.page = PageHome
+
+	updated, _ := m.handlePageKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	open := updated.(Model)
+	if !open.commandModeActive() {
+		t.Fatalf("expected command line to open")
+	}
+
+	updated, _ = open.handlePageKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	closed := updated.(Model)
+	if closed.commandModeActive() {
+		t.Fatalf("expected second colon to close command line")
+	}
+}
+
+func TestCommandLineExactSettingsCommand(t *testing.T) {
+	m := NewModel()
+	m.page = PageHome
+	m.commandQuery = "settings"
+	m.commandItems = m.buildCommandItems(m.commandQuery)
+
+	updated, _ := m.handleCommandLineKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.commandModeActive() {
+		t.Fatalf("expected command mode to close")
+	}
+	if got.page != PageSettings {
+		t.Fatalf("expected settings page, got %d", got.page)
+	}
+}
+
+func TestColonDoesNotOpenCommandLineInsideSettingsFilter(t *testing.T) {
+	m := NewModel()
+	m.overlay = OverlayNone
+	m.page = PageSettings
+	m.settingsSearching = true
+
+	updated, _ := m.handlePageKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	got := updated.(Model)
+	if got.commandModeActive() {
+		t.Fatalf("did not expect command mode while typing in settings filter")
+	}
+	if got.settingsFilter != ":" {
+		t.Fatalf("expected colon to be typed into filter, got %q", got.settingsFilter)
+	}
+}
+
+func TestCommandLineTabAutocompletesSelectedCommand(t *testing.T) {
+	m := NewModel()
+	m.page = PageHome
+	m.commandQuery = "he"
+	m.commandItems = m.buildCommandItems(m.commandQuery)
+
+	updated, _ := m.handleCommandLineKeys(tea.KeyMsg{Type: tea.KeyTab})
+	got := updated.(Model)
+	if got.commandQuery != "help" && got.commandQuery != "health" {
+		t.Fatalf("expected autocomplete to fill selected command, got %q", got.commandQuery)
+	}
+}
+
+func TestCommandLineDeleteOpensConfirmation(t *testing.T) {
+	t.Setenv("SSHTHING_DATA_DIR", t.TempDir())
+	store, err := db.Init("testpassword123")
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer store.Close()
+	if err := store.CreateHost(&db.HostModel{Label: "api", Hostname: "api.example.com", Username: "ubuntu", Port: 22, KeyType: ""}, ""); err != nil {
+		t.Fatalf("CreateHost failed: %v", err)
+	}
+
+	m := NewModel()
+	m.store = store
+	m.page = PageHome
+	m.loadHosts()
+	for i, item := range m.listItems {
+		if item.Kind == ListItemHost {
+			m.selectedIdx = i
+			break
+		}
+	}
+	m.commandQuery = "delete"
+	m.commandItems = m.buildCommandItems(m.commandQuery)
+
+	updated, _ := m.handleCommandLineKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.overlay != OverlayDeleteHost {
+		t.Fatalf("expected delete confirmation overlay, got %d", got.overlay)
+	}
+	if len(got.hosts) != 1 {
+		t.Fatalf("delete command should not delete immediately")
+	}
+}
+
 func TestLoginHealthRefreshSilentWhenNoHosts(t *testing.T) {
 	t.Setenv("SSHTHING_DATA_DIR", t.TempDir())
 	m := NewModel()

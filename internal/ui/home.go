@@ -26,6 +26,7 @@ type HomeViewParams struct {
 	HostCount         int
 	Connected         int
 	HealthDisplayMode string
+	CommandLine       *CommandLineView
 }
 
 // HomeListItem represents one row in the home list.
@@ -108,7 +109,7 @@ type homeFrameLayout struct {
 	narrowMode bool
 }
 
-func (r *Renderer) buildHomeFrameLayout(notifCount int) homeFrameLayout {
+func (r *Renderer) buildHomeFrameLayout(notifCount int, footerH int) homeFrameLayout {
 	cw := r.PageContentWidth()
 
 	listW := cw * 30 / 100
@@ -120,7 +121,10 @@ func (r *Renderer) buildHomeFrameLayout(notifCount int) homeFrameLayout {
 	if detailW < 20 {
 		detailW = 20
 	}
-	bodyH := r.H - 6
+	if footerH < 1 {
+		footerH = 1
+	}
+	bodyH := r.H - 5 - footerH
 	if bodyH < 4 {
 		bodyH = 4
 	}
@@ -154,7 +158,7 @@ func (r *Renderer) renderHomeBody(listBlock string, detailBlock string, layout h
 	return clampBlockHeight(body, layout.bodyH, "")
 }
 
-func (r *Renderer) renderHomeFrame(header string, body string, notifLines []string, footerText string) string {
+func (r *Renderer) renderHomeFrame(header string, body string, notifLines []string, footerText string, commandLine *CommandLineView) string {
 	pad := r.LeftPad()
 	filtered := make([]string, 0, len(notifLines))
 	for _, line := range notifLines {
@@ -169,7 +173,7 @@ func (r *Renderer) renderHomeFrame(header string, body string, notifLines []stri
 	if len(filtered) > 0 {
 		inner += strings.Join(filtered, "\n") + "\n"
 	}
-	inner += r.RenderFooter(footerText)
+	inner += r.RenderFooterBlock(footerText, commandLine)
 	return r.PadContent(inner, pad)
 }
 
@@ -192,7 +196,7 @@ func (r *Renderer) RenderHomeView(p HomeViewParams) string {
 	if p.SyncActivity != nil && p.SyncActivity.Active {
 		notifCount++
 	}
-	layout := r.buildHomeFrameLayout(notifCount)
+	layout := r.buildHomeFrameLayout(notifCount, r.FooterBlockHeight(p.CommandLine))
 
 	// list column
 	var listLines []string
@@ -268,11 +272,7 @@ func (r *Renderer) RenderHomeView(p HomeViewParams) string {
 	}
 
 	headerLine := r.RenderHeader("", p.HostCount, p.Connected)
-	footerText := "\u2191\u2193 nav  \u23CE connect  R health  S sftp  M mount  Y sync  / search  a add  e edit  d del  , settings  ? help  q quit"
-	if r.W < 95 {
-		footerText = "\u2191\u2193 nav · enter connect · R health · , settings · q quit"
-	}
-	return r.renderHomeFrame(headerLine, body, notifLines, footerText)
+	return r.renderHomeFrame(headerLine, body, notifLines, r.MainFooterText(), p.CommandLine)
 }
 
 func (r *Renderer) renderHostStatusDot(status int, health *HostHealthView) string {

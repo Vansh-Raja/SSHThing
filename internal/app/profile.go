@@ -122,6 +122,7 @@ func (m Model) buildProfileViewParams() ui.ProfileViewParams {
 		AppModeLabel:     m.modeLabel(),
 		Err:              m.err,
 		Page:             m.page,
+		CommandLine:      m.buildCommandLineView(),
 	}
 }
 

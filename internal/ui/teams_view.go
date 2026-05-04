@@ -47,10 +47,11 @@ type TeamsHomeViewParams struct {
 	StatusLines       []TeamsHomeStatusLine
 	FooterText        string
 	HealthDisplayMode string
+	CommandLine       *CommandLineView
 }
 
 func (r *Renderer) RenderTeamsView(p TeamsHomeViewParams) string {
-	layout := r.buildHomeFrameLayout(len(p.StatusLines))
+	layout := r.buildHomeFrameLayout(len(p.StatusLines), r.FooterBlockHeight(p.CommandLine))
 	listBlock := lipgloss.NewStyle().Width(layout.listW).Render(r.padListLines(r.renderTeamsListLines(p, layout), layout.bodyH))
 	detail := clampBlockHeight(r.renderTeamsDetail(p, layout.detailW, layout.bodyH), layout.bodyH, r.Icons.Truncation+" more")
 	detailBlock := lipgloss.NewStyle().Width(layout.detailW).Foreground(r.Theme.Subtext).
@@ -58,7 +59,7 @@ func (r *Renderer) RenderTeamsView(p TeamsHomeViewParams) string {
 	body := r.renderHomeBody(listBlock, detailBlock, layout, p.Page)
 
 	headerLine := r.RenderHeader(r.renderTeamsHeaderSummary(p), 0, 0)
-	return r.renderHomeFrame(headerLine, body, r.renderTeamsStatusLines(p.StatusLines), r.teamsFooterText(p))
+	return r.renderHomeFrame(headerLine, body, r.renderTeamsStatusLines(p.StatusLines), r.teamsFooterText(p), p.CommandLine)
 }
 
 func (r *Renderer) renderTeamsHeaderSummary(p TeamsHomeViewParams) string {
@@ -66,16 +67,7 @@ func (r *Renderer) renderTeamsHeaderSummary(p TeamsHomeViewParams) string {
 }
 
 func (r *Renderer) teamsFooterText(p TeamsHomeViewParams) string {
-	if r.W < 95 && p.SessionValid && p.HasTeams {
-		return "\u2191\u2193 nav · enter connect · R health · r refresh · q quit"
-	}
-	if strings.TrimSpace(p.FooterText) != "" {
-		return p.FooterText
-	}
-	if !p.SessionValid || !p.HasTeams {
-		return "enter create team  / search  ? commands  , settings  shift+tab cycle  T personal mode  q quit"
-	}
-	return "\u2191\u2193 nav  \u23CE connect  R health  a add  e edit  d del  ctrl+1..9 switch team  / search  r refresh  , settings  shift+tab cycle  T personal mode  q quit"
+	return r.MainFooterText()
 }
 
 func (r *Renderer) renderTeamsStatusLines(lines []TeamsHomeStatusLine) []string {
