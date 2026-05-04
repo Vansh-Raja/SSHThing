@@ -32,6 +32,7 @@ const TAB_LABEL: Record<DashboardTab, string> = {
   members: "Members",
   hosts: "Hosts",
   invites: "Invites",
+  tokens: "Tokens",
   audit: "Audit",
 };
 

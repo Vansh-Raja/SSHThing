@@ -324,12 +324,28 @@ func (m *Model) initSyncManager() {
 	if m.store == nil {
 		return
 	}
-	syncMgr, err := syncpkg.NewManager(&m.cfg, m.store, m.masterPassword)
+	syncMgr, err := syncpkg.NewManagerWithOptions(&m.cfg, m.store, m.masterPassword, m.syncManagerOptions())
 	if err != nil {
 		m.err = fmt.Errorf("sync init failed: %v", err)
 		return
 	}
 	m.syncManager = syncMgr
+}
+
+func (m *Model) syncManagerOptions() syncpkg.ManagerOptions {
+	return syncpkg.ManagerOptions{
+		CloudClient:         m.teamsClient,
+		AccessTokenProvider: m.teamsAccessToken,
+		DeviceID:            personalSyncDeviceID(),
+	}
+}
+
+func personalSyncDeviceID() string {
+	host, err := os.Hostname()
+	if err != nil || strings.TrimSpace(host) == "" {
+		return "sshthing-tui"
+	}
+	return "sshthing-tui-" + strings.TrimSpace(host)
 }
 
 // ── SSH connection ────────────────────────────────────────────────────
@@ -899,6 +915,40 @@ func (m *Model) loadTokenSummaries() {
 	}
 }
 
+func (m *Model) loadTeamTokenSummaries() {
+	team, ok := m.teamsCurrentTeam()
+	if !ok {
+		m.teamTokenSummaries = nil
+		m.tokenIdx = 0
+		return
+	}
+	accessToken, err := m.teamsAccessToken(context.Background())
+	if err != nil {
+		m.err = fmt.Errorf("failed to load team tokens: %v", err)
+		m.teamTokenSummaries = nil
+		m.tokenIdx = 0
+		return
+	}
+	tokens, err := m.teamsClient.ListTeamTokens(context.Background(), accessToken, team.ID)
+	if err != nil {
+		m.err = fmt.Errorf("failed to load team tokens: %v", err)
+		m.teamTokenSummaries = nil
+		m.tokenIdx = 0
+		return
+	}
+	m.teamTokenSummaries = tokens
+	if len(m.teamTokenSummaries) == 0 {
+		m.tokenIdx = 0
+		return
+	}
+	if m.tokenIdx < 0 {
+		m.tokenIdx = 0
+	}
+	if m.tokenIdx >= len(m.teamTokenSummaries) {
+		m.tokenIdx = len(m.teamTokenSummaries) - 1
+	}
+}
+
 func (m Model) selectedTokenHostGrants() ([]authtoken.HostGrant, error) {
 	grants := make([]authtoken.HostGrant, 0, len(m.tokenHostPick))
 	for _, h := range m.hosts {
@@ -923,6 +973,20 @@ func (m Model) selectedTokenHostGrants() ([]authtoken.HostGrant, error) {
 	return grants, nil
 }
 
+func (m Model) selectedTeamTokenHostIDs() ([]string, error) {
+	hostIDs := make([]string, 0, len(m.teamTokenHostPick))
+	for _, host := range m.teamsItems {
+		if !m.teamTokenHostPick[host.ID] {
+			continue
+		}
+		hostIDs = append(hostIDs, host.ID)
+	}
+	if len(hostIDs) == 0 {
+		return nil, fmt.Errorf("no team hosts selected")
+	}
+	return hostIDs, nil
+}
+
 func (m Model) tokenManagerHosts() []ui.TokenViewItem {
 	out := make([]ui.TokenViewItem, 0, len(m.hosts))
 	for _, h := range m.hosts {
@@ -937,6 +1001,30 @@ func (m Model) tokenManagerHosts() []ui.TokenViewItem {
 }
 
 func (m Model) tokenManagerTokenRows() []ui.TokenViewItem {
+	if m.appMode == appModeTeams {
+		out := make([]ui.TokenViewItem, 0, len(m.teamTokenSummaries))
+		for _, t := range m.teamTokenSummaries {
+			scope := t.Status
+			if t.RevokedAt != nil {
+				scope = "revoked"
+			}
+			lastUsed := "never"
+			if t.LastUsedAt != nil {
+				lastUsed = time.UnixMilli(*t.LastUsedAt).Local().Format("2006-01-02 15:04")
+			}
+			name := strings.TrimSpace(t.Name)
+			if name == "" {
+				name = t.TokenID
+			}
+			out = append(out, ui.TokenViewItem{
+				Name:    name,
+				Scope:   fmt.Sprintf("team · %s · %d hosts", scope, t.HostCount),
+				Created: time.UnixMilli(t.CreatedAt).Local().Format("2006-01-02"),
+				LastUse: lastUsed,
+			})
+		}
+		return out
+	}
 	out := make([]ui.TokenViewItem, 0, len(m.tokenSummaries))
 	for _, t := range m.tokenSummaries {
 		scope := "active"
@@ -966,10 +1054,26 @@ func (m Model) tokenManagerTokenRows() []ui.TokenViewItem {
 }
 
 func (m Model) buildTokenHostItems() []ui.TokenHostItem {
+	if m.appMode == appModeTeams {
+		out := make([]ui.TokenHostItem, 0, len(m.teamsItems))
+		for _, h := range m.teamsItems {
+			label := strings.TrimSpace(h.Label)
+			if label == "" {
+				label = h.Hostname
+			}
+			out = append(out, ui.TokenHostItem{
+				ID:       h.ID,
+				Label:    label,
+				Detail:   fmt.Sprintf("%s@%s:%d", h.Username, h.Hostname, h.Port),
+				Selected: m.teamTokenHostPick[h.ID],
+			})
+		}
+		return out
+	}
 	out := make([]ui.TokenHostItem, 0, len(m.hosts))
 	for _, h := range m.hosts {
 		out = append(out, ui.TokenHostItem{
-			ID:       h.ID,
+			ID:       fmt.Sprintf("%d", h.ID),
 			Label:    hostDisplayName(h),
 			Detail:   fmt.Sprintf("%s@%s:%d", h.Username, h.Hostname, h.Port),
 			Selected: m.tokenHostPick[h.ID],
@@ -1018,11 +1122,17 @@ func (m *Model) buildSettingsItems() []ui.SettingsItem {
 		{Category: "mount", Label: "local mount path", Value: m.cfg.Mount.LocalMountPath, Kind: 2},
 		{Category: "mount", Label: "quit behavior", Value: string(m.cfg.Mount.QuitBehavior), Kind: 1, Options: []string{"prompt", "always_unmount", "leave_mounted"}},
 		// Sync
-		{Category: "sync", Label: "enable sync", Value: boolVal(m.cfg.Sync.Enabled), Kind: 0},
-		{Category: "sync", Label: "repo url", Value: m.cfg.Sync.RepoURL, Kind: 2, Disabled: !m.cfg.Sync.Enabled},
-		{Category: "sync", Label: "ssh key path", Value: m.cfg.Sync.SSHKeyPath, Kind: 2, Disabled: !m.cfg.Sync.Enabled},
-		{Category: "sync", Label: "branch", Value: m.cfg.Sync.Branch, Kind: 2, Disabled: !m.cfg.Sync.Enabled},
-		{Category: "sync", Label: "local path", Value: m.cfg.Sync.LocalPath, Kind: 2, Disabled: !m.cfg.Sync.Enabled},
+		{Category: "sync", Label: "sync provider", Value: syncProviderLabel(m.cfg.Sync.Provider), Kind: 1, Options: syncProviderLabels(), OptIdx: syncProviderIdx(m.cfg.Sync.Provider)},
+		{Category: "sync", Label: "cloud status", Value: m.personalCloudSyncStatus(), Kind: 2, Disabled: m.cfg.Sync.Provider != config.SyncProviderConvex},
+		{Category: "sync", Label: "sync portable hosts", Value: boolVal(m.cfg.Sync.Scope.Hosts), Kind: 0, Disabled: m.cfg.Sync.Provider == config.SyncProviderOff},
+		{Category: "sync", Label: "sync credentials", Value: boolVal(m.cfg.Sync.Scope.Credentials), Kind: 0, Disabled: m.cfg.Sync.Provider == config.SyncProviderOff || !m.cfg.Sync.Scope.Hosts},
+		{Category: "sync", Label: "sync token defs", Value: boolVal(m.cfg.Sync.Scope.TokenDefinitions), Kind: 0, Disabled: m.cfg.Sync.Provider == config.SyncProviderOff},
+		{Category: "sync", Label: "sync health", Value: boolVal(m.cfg.Sync.Scope.Health), Kind: 0, Disabled: m.cfg.Sync.Provider == config.SyncProviderOff},
+		{Category: "sync", Label: "sync mounts", Value: boolVal(m.cfg.Sync.Scope.MountState), Kind: 0, Disabled: m.cfg.Sync.Provider == config.SyncProviderOff},
+		{Category: "sync", Label: "repo url", Value: m.cfg.Sync.RepoURL, Kind: 2, Disabled: m.cfg.Sync.Provider != config.SyncProviderGit},
+		{Category: "sync", Label: "ssh key path", Value: m.cfg.Sync.SSHKeyPath, Kind: 2, Disabled: m.cfg.Sync.Provider != config.SyncProviderGit},
+		{Category: "sync", Label: "branch", Value: m.cfg.Sync.Branch, Kind: 2, Disabled: m.cfg.Sync.Provider != config.SyncProviderGit},
+		{Category: "sync", Label: "local path", Value: m.cfg.Sync.LocalPath, Kind: 2, Disabled: m.cfg.Sync.Provider != config.SyncProviderGit},
 		// Updates
 		{Category: "updates", Label: "beta releases", Value: boolVal(m.cfg.Updates.ReleaseChannel == "beta"), Kind: 0},
 		{Category: "updates", Label: "auto apply updates", Value: boolVal(m.cfg.Updates.AutoApplyUpdates), Kind: 0},
@@ -1036,9 +1146,61 @@ func (m *Model) buildSettingsItems() []ui.SettingsItem {
 		{Category: "updates", Label: updateSettingsNoteLabel(), Value: "", Kind: 2},
 		// Tokens
 		{Category: "tokens", Label: "manage tokens", Value: "", Kind: 2},
-		{Category: "tokens", Label: "sync token definitions", Value: boolVal(m.cfg.Automation.SyncTokenDefinitions), Kind: 0, Disabled: !m.cfg.Sync.Enabled},
+		{Category: "tokens", Label: "sync token definitions", Value: boolVal(m.cfg.Sync.Scope.TokenDefinitions), Kind: 0, Disabled: m.cfg.Sync.Provider == config.SyncProviderOff},
 	}
 	return items
+}
+
+func syncProviderLabels() []string {
+	return []string{"off", "github", "sshthing cloud"}
+}
+
+func syncProviderLabel(provider config.SyncProvider) string {
+	switch provider {
+	case config.SyncProviderGit:
+		return "github"
+	case config.SyncProviderConvex:
+		return "sshthing cloud"
+	default:
+		return "off"
+	}
+}
+
+func syncProviderIdx(provider config.SyncProvider) int {
+	for i, label := range syncProviderLabels() {
+		if label == syncProviderLabel(provider) {
+			return i
+		}
+	}
+	return 0
+}
+
+func syncProviderFromIdx(idx int) config.SyncProvider {
+	labels := syncProviderLabels()
+	if idx < 0 || idx >= len(labels) {
+		return config.SyncProviderOff
+	}
+	switch labels[idx] {
+	case "github":
+		return config.SyncProviderGit
+	case "sshthing cloud":
+		return config.SyncProviderConvex
+	default:
+		return config.SyncProviderOff
+	}
+}
+
+func (m Model) personalCloudSyncStatus() string {
+	if m.cfg.Sync.Provider != config.SyncProviderConvex {
+		return "not selected"
+	}
+	if strings.TrimSpace(m.cfg.Teams.APIBaseURL) == "" && !m.teamsClient.Enabled() {
+		return "api not configured"
+	}
+	if !m.profileSignedIn() {
+		return "sign in required"
+	}
+	return "ready"
 }
 
 func updateSettingsNoteLabel() string {
@@ -1153,6 +1315,29 @@ func (m Model) createToken(name string) (string, error) {
 	return raw, nil
 }
 
+func (m Model) createTeamToken(name string) (string, error) {
+	team, ok := m.teamsCurrentTeam()
+	if !ok {
+		return "", fmt.Errorf("no team selected")
+	}
+	hostIDs, err := m.selectedTeamTokenHostIDs()
+	if err != nil {
+		return "", err
+	}
+	accessToken, err := m.teamsAccessToken(context.Background())
+	if err != nil {
+		return "", err
+	}
+	created, err := m.teamsClient.CreateTeamToken(context.Background(), accessToken, team.ID, teams.CreateTeamAutomationTokenRequest{
+		Name:    name,
+		HostIDs: hostIDs,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create team token: %v", err)
+	}
+	return created.RawToken, nil
+}
+
 func revokeToken(tokenID string) error {
 	vault, err := authtoken.LoadVault()
 	if err != nil {
@@ -1177,6 +1362,60 @@ func deleteRevokedToken(tokenID string) (bool, error) {
 		return false, fmt.Errorf("failed to save token vault: %v", err)
 	}
 	return deleted, nil
+}
+
+func (m Model) revokeSelectedTeamToken() (tea.Model, tea.Cmd) {
+	if len(m.teamTokenSummaries) == 0 {
+		m.err = fmt.Errorf("no team tokens to revoke")
+		return m, nil
+	}
+	team, ok := m.teamsCurrentTeam()
+	if !ok {
+		m.err = fmt.Errorf("no team selected")
+		return m, nil
+	}
+	t := m.teamTokenSummaries[m.tokenIdx]
+	if t.RevokedAt != nil || t.Status == "revoked" {
+		m.err = fmt.Errorf("team token already revoked")
+		return m, nil
+	}
+	accessToken, err := m.teamsAccessToken(context.Background())
+	if err != nil {
+		m.err = err
+		return m, nil
+	}
+	if err := m.teamsClient.RevokeTeamToken(context.Background(), accessToken, team.ID, t.ID); err != nil {
+		m.err = err
+		return m, nil
+	}
+	m.loadTeamTokenSummaries()
+	m.err = fmt.Errorf("✓ Team token revoked")
+	return m, nil
+}
+
+func (m Model) deleteSelectedRevokedTeamToken() (tea.Model, tea.Cmd) {
+	if len(m.teamTokenSummaries) == 0 {
+		m.err = fmt.Errorf("no team tokens to delete")
+		return m, nil
+	}
+	team, ok := m.teamsCurrentTeam()
+	if !ok {
+		m.err = fmt.Errorf("no team selected")
+		return m, nil
+	}
+	t := m.teamTokenSummaries[m.tokenIdx]
+	accessToken, err := m.teamsAccessToken(context.Background())
+	if err != nil {
+		m.err = err
+		return m, nil
+	}
+	if err := m.teamsClient.DeleteRevokedTeamToken(context.Background(), accessToken, team.ID, t.ID); err != nil {
+		m.err = err
+		return m, nil
+	}
+	m.loadTeamTokenSummaries()
+	m.err = fmt.Errorf("✓ Revoked team token deleted")
+	return m, nil
 }
 
 func activateToken(tokenID, masterPassword string) (string, error) {
@@ -1437,27 +1676,60 @@ func (m *Model) applySettingChange(idx int, action string) {
 		default:
 			m.cfg.Mount.QuitBehavior = config.MountQuitPrompt
 		}
-	case 16: // sync enabled
-		m.cfg.Sync.Enabled = !m.cfg.Sync.Enabled
+	case 16: // sync provider
+		cur := syncProviderIdx(m.cfg.Sync.Provider)
+		if action == "left" {
+			cur = (cur - 1 + len(syncProviderLabels())) % len(syncProviderLabels())
+		} else {
+			cur = (cur + 1) % len(syncProviderLabels())
+		}
+		m.cfg.Sync.Provider = syncProviderFromIdx(cur)
+		m.cfg.Sync.Enabled = m.cfg.Sync.Provider != config.SyncProviderOff
 		if m.store != nil {
-			syncMgr, err := syncpkg.NewManager(&m.cfg, m.store, m.masterPassword)
+			syncMgr, err := syncpkg.NewManagerWithOptions(&m.cfg, m.store, m.masterPassword, m.syncManagerOptions())
 			if err == nil {
 				m.syncManager = syncMgr
 			}
 		}
-	case 17, 18, 19, 20: // sync repo/key/branch/local - editable
-	case 21: // beta releases
+	case 17: // cloud status
+	case 18: // sync portable hosts
+		if m.cfg.Sync.Provider != config.SyncProviderOff {
+			m.cfg.Sync.Scope.Hosts = !m.cfg.Sync.Scope.Hosts
+			if !m.cfg.Sync.Scope.Hosts {
+				m.cfg.Sync.Scope.Credentials = false
+			}
+		}
+	case 19: // sync credentials
+		if m.cfg.Sync.Provider != config.SyncProviderOff && m.cfg.Sync.Scope.Hosts {
+			m.cfg.Sync.Scope.Credentials = !m.cfg.Sync.Scope.Credentials
+		}
+	case 20: // sync token defs
+		if m.cfg.Sync.Provider != config.SyncProviderOff {
+			m.cfg.Sync.Scope.TokenDefinitions = !m.cfg.Sync.Scope.TokenDefinitions
+			m.cfg.Automation.SyncTokenDefinitions = m.cfg.Sync.Scope.TokenDefinitions
+		}
+	case 21: // sync health
+		if m.cfg.Sync.Provider != config.SyncProviderOff {
+			m.cfg.Sync.Scope.Health = !m.cfg.Sync.Scope.Health
+		}
+	case 22: // sync mounts
+		if m.cfg.Sync.Provider != config.SyncProviderOff {
+			m.cfg.Sync.Scope.MountState = !m.cfg.Sync.Scope.MountState
+		}
+	case 23, 24, 25, 26: // sync repo/key/branch/local - editable
+	case 27: // beta releases
 		if strings.EqualFold(m.cfg.Updates.ReleaseChannel, "beta") {
 			m.cfg.Updates.ReleaseChannel = "stable"
 		} else {
 			m.cfg.Updates.ReleaseChannel = "beta"
 		}
-	case 22: // auto apply updates
+	case 28: // auto apply updates
 		m.cfg.Updates.AutoApplyUpdates = !m.cfg.Updates.AutoApplyUpdates
-	case 31: // manage tokens (opens token page)
-	case 32: // sync token definitions
-		if m.cfg.Sync.Enabled {
-			m.cfg.Automation.SyncTokenDefinitions = !m.cfg.Automation.SyncTokenDefinitions
+	case 37: // manage tokens (opens token page)
+	case 38: // sync token definitions
+		if m.cfg.Sync.Provider != config.SyncProviderOff {
+			m.cfg.Sync.Scope.TokenDefinitions = !m.cfg.Sync.Scope.TokenDefinitions
+			m.cfg.Automation.SyncTokenDefinitions = m.cfg.Sync.Scope.TokenDefinitions
 		}
 	}
 }
@@ -1531,16 +1803,16 @@ func (m *Model) applySettingsEditValue(idx int, val string) bool {
 			}
 		}
 		m.cfg.Mount.LocalMountPath = val
-	case 17: // sync repo
+	case 23: // sync repo
 		m.cfg.Sync.RepoURL = val
-	case 18: // sync key path
+	case 24: // sync key path
 		m.cfg.Sync.SSHKeyPath = val
-	case 19: // sync branch
+	case 25: // sync branch
 		if val == "" {
 			val = "main"
 		}
 		m.cfg.Sync.Branch = val
-	case 20: // sync local path
+	case 26: // sync local path
 		m.cfg.Sync.LocalPath = val
 	}
 	return true
@@ -1675,6 +1947,7 @@ func (m Model) buildTeamsViewParams() ui.TeamsHomeViewParams {
 		StatusLines:       statusLines,
 		FooterText:        footer,
 		HealthDisplayMode: string(m.cfg.UI.HealthDisplayMode),
+		CommandLine:       m.buildCommandLineView(),
 	}
 }
 
@@ -1751,6 +2024,7 @@ func (m Model) buildHomeViewParams() ui.HomeViewParams {
 		HostCount:         len(m.hosts),
 		Connected:         connected,
 		HealthDisplayMode: string(m.cfg.UI.HealthDisplayMode),
+		CommandLine:       m.buildCommandLineView(),
 	}
 }
 

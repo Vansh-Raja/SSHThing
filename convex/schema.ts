@@ -104,12 +104,117 @@ export default defineSchema({
         hostLabel: v.optional(v.string()),
         credentialMode: v.optional(v.string()),
         credentialType: v.optional(v.string()),
+        tokenName: v.optional(v.string()),
+        command: v.optional(v.string()),
+        status: v.optional(v.string()),
+        exitCode: v.optional(v.number()),
       }),
     ),
     createdAt: v.number(),
   })
     .index("by_team_and_created_at", ["teamId", "createdAt"])
     .index("by_entity_and_created_at", ["entityId", "createdAt"]),
+
+  teamAutomationTokens: defineTable({
+    teamId: v.id("teams"),
+    name: v.string(),
+    tokenId: v.string(),
+    tokenHash: v.string(),
+    createdByClerkUserId: v.string(),
+    createdByDisplayName: v.string(),
+    status: v.string(),
+    expiresAt: v.optional(v.number()),
+    maxUses: v.optional(v.number()),
+    useCount: v.number(),
+    lastUsedAt: v.optional(v.number()),
+    revokedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_team", ["teamId"])
+    .index("by_token_id", ["tokenId"])
+    .index("by_team_and_token_id", ["teamId", "tokenId"]),
+
+  teamAutomationTokenHosts: defineTable({
+    tokenDocId: v.id("teamAutomationTokens"),
+    teamId: v.id("teams"),
+    hostId: v.id("teamHosts"),
+    hostLabel: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_token", ["tokenDocId"])
+    .index("by_host", ["hostId"])
+    .index("by_team", ["teamId"]),
+
+  teamAutomationTokenExecutions: defineTable({
+    teamId: v.id("teams"),
+    tokenDocId: v.id("teamAutomationTokens"),
+    tokenId: v.string(),
+    tokenName: v.string(),
+    createdByClerkUserId: v.string(),
+    createdByDisplayName: v.string(),
+    hostId: v.optional(v.id("teamHosts")),
+    hostLabel: v.optional(v.string()),
+    command: v.string(),
+    clientDevice: v.optional(v.string()),
+    status: v.string(),
+    exitCode: v.optional(v.number()),
+    error: v.optional(v.string()),
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+  })
+    .index("by_team_and_started_at", ["teamId", "startedAt"])
+    .index("by_token_and_started_at", ["tokenDocId", "startedAt"]),
+
+  personalVaults: defineTable({
+    clerkUserId: v.string(),
+    name: v.string(),
+    status: v.string(),
+    schemaVersion: v.number(),
+    encryptionVersion: v.string(),
+    kdf: v.object({
+      name: v.string(),
+      iterations: v.number(),
+      salt: v.string(),
+    }),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user", ["clerkUserId"]),
+
+  personalVaultItems: defineTable({
+    vaultId: v.id("personalVaults"),
+    clerkUserId: v.string(),
+    itemType: v.string(),
+    syncId: v.string(),
+    ciphertext: v.string(),
+    nonce: v.string(),
+    updatedAt: v.number(),
+    deletedAt: v.optional(v.number()),
+    schemaVersion: v.number(),
+  })
+    .index("by_vault", ["vaultId"])
+    .index("by_vault_and_sync_id", ["vaultId", "syncId"])
+    .index("by_vault_and_updated_at", ["vaultId", "updatedAt"]),
+
+  personalVaultDevices: defineTable({
+    vaultId: v.id("personalVaults"),
+    clerkUserId: v.string(),
+    deviceId: v.string(),
+    deviceName: v.string(),
+    lastSyncAt: v.number(),
+    createdAt: v.number(),
+  }).index("by_vault", ["vaultId"]),
+
+  personalVaultSyncEvents: defineTable({
+    vaultId: v.id("personalVaults"),
+    clerkUserId: v.string(),
+    deviceId: v.optional(v.string()),
+    source: v.string(),
+    action: v.string(),
+    itemType: v.optional(v.string()),
+    itemCount: v.optional(v.number()),
+    createdAt: v.number(),
+  }).index("by_vault_and_created_at", ["vaultId", "createdAt"]),
 
   cliAuthSessions: defineTable({
     deviceName: v.string(),

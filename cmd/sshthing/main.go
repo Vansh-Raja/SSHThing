@@ -90,6 +90,7 @@ func main() {
 			fmt.Println()
 			fmt.Println("Exec Usage:")
 			fmt.Println("  sshthing exec -t <target_label> --auth <token> \"command\"")
+			fmt.Println("  sshthing exec --team-id <team_id> --target-id <host_id> --auth <stt_token> \"command\"")
 			fmt.Println("  sshthing exec -t <target_label> --auth-file <path> \"command\"")
 			fmt.Println("  sshthing exec -t <target_label> --auth-stdin \"command\"")
 			fmt.Println("  sshthing exec --in <local_file> -t <target> --auth-file <path> \"cmd reading stdin\"")
@@ -144,25 +145,26 @@ func main() {
 }
 
 func runExec(args []string) error {
-	target, token, command, authMode, inPath, err := parseExecArgs(args)
+	af, command, inPath, err := parseExecArgs(args)
 	if err != nil {
 		return err
 	}
-	if authMode == "direct" {
+	if af.AuthMode == "direct" {
 		fmt.Fprintln(os.Stderr, "warning: --auth may leak via shell history/process args; prefer --auth-file or --auth-stdin")
 	}
 
-	rc, err := resolveTokenAndConn(target, token)
+	rc, err := resolveAuthAndConn(af, command)
 	if err != nil {
 		return err
 	}
 	if rc.DBStore != nil {
 		defer rc.DBStore.Close()
 	}
-	defer rc.FinalizeAfterRun()
 
 	cmd, tempKey, err := ssh.ConnectExec(rc.Conn, command)
 	if err != nil {
+		rc.FinishTeamExecution(err)
+		rc.FinalizeAfterRun()
 		return err
 	}
 	if tempKey != nil {
@@ -174,29 +176,36 @@ func runExec(args []string) error {
 	if inPath != "" {
 		f, openErr := os.Open(inPath)
 		if openErr != nil {
-			return fmt.Errorf("--in: %w", openErr)
+			err := fmt.Errorf("--in: %w", openErr)
+			rc.FinishTeamExecution(err)
+			rc.FinalizeAfterRun()
+			return err
 		}
 		defer f.Close()
 		cmd.Stdin = f
 	}
 
-	return propagateExitCode(cmd.Run())
+	runErr := cmd.Run()
+	rc.FinishTeamExecution(runErr)
+	rc.FinalizeAfterRun()
+	return propagateExitCode(runErr)
 }
 
 // parseExecArgs walks `sshthing exec` argv. Returns the resolved target,
 // token, remote command, auth source mode, and an optional --in path that
 // overrides stdin. The auth flag parsing is delegated to extractAuthFlags so
 // cp/put/get can share it.
-func parseExecArgs(args []string) (target string, token string, command string, authMode string, inPath string, err error) {
+func parseExecArgs(args []string) (authFlags, string, string, error) {
 	// Pull --in out before passing the rest to extractAuthFlags so it doesn't
 	// land in the leftover positional args.
+	var inPath string
 	filtered := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--in" {
 			i++
 			if i >= len(args) {
-				return "", "", "", "", "", fmt.Errorf("missing value for --in")
+				return authFlags{}, "", "", fmt.Errorf("missing value for --in")
 			}
 			inPath = strings.TrimSpace(args[i])
 			continue
@@ -206,14 +215,14 @@ func parseExecArgs(args []string) (target string, token string, command string, 
 
 	af, leftover, perr := extractAuthFlags(filtered)
 	if perr != nil {
-		return "", "", "", "", "", perr
+		return authFlags{}, "", "", perr
 	}
 
-	command = strings.TrimSpace(strings.Join(leftover, " "))
+	command := strings.TrimSpace(strings.Join(leftover, " "))
 	if command == "" {
-		return "", "", "", "", "", fmt.Errorf("remote command is required")
+		return authFlags{}, "", "", fmt.Errorf("remote command is required")
 	}
-	return af.Target, af.Token, command, af.AuthMode, inPath, nil
+	return af, command, inPath, nil
 }
 
 func runSession(args []string) error {

@@ -168,6 +168,66 @@ type TeamAuditEvent struct {
 	CreatedAt         int64  `json:"createdAt"`
 }
 
+type TeamAutomationTokenHostGrant struct {
+	HostID    string `json:"hostId"`
+	HostLabel string `json:"hostLabel"`
+}
+
+type TeamAutomationToken struct {
+	ID                   string                         `json:"id"`
+	TeamID               string                         `json:"teamId"`
+	TokenID              string                         `json:"tokenId"`
+	Name                 string                         `json:"name"`
+	Status               string                         `json:"status"`
+	HostCount            int                            `json:"hostCount"`
+	Hosts                []TeamAutomationTokenHostGrant `json:"hosts,omitempty"`
+	CreatedByClerkUserID string                         `json:"createdByClerkUserId,omitempty"`
+	CreatedByDisplayName string                         `json:"createdByDisplayName,omitempty"`
+	CreatedAt            int64                          `json:"createdAt"`
+	UpdatedAt            int64                          `json:"updatedAt"`
+	LastUsedAt           *int64                         `json:"lastUsedAt,omitempty"`
+	UseCount             int                            `json:"useCount"`
+	ExpiresAt            *int64                         `json:"expiresAt,omitempty"`
+	MaxUses              *int                           `json:"maxUses,omitempty"`
+	RevokedAt            *int64                         `json:"revokedAt,omitempty"`
+}
+
+type CreateTeamAutomationTokenRequest struct {
+	Name      string   `json:"name"`
+	HostIDs   []string `json:"hostIds"`
+	ExpiresAt *int64   `json:"expiresAt,omitempty"`
+	MaxUses   *int     `json:"maxUses,omitempty"`
+}
+
+type CreateTeamAutomationTokenResponse struct {
+	ID        string `json:"id"`
+	TokenID   string `json:"tokenId"`
+	Name      string `json:"name"`
+	CreatedAt int64  `json:"createdAt"`
+	RawToken  string `json:"rawToken"`
+}
+
+type TeamTokenResolveRequest struct {
+	Token        string `json:"token"`
+	TeamID       string `json:"teamId,omitempty"`
+	Target       string `json:"target,omitempty"`
+	TargetID     string `json:"targetId,omitempty"`
+	Command      string `json:"command"`
+	ClientDevice string `json:"clientDevice,omitempty"`
+}
+
+type TeamTokenResolveResponse struct {
+	ExecutionID string                `json:"executionId"`
+	Host        TeamHostConnectConfig `json:"host"`
+}
+
+type TeamTokenExecutionFinishRequest struct {
+	Token    string `json:"token"`
+	Status   string `json:"status"`
+	ExitCode *int   `json:"exitCode,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
 type AuthState struct {
 	Authenticated bool   `json:"authenticated"`
 	UserID        string `json:"userId,omitempty"`

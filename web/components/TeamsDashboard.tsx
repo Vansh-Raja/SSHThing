@@ -9,12 +9,14 @@ import TabAudit from "./teams/TabAudit";
 import TabHosts from "./teams/TabHosts";
 import TabInvites from "./teams/TabInvites";
 import TabMembers from "./teams/TabMembers";
+import TabTokens from "./teams/TabTokens";
 import TeamBar from "./teams/TeamBar";
 import { apiRequest, errorMessage } from "./teams/api";
 import type {
   DashboardTab,
   InviteResponse,
   TeamAuditEvent,
+  TeamAutomationToken,
   TeamHost,
   TeamMember,
   TeamRole,
@@ -23,7 +25,7 @@ import type {
 import { confirmDialog, promptDialog } from "./ui/dialogs";
 import { toast } from "./ui/toast";
 
-const ALL_TABS: DashboardTab[] = ["members", "hosts", "invites", "audit"];
+const ALL_TABS: DashboardTab[] = ["members", "hosts", "invites", "tokens", "audit"];
 const BASE_TABS: DashboardTab[] = ["members", "hosts", "invites"];
 
 async function copyText(value: string, successMessage: string) {
@@ -48,6 +50,7 @@ export default function TeamsDashboard() {
     sent: [],
   });
   const [auditEvents, setAuditEvents] = useState<TeamAuditEvent[]>([]);
+  const [teamTokens, setTeamTokens] = useState<TeamAutomationToken[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Drawer state.
@@ -155,6 +158,17 @@ export default function TeamsDashboard() {
     }
   }, []);
 
+  const loadTeamTokens = useCallback(async (teamId: string) => {
+    try {
+      const tokens = await apiRequest<TeamAutomationToken[]>(
+        `/api/teams/${teamId}/tokens`,
+      );
+      setTeamTokens(tokens);
+    } catch (err) {
+      toast.error(errorMessage(err, "tokens_load_failed"));
+    }
+  }, []);
+
   useEffect(() => {
     if (!selectedTeamId || !canManage || activeTab !== "audit") {
       if (activeTab !== "audit") setAuditEvents([]);
@@ -162,6 +176,14 @@ export default function TeamsDashboard() {
     }
     void loadAuditEvents(selectedTeamId);
   }, [selectedTeamId, canManage, activeTab, loadAuditEvents]);
+
+  useEffect(() => {
+    if (!selectedTeamId || !canManage || activeTab !== "tokens") {
+      if (activeTab !== "tokens") setTeamTokens([]);
+      return;
+    }
+    void loadTeamTokens(selectedTeamId);
+  }, [selectedTeamId, canManage, activeTab, loadTeamTokens]);
 
   async function refreshTeams(preferredTeamId?: string) {
     try {
@@ -375,6 +397,75 @@ export default function TeamsDashboard() {
     await loadAuditEvents(selectedTeamId);
   }
 
+  async function handleCreateTeamToken() {
+    if (!selectedTeamId || hosts.length === 0) return;
+    const name = await promptDialog({
+      title: "Create team token",
+      label: "Token name",
+      placeholder: "claude-office-agent",
+      confirmLabel: "Create",
+      validate: (value) => (value ? null : "Name is required."),
+    });
+    if (!name) return;
+    try {
+      const created = await apiRequest<{ rawToken: string }>(
+        `/api/teams/${selectedTeamId}/tokens`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name,
+            hostIds: hosts.map((host) => host.id),
+          }),
+        },
+      );
+      await copyText(created.rawToken, "Copied team token. Store it now; it will not be shown again.");
+      await loadTeamTokens(selectedTeamId);
+      toast.success("Team token created.");
+    } catch (err) {
+      toast.error(errorMessage(err, "create_team_token_failed"));
+    }
+  }
+
+  async function handleRevokeTeamToken(tokenDocId: string, name: string) {
+    if (!selectedTeamId) return;
+    const ok = await confirmDialog({
+      title: "Revoke team token",
+      message: `Revoke ${name}? Agents using it will stop working immediately.`,
+      variant: "danger",
+      confirmLabel: "Revoke",
+    });
+    if (!ok) return;
+    try {
+      await apiRequest(`/api/teams/${selectedTeamId}/tokens/${tokenDocId}`, {
+        method: "POST",
+      });
+      await loadTeamTokens(selectedTeamId);
+      toast.success("Team token revoked.");
+    } catch (err) {
+      toast.error(errorMessage(err, "revoke_team_token_failed"));
+    }
+  }
+
+  async function handleDeleteTeamToken(tokenDocId: string, name: string) {
+    if (!selectedTeamId) return;
+    const ok = await confirmDialog({
+      title: "Delete revoked token",
+      message: `Delete revoked token ${name}? Execution logs will remain.`,
+      variant: "danger",
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
+    try {
+      await apiRequest(`/api/teams/${selectedTeamId}/tokens/${tokenDocId}`, {
+        method: "DELETE",
+      });
+      await loadTeamTokens(selectedTeamId);
+      toast.success("Revoked team token deleted.");
+    } catch (err) {
+      toast.error(errorMessage(err, "delete_team_token_failed"));
+    }
+  }
+
   const pendingInvitesCount = invites.sent.filter(
     (invite) => invite.status === "pending",
   ).length;
@@ -459,6 +550,18 @@ export default function TeamsDashboard() {
             void copyText(url, `Copied invite link for ${email}.`)
           }
           onRevoke={(id) => void handleRevokeInvite(id)}
+        />
+      ) : null}
+
+      {activeTab === "tokens" ? (
+        <TabTokens
+          selectedTeam={selectedTeam}
+          tokens={teamTokens}
+          hosts={hosts}
+          canManage={canManage}
+          onCreate={() => void handleCreateTeamToken()}
+          onRevoke={(id, name) => void handleRevokeTeamToken(id, name)}
+          onDelete={(id, name) => void handleDeleteTeamToken(id, name)}
         />
       ) : null}
 

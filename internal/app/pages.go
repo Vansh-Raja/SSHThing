@@ -35,7 +35,7 @@ func (m Model) visiblePages() []int {
 		if !m.profileSignedIn() {
 			return []int{PageProfile, PageSettings}
 		}
-		return []int{PageTeams, PageProfile, PageSettings}
+		return []int{PageTeams, PageProfile, PageSettings, PageTokens}
 	default:
 		return []int{PageHome, PageProfile, PageSettings, PageTokens}
 	}
@@ -165,7 +165,11 @@ func (m *Model) enterPage(page int) {
 		m.settingsFilter = ""
 		m.settingsSearching = false
 	case PageTokens:
-		m.loadTokenSummaries()
+		if m.appMode == appModeTeams {
+			m.loadTeamTokenSummaries()
+		} else {
+			m.loadTokenSummaries()
+		}
 	case PageTeams:
 		m.prepareTeamsPage()
 	}

@@ -132,18 +132,20 @@ func runCp(args []string) error {
 		}
 	}
 
-	rc, err := resolveTokenAndConn(cf.Auth.Target, cf.Auth.Token)
+	rc, err := resolveAuthAndConn(cf.Auth, "cp "+strings.Join(append(cf.Sources, cf.Dest), " "))
 	if err != nil {
 		return err
 	}
 	if rc.DBStore != nil {
 		defer rc.DBStore.Close()
 	}
-	defer rc.FinalizeAfterRun()
 
 	// Streaming path: routes through ConnectExec with cat-style remote command.
 	if streamCount == 1 {
-		return runCpStreaming(rc, srcs, destKind, destPath)
+		runErr := runCpStreaming(rc, srcs, destKind, destPath)
+		rc.FinishTeamExecution(runErr)
+		rc.FinalizeAfterRun()
+		return propagateExitCode(runErr)
 	}
 
 	// Filesystem path: build TransferOps and run sftp batch.
@@ -171,12 +173,17 @@ func runCp(args []string) error {
 
 	cmd, holder, err := ssh.ConnectTransfer(rc.Conn, ops, cf.Quiet)
 	if err != nil {
+		rc.FinishTeamExecution(err)
+		rc.FinalizeAfterRun()
 		return err
 	}
 	if holder != nil {
 		defer holder.Cleanup()
 	}
-	return propagateExitCode(cmd.Run())
+	runErr := cmd.Run()
+	rc.FinishTeamExecution(runErr)
+	rc.FinalizeAfterRun()
+	return propagateExitCode(runErr)
 }
 
 // cpSource is one classified positional path on the cp argv.
@@ -204,7 +211,7 @@ func runCpStreaming(rc *runContext, srcs []cpSource, destKind pathKind, destPath
 			defer tempKey.Cleanup()
 		}
 		// stdin is os.Stdin (default); leave it alone.
-		return propagateExitCode(cmd.Run())
+		return cmd.Run()
 	}
 
 	// destKind == pathStream — download remote → stdout.
@@ -221,7 +228,7 @@ func runCpStreaming(rc *runContext, srcs []cpSource, destKind pathKind, destPath
 		defer tempKey.Cleanup()
 	}
 	// stdout is os.Stdout (default).
-	return propagateExitCode(cmd.Run())
+	return cmd.Run()
 }
 
 // singleQuoteRemote wraps a remote path in single quotes for the bourne shell
@@ -322,21 +329,24 @@ func runPut(args []string) error {
 	if pf.Auth.AuthMode == "direct" {
 		fmt.Fprintln(os.Stderr, "warning: --auth may leak via shell history/process args; prefer --auth-file or --auth-stdin")
 	}
-	rc, err := resolveTokenAndConn(pf.Auth.Target, pf.Auth.Token)
+	rc, err := resolveAuthAndConn(pf.Auth, "put "+pf.Remote)
 	if err != nil {
 		return err
 	}
 	if rc.DBStore != nil {
 		defer rc.DBStore.Close()
 	}
-	defer rc.FinalizeAfterRun()
 
 	quoted, err := singleQuoteRemote(pf.Remote)
 	if err != nil {
+		rc.FinishTeamExecution(err)
+		rc.FinalizeAfterRun()
 		return err
 	}
 	cmd, tempKey, err := ssh.ConnectExec(rc.Conn, "cat > "+quoted)
 	if err != nil {
+		rc.FinishTeamExecution(err)
+		rc.FinalizeAfterRun()
 		return err
 	}
 	if tempKey != nil {
@@ -345,12 +355,18 @@ func runPut(args []string) error {
 	if pf.InPath != "" {
 		f, openErr := os.Open(pf.InPath)
 		if openErr != nil {
-			return fmt.Errorf("--in: %w", openErr)
+			err := fmt.Errorf("--in: %w", openErr)
+			rc.FinishTeamExecution(err)
+			rc.FinalizeAfterRun()
+			return err
 		}
 		defer f.Close()
 		cmd.Stdin = f
 	}
-	return propagateExitCode(cmd.Run())
+	runErr := cmd.Run()
+	rc.FinishTeamExecution(runErr)
+	rc.FinalizeAfterRun()
+	return propagateExitCode(runErr)
 }
 
 func runGet(args []string) error {
@@ -361,21 +377,24 @@ func runGet(args []string) error {
 	if gf.Auth.AuthMode == "direct" {
 		fmt.Fprintln(os.Stderr, "warning: --auth may leak via shell history/process args; prefer --auth-file or --auth-stdin")
 	}
-	rc, err := resolveTokenAndConn(gf.Auth.Target, gf.Auth.Token)
+	rc, err := resolveAuthAndConn(gf.Auth, "get "+gf.Remote)
 	if err != nil {
 		return err
 	}
 	if rc.DBStore != nil {
 		defer rc.DBStore.Close()
 	}
-	defer rc.FinalizeAfterRun()
 
 	quoted, err := singleQuoteRemote(gf.Remote)
 	if err != nil {
+		rc.FinishTeamExecution(err)
+		rc.FinalizeAfterRun()
 		return err
 	}
 	cmd, tempKey, err := ssh.ConnectExec(rc.Conn, "cat "+quoted)
 	if err != nil {
+		rc.FinishTeamExecution(err)
+		rc.FinalizeAfterRun()
 		return err
 	}
 	if tempKey != nil {
@@ -384,10 +403,16 @@ func runGet(args []string) error {
 	if gf.OutPath != "" {
 		f, openErr := os.Create(gf.OutPath)
 		if openErr != nil {
-			return fmt.Errorf("--out: %w", openErr)
+			err := fmt.Errorf("--out: %w", openErr)
+			rc.FinishTeamExecution(err)
+			rc.FinalizeAfterRun()
+			return err
 		}
 		defer f.Close()
 		cmd.Stdout = f
 	}
-	return propagateExitCode(cmd.Run())
+	runErr := cmd.Run()
+	rc.FinishTeamExecution(runErr)
+	rc.FinalizeAfterRun()
+	return propagateExitCode(runErr)
 }

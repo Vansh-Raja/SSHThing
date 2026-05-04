@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Vansh-Raja/SSHThing/internal/personalsync"
 	"github.com/Vansh-Raja/SSHThing/internal/teams"
 )
 
@@ -180,10 +181,66 @@ func (c *Client) ListTeamAuditEvents(ctx context.Context, accessToken, teamID st
 	return out, err
 }
 
+func (c *Client) ListTeamTokens(ctx context.Context, accessToken, teamID string) ([]teams.TeamAutomationToken, error) {
+	var out []teams.TeamAutomationToken
+	err := c.doJSON(ctx, http.MethodGet, "/api/teams/"+url.PathEscape(teamID)+"/tokens", accessToken, nil, &out)
+	return out, err
+}
+
+func (c *Client) CreateTeamToken(ctx context.Context, accessToken, teamID string, req teams.CreateTeamAutomationTokenRequest) (teams.CreateTeamAutomationTokenResponse, error) {
+	var out teams.CreateTeamAutomationTokenResponse
+	err := c.doJSON(ctx, http.MethodPost, "/api/teams/"+url.PathEscape(teamID)+"/tokens", accessToken, req, &out)
+	return out, err
+}
+
+func (c *Client) RevokeTeamToken(ctx context.Context, accessToken, teamID, tokenDocID string) error {
+	return c.doJSON(ctx, http.MethodPost, "/api/teams/"+url.PathEscape(teamID)+"/tokens/"+url.PathEscape(tokenDocID), accessToken, map[string]any{}, nil)
+}
+
+func (c *Client) DeleteRevokedTeamToken(ctx context.Context, accessToken, teamID, tokenDocID string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/api/teams/"+url.PathEscape(teamID)+"/tokens/"+url.PathEscape(tokenDocID), accessToken, nil, nil)
+}
+
 func (c *Client) GetTeamHostConnectConfig(ctx context.Context, accessToken, hostID string) (teams.TeamHostConnectConfig, error) {
 	var out teams.TeamHostConnectConfig
 	err := c.doJSON(ctx, http.MethodPost, "/api/teams/hosts/"+url.PathEscape(hostID)+"/connect-config", accessToken, map[string]any{}, &out)
 	return out, err
+}
+
+func (c *Client) ResolveTeamToken(ctx context.Context, req teams.TeamTokenResolveRequest) (teams.TeamTokenResolveResponse, error) {
+	var out teams.TeamTokenResolveResponse
+	err := c.doJSON(ctx, http.MethodPost, "/api/teams/tokens/resolve", "", req, &out)
+	return out, err
+}
+
+func (c *Client) FinishTeamTokenExecution(ctx context.Context, executionID string, req teams.TeamTokenExecutionFinishRequest) error {
+	return c.doJSON(ctx, http.MethodPost, "/api/teams/tokens/executions/"+url.PathEscape(executionID)+"/finish", "", req, nil)
+}
+
+func (c *Client) GetPersonalVault(ctx context.Context, accessToken string) (personalsync.VaultSummary, error) {
+	var out personalsync.VaultSummary
+	err := c.doJSON(ctx, http.MethodGet, "/api/personal/vault", accessToken, nil, &out)
+	return out, err
+}
+
+func (c *Client) ListPersonalVaultItems(ctx context.Context, accessToken, since string) (personalsync.ListItemsResponse, error) {
+	path := "/api/personal/vault/items"
+	if strings.TrimSpace(since) != "" {
+		path += "?since=" + url.QueryEscape(since)
+	}
+	var out personalsync.ListItemsResponse
+	err := c.doJSON(ctx, http.MethodGet, path, accessToken, nil, &out)
+	return out, err
+}
+
+func (c *Client) UpsertPersonalVaultItems(ctx context.Context, accessToken string, req personalsync.UpsertRequest) (personalsync.UpsertResponse, error) {
+	var out personalsync.UpsertResponse
+	err := c.doJSON(ctx, http.MethodPost, "/api/personal/vault/items", accessToken, req, &out)
+	return out, err
+}
+
+func (c *Client) RecordPersonalSyncEvent(ctx context.Context, accessToken string, req personalsync.SyncEventRequest) error {
+	return c.doJSON(ctx, http.MethodPost, "/api/personal/vault/events", accessToken, req, nil)
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path, accessToken string, body any, out any) error {

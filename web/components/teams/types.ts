@@ -1,6 +1,6 @@
 export type TeamRole = "owner" | "admin" | "member";
 
-export type DashboardTab = "members" | "hosts" | "invites" | "audit";
+export type DashboardTab = "members" | "hosts" | "invites" | "tokens" | "audit";
 
 export type TeamSummary = {
   id: string;
@@ -119,6 +119,25 @@ export type TeamAuditEvent = {
     credentialType?: string;
   } | null;
   createdAt: number;
+};
+
+export type TeamAutomationToken = {
+  id: string;
+  teamId: string;
+  tokenId: string;
+  name: string;
+  status: string;
+  hostCount: number;
+  hosts?: Array<{ hostId: string; hostLabel: string }>;
+  createdByClerkUserId?: string;
+  createdByDisplayName?: string;
+  createdAt: number;
+  updatedAt: number;
+  lastUsedAt?: number | null;
+  useCount: number;
+  expiresAt?: number | null;
+  maxUses?: number | null;
+  revokedAt?: number | null;
 };
 
 export type HostFormState = {

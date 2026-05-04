@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,8 @@ import (
 	"github.com/Vansh-Raja/SSHThing/internal/db"
 	"github.com/Vansh-Raja/SSHThing/internal/securestore"
 	"github.com/Vansh-Raja/SSHThing/internal/ssh"
+	"github.com/Vansh-Raja/SSHThing/internal/teams"
+	"github.com/Vansh-Raja/SSHThing/internal/teamsclient"
 	"github.com/Vansh-Raja/SSHThing/internal/unlock"
 )
 
@@ -28,6 +31,10 @@ type runContext struct {
 	DBStore    *db.Store // non-nil only on the v2 path; caller defers Close
 	DBUnlock   string    // empty on legacy path
 	SessionTTL time.Duration
+
+	TeamClient  *teamsclient.Client
+	TeamToken   string
+	ExecutionID string
 }
 
 // FinalizeAfterRun records the token as used, refreshes the unlock TTL on the
@@ -48,6 +55,35 @@ func (rc *runContext) FinalizeAfterRun() {
 	}
 }
 
+func (rc *runContext) FinishTeamExecution(runErr error) {
+	if rc == nil || rc.TeamClient == nil || strings.TrimSpace(rc.ExecutionID) == "" || strings.TrimSpace(rc.TeamToken) == "" {
+		return
+	}
+	status := "completed"
+	errMsg := ""
+	var exitCode *int
+	if runErr != nil {
+		status = "failed"
+		errMsg = runErr.Error()
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) && exitErr.ProcessState != nil {
+			code := exitErr.ProcessState.ExitCode()
+			exitCode = &code
+		}
+	} else {
+		code := 0
+		exitCode = &code
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = rc.TeamClient.FinishTeamTokenExecution(ctx, rc.ExecutionID, teams.TeamTokenExecutionFinishRequest{
+		Token:    rc.TeamToken,
+		Status:   status,
+		ExitCode: exitCode,
+		Error:    errMsg,
+	})
+}
+
 // resolveTokenAndConn translates (target, token) into a fully-populated
 // runContext. It walks the same legacy-vs-v2 logic as runExec, looking up the
 // device pepper, resolving the token through the vault, and (for v2 tokens)
@@ -56,6 +92,17 @@ func (rc *runContext) FinalizeAfterRun() {
 // On success the returned runContext owns an open *db.Store for v2 tokens —
 // callers MUST defer rc.DBStore.Close() if it's non-nil.
 func resolveTokenAndConn(target, token string) (*runContext, error) {
+	return resolveAuthAndConn(authFlags{Target: target, Token: token}, "")
+}
+
+func resolveAuthAndConn(af authFlags, auditCommand string) (*runContext, error) {
+	if strings.HasPrefix(strings.TrimSpace(af.Token), "stt_") {
+		return resolveTeamTokenAndConn(af, auditCommand)
+	}
+	return resolvePersonalTokenAndConn(af.Target, af.Token)
+}
+
+func resolvePersonalTokenAndConn(target, token string) (*runContext, error) {
 	vault, err := authtoken.LoadVault()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load token vault: %w", err)
@@ -148,9 +195,75 @@ func resolveTokenAndConn(target, token string) (*runContext, error) {
 	return rc, nil
 }
 
+func resolveTeamTokenAndConn(af authFlags, auditCommand string) (*runContext, error) {
+	cfg, cfgErr := config.Load()
+	if cfgErr != nil {
+		cfg = config.Default()
+	}
+	client := teamsclient.New(cliTeamsAPIBaseURL(cfg))
+	deviceName, _ := os.Hostname()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	resolved, err := client.ResolveTeamToken(ctx, teams.TeamTokenResolveRequest{
+		Token:        af.Token,
+		TeamID:       af.TeamID,
+		Target:       af.Target,
+		TargetID:     af.TargetID,
+		Command:      auditCommand,
+		ClientDevice: deviceName,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	term := ""
+	switch cfg.SSH.TermMode {
+	case config.TermXterm:
+		term = "xterm-256color"
+	case config.TermCustom:
+		term = strings.TrimSpace(cfg.SSH.TermCustom)
+	}
+
+	conn := ssh.Connection{
+		Hostname:            resolved.Host.Hostname,
+		Username:            resolved.Host.Username,
+		Port:                resolved.Host.Port,
+		PasswordBackendUnix: string(cfg.SSH.PasswordBackendUnix),
+		HostKeyPolicy:       string(cfg.SSH.HostKeyPolicy),
+		KeepAliveSeconds:    cfg.SSH.KeepAliveSeconds,
+		Term:                term,
+	}
+	switch resolved.Host.CredentialType {
+	case "private_key":
+		conn.PrivateKey = resolved.Host.Secret
+	case "password":
+		conn.Password = resolved.Host.Secret
+	}
+
+	return &runContext{
+		Conn:        conn,
+		TeamClient:  client,
+		TeamToken:   af.Token,
+		ExecutionID: resolved.ExecutionID,
+	}, nil
+}
+
+func cliTeamsAPIBaseURL(cfg config.Config) string {
+	if value := strings.TrimRight(strings.TrimSpace(cfg.Teams.APIBaseURL), "/"); value != "" {
+		return value
+	}
+	if value := strings.TrimRight(strings.TrimSpace(os.Getenv("SSHTHING_CLOUD_BASE_URL")), "/"); value != "" {
+		return value
+	}
+	return "http://localhost:3000"
+}
+
 // authFlags captures the auth-source flags shared by exec / cp / put / get.
 type authFlags struct {
 	Target   string
+	TargetID string
+	Team     string
+	TeamID   string
 	Token    string // resolved (possibly read from file/stdin)
 	AuthMode string // "direct" | "file" | "stdin"
 }
@@ -173,6 +286,24 @@ func extractAuthFlags(args []string) (af authFlags, leftover []string, err error
 				return af, nil, fmt.Errorf("missing value for %s", a)
 			}
 			af.Target = strings.TrimSpace(args[i])
+		case "--target-id":
+			i++
+			if i >= len(args) {
+				return af, nil, fmt.Errorf("missing value for %s", a)
+			}
+			af.TargetID = strings.TrimSpace(args[i])
+		case "--team":
+			i++
+			if i >= len(args) {
+				return af, nil, fmt.Errorf("missing value for %s", a)
+			}
+			af.Team = strings.TrimSpace(args[i])
+		case "--team-id":
+			i++
+			if i >= len(args) {
+				return af, nil, fmt.Errorf("missing value for %s", a)
+			}
+			af.TeamID = strings.TrimSpace(args[i])
 		case "--auth":
 			if af.AuthMode != "" {
 				return af, nil, fmt.Errorf("only one auth source can be provided")
@@ -208,8 +339,8 @@ func extractAuthFlags(args []string) (af authFlags, leftover []string, err error
 		}
 	}
 
-	if af.Target == "" {
-		return af, nil, fmt.Errorf("target label is required (use -t)")
+	if af.Target == "" && af.TargetID == "" {
+		return af, nil, fmt.Errorf("target label or id is required (use -t or --target-id)")
 	}
 	if af.AuthMode == "" {
 		return af, nil, fmt.Errorf("auth token is required (--auth, --auth-file, or --auth-stdin)")
