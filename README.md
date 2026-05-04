@@ -23,7 +23,7 @@ A secure, modern SSH host manager TUI built with Go and Bubble Tea.
 - 🔌 **SSH connect**: connects using system `ssh`
 - 🔎 **Spotlight search**: `/` to search and connect quickly
 - 📁 **SSHFS Mounts (beta)**: mounts remote filesystems via SSHFS (macOS Finder / Linux file manager)
-- 🔄 **Git Sync**: sync hosts across devices via a private Git repository
+- 🔄 **Personal Sync**: choose Git sync or E2EE SSHThing Cloud sync through Convex
 
 ### 📅 Planned
 - SSH config integration
@@ -260,21 +260,34 @@ sudo dnf install fuse-sshfs
 sudo pacman -S sshfs
 ```
 
-## Keybindings
+## Commands and Keybindings
 
-### Main View
+SSHThing's main views use a small universal key set and a `:` command palette
+for everything else.
+
+### Main Views
 - `↑/↓` or `j/k`: navigate
-- `Enter`: connect to selected host (SSH)
-- `S` then `Enter`: connect to selected host (SFTP)
-- `M` then `Enter`: mount/unmount selected host (beta, macOS/Linux)
-- `Shift+Y`: sync hosts with Git repository
-- `a`: add host
-- `e`: edit host
-- `d`: delete host
-- `/`: spotlight search
-- `,`: settings
-- `?`: help
-- `q`: quit
+- `Enter`: connect, select, or toggle the focused item
+- `/`: search hosts
+- `:`: open the command palette with autocomplete
+- `q`: quit or return home, depending on context
+
+Useful commands:
+- `:add`: add a host or team host
+- `:edit`: edit the selected item
+- `:delete`: open the delete confirmation for the selected item
+- `:health`: refresh host health
+- `:sync`: sync personal hosts with the configured provider
+- `:settings`: open settings
+- `:profile`: open cloud profile
+- `:tokens`: manage automation tokens
+- `:teams`: switch to Teams mode
+- `:home`: return to personal hosts
+- `:help`: show available commands and shortcuts
+
+Legacy one-key shortcuts such as `a`, `e`, `d`, `S`, `M`, and `Shift+Y` may
+still work for compatibility, but `:` is the primary discoverable action
+surface.
 
 ### Add/Edit Modal
 - `Tab` / `Shift+Tab` or `↑/↓`: move between fields
@@ -288,6 +301,31 @@ sudo pacman -S sshfs
 - `S` then `Enter`: connect (SFTP)
 - `M` then `Enter`: mount/unmount (beta, macOS/Linux)
 
+## Personal Sync
+
+SSHThing supports one active personal sync provider at a time:
+
+- **Off**: local-only personal library.
+- **GitHub/Git**: encrypted sync file committed to your private Git repository.
+- **SSHThing Cloud**: account-backed Convex sync with end-to-end encrypted personal vault records.
+
+SSHThing Cloud personal sync uses the same sign-in as Teams, but personal data is separate from Teams data. Convex stores encrypted personal vault items only; the server does not receive your sync password, decrypted host metadata, passwords, or private keys.
+
+The default portable sync scope includes hosts, groups, tags, credentials, and token definitions. Health snapshots, mounts, and other machine-specific runtime state stay local by default.
+
+### SSHThing Cloud Setup
+
+1. Sign in from `:profile`.
+2. Open `:settings`.
+3. Set **Sync: Provider** → `sshthing cloud`.
+4. Confirm the portable sync scope rows match what you want to sync.
+5. Press `Esc` to save settings.
+6. Run `:sync`.
+
+The TUI uses your local master password as the first-cut sync password. In the browser, open `/personal` and enter that sync password to unlock and edit your personal library with WebCrypto. The password stays in memory for the current browser tab only; refreshing requires unlocking again.
+
+If you lose the sync password, the cloud vault cannot be decrypted.
+
 ## Git Sync
 
 Sync your hosts across multiple devices using a private Git repository.
@@ -296,12 +334,12 @@ Sync your hosts across multiple devices using a private Git repository.
 
 1. Create a **private** Git repository (e.g., on GitHub). It can be empty.
 2. Ensure your SSH key has **read/write access** to the repo (e.g., add it to GitHub as a Deploy Key or to your account).
-3. Press `,` to open Settings.
-4. Enable **Sync: Enabled**.
+3. Run `:settings` to open Settings.
+4. Set **Sync: Provider** → `github`.
 5. Set **Sync: Repository URL** (e.g., `git@github.com:username/sshthing-sync.git`).
 6. Set **Sync: SSH Key Path** (defaults to `~/.ssh/id_ed25519` if left empty).
 7. Press `Esc` to save settings.
-8. Press `Shift+Y` to sync.
+8. Run `:sync` to sync.
 
 ### How It Works
 
@@ -323,10 +361,10 @@ Sync your hosts across multiple devices using a private Git repository.
 1. Set up sync on your primary device and push
 2. On a new device, install SSHThing and create a database with the **same master password**
 3. Configure the same sync repository URL
-4. Press `Shift+Y` to pull hosts from the remote
+4. Run `:sync` to pull hosts from the remote
 
 The sync status is displayed in the footer (e.g., "Sync: 2m ago", "Syncing...", or "Error: ...").
-When you press `Shift+Y`, SSHThing now runs sync asynchronously and shows a live syncing indicator + loading bar in the footer while work is in progress.
+When you run `:sync`, SSHThing runs sync asynchronously and shows a live syncing indicator + loading bar while work is in progress.
 
 ## SSHThing Teams Browser Setup
 
@@ -402,6 +440,30 @@ Also supported:
 sshthing exec -t "Production App Server" --auth-file /path/to/token.txt "hostname"
 printf 'stk_xxx_yyy' | sshthing exec -t "Production App Server" --auth-stdin "hostname"
 ```
+
+### Teams automation tokens
+
+When SSHThing is in Teams mode, the Tokens page creates backend-managed team
+tokens with an `stt_...` prefix. These are intended for AI agents and shared
+automation:
+
+- Owners/admins can create, list, revoke, and delete revoked team tokens.
+- Token scope is stored on the Teams backend and points at team host IDs.
+- Every `sshthing exec`, `cp`, `put`, or `get` resolution records the command,
+  token name, creator, target host, client device, status, and exit code.
+- stdout/stderr are not stored by default.
+- Revoked tokens stop resolving centrally.
+
+Example:
+
+```bash
+sshthing exec --team-id "<team_id>" --target-id "<host_id>" --auth-file ./agent.token "nvidia-smi"
+sshthing exec -t "GPU Server" --auth-file ./agent.token "uptime"
+```
+
+Prefer `--target-id` for long-running agents so label changes do not break
+automation. `-t "label"` is supported when the label is unique inside the
+token's granted hosts.
 
 Session cache commands (optional):
 

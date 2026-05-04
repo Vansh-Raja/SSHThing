@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for rele
 ## [Unreleased]
 
 ### Added
+- Personal SSHThing Cloud sync provider backed by Convex with end-to-end encrypted vault items, provider-aware TUI settings, and `/personal` browser editing unlocked by a sync password.
+- Stable cross-device `sync_id` identifiers for personal hosts and groups so cloud sync no longer depends on local integer database IDs.
+- `:` command palette with live autocomplete for discoverable actions like `:add`, `:edit`, `:delete`, `:health`, `:sync`, `:settings`, and `:help`.
+- Backend-managed Teams automation tokens (`stt_...`) for AI agents and scripts, including team-host scoping, central revocation, and command execution audit logs.
 - `sshthing cp`, `put`, `get` for token-authenticated file transfer. `cp` is scp-style (paths with leading `:` are remote, `-r` recursive, `-p` preserve), `put` streams stdin (or `--in <file>`) to a remote path, `get` writes a remote file to stdout (or `--out <file>`). All three reuse `exec`'s vault, askpass, temp-key, and unlock-session plumbing.
 - `sshthing exec --in <file>` pipes a local file as the remote command's stdin (e.g. `sshthing exec --in ./schema.sql -t DB --auth-file token "psql -f -"`).
 - Manual host health refresh with `R`: personal and Teams modes check all visible hosts with bounded concurrency, and results show online/offline state, uptime, CPU, RAM, disk, and GPU details.
@@ -17,6 +21,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for rele
 - Separate `sshthing-beta` Homebrew formula path for macOS beta installs.
 
 ### Changed
+- Personal sync now supports one active provider (`off`, `github`, or `sshthing cloud`) with portable sync scope controls for hosts, credentials, token definitions, health, and mounts.
+- Replaced long main-view keybind footers with a minimal universal footer focused on navigation, search, commands, and quit.
+- Tokens mode now adapts to Personal vs Teams mode: personal tokens stay local, while Teams mode manages team-scoped automation tokens through the backend.
 - Teams health refresh now checks all team hosts with bounded concurrency instead of only the selected host.
 - Replaced the health details toggle with a `health display` style setting: `minimal`, `values`, and `graph + values`.
 - Reworked host health display into a compact responsive card with configurable detail styles.
