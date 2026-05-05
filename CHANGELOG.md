@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for rele
 
 ## [Unreleased]
 
+## [v3.0.0-beta.1] — 2026-05-05
+
 ### Added
 - Personal SSHThing Cloud sync provider backed by Convex with end-to-end encrypted vault items, provider-aware TUI settings, and `/personal` browser editing unlocked by a sync password.
 - Stable cross-device `sync_id` identifiers for personal hosts and groups so cloud sync no longer depends on local integer database IDs.
