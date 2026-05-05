@@ -179,6 +179,7 @@ export default defineSchema({
     }),
     createdAt: v.number(),
     updatedAt: v.number(),
+    latestRevision: v.optional(v.number()),
   }).index("by_user", ["clerkUserId"]),
 
   personalVaultItems: defineTable({
@@ -191,10 +192,13 @@ export default defineSchema({
     updatedAt: v.number(),
     deletedAt: v.optional(v.number()),
     schemaVersion: v.number(),
+    itemRevision: v.optional(v.number()),
+    updatedByDevice: v.optional(v.string()),
   })
     .index("by_vault", ["vaultId"])
     .index("by_vault_and_sync_id", ["vaultId", "syncId"])
-    .index("by_vault_and_updated_at", ["vaultId", "updatedAt"]),
+    .index("by_vault_and_updated_at", ["vaultId", "updatedAt"])
+    .index("by_vault_and_item_revision", ["vaultId", "itemRevision"]),
 
   personalVaultDevices: defineTable({
     vaultId: v.id("personalVaults"),
@@ -202,8 +206,13 @@ export default defineSchema({
     deviceId: v.string(),
     deviceName: v.string(),
     lastSyncAt: v.number(),
+    lastPulledRevision: v.optional(v.number()),
+    lastPushedRevision: v.optional(v.number()),
+    lastSeenAt: v.optional(v.number()),
     createdAt: v.number(),
-  }).index("by_vault", ["vaultId"]),
+  })
+    .index("by_vault", ["vaultId"])
+    .index("by_vault_and_device", ["vaultId", "deviceId"]),
 
   personalVaultSyncEvents: defineTable({
     vaultId: v.id("personalVaults"),

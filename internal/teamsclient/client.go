@@ -257,10 +257,24 @@ func (c *Client) ListPersonalVaultItems(ctx context.Context, accessToken, since 
 	return out, err
 }
 
+func (c *Client) ListPersonalVaultChanges(ctx context.Context, accessToken, sinceRevision string) (personalsync.ChangesResponse, error) {
+	path := "/api/personal/vault/changes"
+	if strings.TrimSpace(sinceRevision) != "" {
+		path += "?sinceRevision=" + url.QueryEscape(sinceRevision)
+	}
+	var out personalsync.ChangesResponse
+	err := c.doJSON(ctx, http.MethodGet, path, accessToken, nil, &out)
+	return out, err
+}
+
 func (c *Client) UpsertPersonalVaultItems(ctx context.Context, accessToken string, req personalsync.UpsertRequest) (personalsync.UpsertResponse, error) {
 	var out personalsync.UpsertResponse
 	err := c.doJSON(ctx, http.MethodPost, "/api/personal/vault/items", accessToken, req, &out)
 	return out, err
+}
+
+func (c *Client) MarkPersonalVaultDeviceSeen(ctx context.Context, accessToken string, req personalsync.DeviceSeenRequest) error {
+	return c.doJSON(ctx, http.MethodPost, "/api/personal/vault/devices/seen", accessToken, req, nil)
 }
 
 func (c *Client) RecordPersonalSyncEvent(ctx context.Context, accessToken string, req personalsync.SyncEventRequest) error {

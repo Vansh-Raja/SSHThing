@@ -33,6 +33,10 @@ type ManagerOptions struct {
 	DeviceID            string
 }
 
+type incrementalProvider interface {
+	PullChanges(ctx context.Context, password, sinceRevision string) (*SyncData, *RemoteState, error)
+}
+
 // NewManager creates a new sync manager
 func NewManager(cfg *config.Config, store *db.Store, password string) (*Manager, error) {
 	return NewManagerWithOptions(cfg, store, password, ManagerOptions{})
@@ -126,7 +130,7 @@ func (m *Manager) Sync() *SyncResult {
 
 	// Step 2: Pull remote changes
 	m.setStage("pulling")
-	remoteData, remoteState, err := m.provider.Pull(ctx, m.password)
+	remoteData, remoteState, err := m.pullRemote(ctx)
 	if err != nil {
 		result.Error = err
 		result.Message = fmt.Sprintf("Pull failed: %v", err)
@@ -215,8 +219,52 @@ func (m *Manager) Sync() *SyncResult {
 	m.lastSync = now
 	m.lastResult = result
 	m.mu.Unlock()
+	m.recordSuccessfulSyncState(remoteState)
 
 	return result
+}
+
+func (m *Manager) pullRemote(ctx context.Context) (*SyncData, *RemoteState, error) {
+	if p, ok := m.provider.(incrementalProvider); ok && m.store != nil {
+		if state, found, err := m.store.GetSyncProviderState(m.provider.Name()); err == nil && found && strings.TrimSpace(state.LastPulledRevision) != "" {
+			return p.PullChanges(ctx, m.password, state.LastPulledRevision)
+		}
+	}
+	return m.provider.Pull(ctx, m.password)
+}
+
+func (m *Manager) recordSuccessfulSyncState(remoteState *RemoteState) {
+	if m.store == nil || m.provider == nil {
+		return
+	}
+	now := time.Now().UTC()
+	state := db.SyncProviderState{
+		Provider:   m.provider.Name(),
+		LastSyncAt: &now,
+	}
+	if remoteState != nil {
+		state.LastPulledRevision = remoteState.Revision
+		state.LastPushedRevision = remoteState.Revision
+		if remoteState.LatestRevision > 0 {
+			latest := fmt.Sprintf("%d", remoteState.LatestRevision)
+			state.LastPulledRevision = latest
+			state.LastPushedRevision = latest
+		}
+		for key, revision := range remoteState.ItemRevisions {
+			parts := strings.SplitN(key, ":", 2)
+			if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
+				continue
+			}
+			_ = m.store.UpsertSyncItemState(db.SyncItemState{
+				ItemType:        parts[0],
+				SyncID:          parts[1],
+				RemoteRevision:  revision,
+				RemoteUpdatedAt: &now,
+				LastPulledAt:    &now,
+			})
+		}
+	}
+	_ = m.store.UpsertSyncProviderState(state)
 }
 
 // GetStatus returns the current sync status

@@ -332,6 +332,25 @@ func (m *Model) initSyncManager() {
 	m.syncManager = syncMgr
 }
 
+func (m *Model) beginPersonalCloudAutoSync() tea.Cmd {
+	if m.appMode == appModeTeams ||
+		m.cfg.Sync.Provider != config.SyncProviderConvex ||
+		m.syncManager == nil ||
+		!m.syncManager.IsEnabled() ||
+		m.syncing {
+		return nil
+	}
+	m.syncing = true
+	m.syncRunID++
+	m.syncAnimFrame = 0
+	m.syncProgress = 0.02
+	runID := m.syncRunID
+	if m.err == nil {
+		m.err = fmt.Errorf("\u2139 Syncing cloud...")
+	}
+	return tea.Batch(runSyncCmd(runID, m.syncManager), syncAnimTickCmd(runID))
+}
+
 func (m *Model) syncManagerOptions() syncpkg.ManagerOptions {
 	return syncpkg.ManagerOptions{
 		CloudClient:         m.teamsClient,
@@ -1144,25 +1163,31 @@ func (m *Model) buildSettingsItems() []ui.SettingsItem {
 		{Category: "sync", Label: "sync token defs", Value: boolVal(m.cfg.Sync.Scope.TokenDefinitions), Kind: 0, Disabled: m.cfg.Sync.Provider == config.SyncProviderOff},
 		{Category: "sync", Label: "sync health", Value: boolVal(m.cfg.Sync.Scope.Health), Kind: 0, Disabled: m.cfg.Sync.Provider == config.SyncProviderOff},
 		{Category: "sync", Label: "sync mounts", Value: boolVal(m.cfg.Sync.Scope.MountState), Kind: 0, Disabled: m.cfg.Sync.Provider == config.SyncProviderOff},
-		{Category: "sync", Label: "repo url", Value: m.cfg.Sync.RepoURL, Kind: 2, Disabled: m.cfg.Sync.Provider != config.SyncProviderGit},
-		{Category: "sync", Label: "ssh key path", Value: m.cfg.Sync.SSHKeyPath, Kind: 2, Disabled: m.cfg.Sync.Provider != config.SyncProviderGit},
-		{Category: "sync", Label: "branch", Value: m.cfg.Sync.Branch, Kind: 2, Disabled: m.cfg.Sync.Provider != config.SyncProviderGit},
-		{Category: "sync", Label: "local path", Value: m.cfg.Sync.LocalPath, Kind: 2, Disabled: m.cfg.Sync.Provider != config.SyncProviderGit},
-		// Updates
-		{Category: "updates", Label: "beta releases", Value: boolVal(m.cfg.Updates.ReleaseChannel == "beta"), Kind: 0},
-		{Category: "updates", Label: "auto apply updates", Value: boolVal(m.cfg.Updates.AutoApplyUpdates), Kind: 0},
-		{Category: "updates", Label: "feed", Value: m.updateSettingsState().FeedLabel, Kind: 2},
-		{Category: "updates", Label: "channel", Value: m.updateSettingsState().ChannelLabel, Kind: 2},
-		{Category: "updates", Label: "version", Value: m.updateSettingsState().VersionLabel, Kind: 2},
-		{Category: "updates", Label: "check now", Value: "", Kind: 2},
-		{Category: "updates", Label: "apply update", Value: "", Kind: 2},
-		{Category: "updates", Label: "PATH health", Value: m.updateSettingsState().PathHealth, Kind: 2},
-		{Category: "updates", Label: "fix PATH", Value: "", Kind: 2},
-		{Category: "updates", Label: updateSettingsNoteLabel(), Value: "", Kind: 2},
-		// Tokens
-		{Category: "tokens", Label: "manage tokens", Value: "", Kind: 2},
-		{Category: "tokens", Label: "sync token definitions", Value: boolVal(m.cfg.Sync.Scope.TokenDefinitions), Kind: 0, Disabled: m.cfg.Sync.Provider == config.SyncProviderOff},
 	}
+	if m.cfg.Sync.Provider == config.SyncProviderGit {
+		items = append(items,
+			ui.SettingsItem{Category: "sync", Label: "repo url", Value: m.cfg.Sync.RepoURL, Kind: 2},
+			ui.SettingsItem{Category: "sync", Label: "ssh key path", Value: m.cfg.Sync.SSHKeyPath, Kind: 2},
+			ui.SettingsItem{Category: "sync", Label: "branch", Value: m.cfg.Sync.Branch, Kind: 2},
+			ui.SettingsItem{Category: "sync", Label: "local path", Value: m.cfg.Sync.LocalPath, Kind: 2},
+		)
+	}
+	items = append(items,
+		// Updates
+		ui.SettingsItem{Category: "updates", Label: "beta releases", Value: boolVal(m.cfg.Updates.ReleaseChannel == "beta"), Kind: 0},
+		ui.SettingsItem{Category: "updates", Label: "auto apply updates", Value: boolVal(m.cfg.Updates.AutoApplyUpdates), Kind: 0},
+		ui.SettingsItem{Category: "updates", Label: "feed", Value: m.updateSettingsState().FeedLabel, Kind: 2},
+		ui.SettingsItem{Category: "updates", Label: "channel", Value: m.updateSettingsState().ChannelLabel, Kind: 2},
+		ui.SettingsItem{Category: "updates", Label: "version", Value: m.updateSettingsState().VersionLabel, Kind: 2},
+		ui.SettingsItem{Category: "updates", Label: "check now", Value: "", Kind: 2},
+		ui.SettingsItem{Category: "updates", Label: "apply update", Value: "", Kind: 2},
+		ui.SettingsItem{Category: "updates", Label: "PATH health", Value: m.updateSettingsState().PathHealth, Kind: 2},
+		ui.SettingsItem{Category: "updates", Label: "fix PATH", Value: "", Kind: 2},
+		ui.SettingsItem{Category: "updates", Label: updateSettingsNoteLabel(), Value: "", Kind: 2},
+		// Tokens
+		ui.SettingsItem{Category: "tokens", Label: "manage tokens", Value: "", Kind: 2},
+		ui.SettingsItem{Category: "tokens", Label: "sync token definitions", Value: boolVal(m.cfg.Sync.Scope.TokenDefinitions), Kind: 0, Disabled: m.cfg.Sync.Provider == config.SyncProviderOff},
+	)
 	return items
 }
 
@@ -1578,13 +1603,22 @@ func normalizePrivateKey(key string) string {
 // ── Settings mutation ─────────────────────────────────────────────────
 
 func (m *Model) applySettingChange(idx int, action string) {
+	m.settingsItems = m.buildSettingsItems()
+	if idx < 0 || idx >= len(m.settingsItems) {
+		return
+	}
+	item := m.settingsItems[idx]
+	if item.Disabled {
+		return
+	}
+
 	if m.appMode == appModeTeams {
-		switch idx {
-		case 0:
+		switch item.Label {
+		case "wrap labels":
 			m.cfg.TeamsUI.WrapLabels = !m.cfg.TeamsUI.WrapLabels
-		case 1:
+		case "health display":
 			m.cfg.UI.HealthDisplayMode = nextHealthDisplayMode(m.cfg.UI.HealthDisplayMode, action)
-		case 2:
+		case "theme":
 			names := themeNames()
 			cur := themeIdx(m.cfg.TeamsUI.Theme)
 			if action == "left" {
@@ -1594,7 +1628,7 @@ func (m *Model) applySettingChange(idx int, action string) {
 			}
 			m.cfg.TeamsUI.Theme = names[cur]
 			m.syncModeAppearance()
-		case 3:
+		case "icon set":
 			iNames := iconSetNames()
 			cur := iconSetIdx(m.cfg.TeamsUI.IconSet)
 			if action == "left" {
@@ -1608,16 +1642,16 @@ func (m *Model) applySettingChange(idx int, action string) {
 		return
 	}
 
-	switch idx {
-	case 0: // vim mode
+	switch item.Label {
+	case "vim mode":
 		m.cfg.UI.VimMode = !m.cfg.UI.VimMode
-	case 1: // show icons
+	case "show icons":
 		m.cfg.UI.ShowIcons = !m.cfg.UI.ShowIcons
-	case 2: // wrap labels
+	case "wrap labels":
 		m.cfg.UI.WrapLabels = !m.cfg.UI.WrapLabels
-	case 3: // health display
+	case "health display":
 		m.cfg.UI.HealthDisplayMode = nextHealthDisplayMode(m.cfg.UI.HealthDisplayMode, action)
-	case 4: // theme
+	case "theme":
 		names := themeNames()
 		cur := themeIdx(m.cfg.UI.Theme)
 		if action == "left" {
@@ -1627,7 +1661,7 @@ func (m *Model) applySettingChange(idx int, action string) {
 		}
 		m.cfg.UI.Theme = names[cur]
 		m.theme, m.themeIdx = ui.ThemeByName(m.cfg.UI.Theme)
-	case 5: // icon set
+	case "icon set":
 		iNames := iconSetNames()
 		cur := iconSetIdx(m.cfg.UI.IconSet)
 		if action == "left" {
@@ -1637,7 +1671,7 @@ func (m *Model) applySettingChange(idx int, action string) {
 		}
 		m.cfg.UI.IconSet = iNames[cur]
 		m.icons, m.iconIdx = ui.IconSetByName(m.cfg.UI.IconSet)
-	case 6: // host key policy
+	case "host key policy":
 		switch m.cfg.SSH.HostKeyPolicy {
 		case config.HostKeyAcceptNew:
 			m.cfg.SSH.HostKeyPolicy = config.HostKeyStrict
@@ -1646,13 +1680,13 @@ func (m *Model) applySettingChange(idx int, action string) {
 		default:
 			m.cfg.SSH.HostKeyPolicy = config.HostKeyAcceptNew
 		}
-	case 7: // keepalive - editable
+	case "keepalive seconds":
 		if action == "left" {
 			m.cfg.SSH.KeepAliveSeconds = max(10, m.cfg.SSH.KeepAliveSeconds-5)
 		} else if action == "right" {
 			m.cfg.SSH.KeepAliveSeconds = min(300, m.cfg.SSH.KeepAliveSeconds+5)
 		}
-	case 8: // TERM mode
+	case "TERM mode":
 		switch m.cfg.SSH.TermMode {
 		case config.TermAuto:
 			m.cfg.SSH.TermMode = config.TermXterm
@@ -1661,15 +1695,15 @@ func (m *Model) applySettingChange(idx int, action string) {
 		default:
 			m.cfg.SSH.TermMode = config.TermAuto
 		}
-	case 9: // TERM custom - editable
-	case 10: // password auto login
+	case "TERM custom":
+	case "password auto-login":
 		m.cfg.SSH.PasswordAutoLogin = !m.cfg.SSH.PasswordAutoLogin
 		if m.cfg.SSH.PasswordAutoLogin && (runtime.GOOS == "linux" || runtime.GOOS == "darwin") {
 			if err := ssh.CheckSSHPass(); err != nil {
 				m.err = fmt.Errorf("Tip: install sshpass for best password auto-login on %s", runtime.GOOS)
 			}
 		}
-	case 11: // password backend
+	case "password backend (unix)":
 		if runtime.GOOS != "windows" && m.cfg.SSH.PasswordAutoLogin {
 			switch m.cfg.SSH.PasswordBackendUnix {
 			case config.PasswordBackendSSHPassFirst:
@@ -1678,11 +1712,10 @@ func (m *Model) applySettingChange(idx int, action string) {
 				m.cfg.SSH.PasswordBackendUnix = config.PasswordBackendSSHPassFirst
 			}
 		}
-	case 12: // mount enabled
+	case "enable mounts":
 		m.cfg.Mount.Enabled = !m.cfg.Mount.Enabled
-	case 13: // mount remote path - editable
-	case 14: // mount local path - editable
-	case 15: // mount quit behavior
+	case "default remote path", "local mount path":
+	case "quit behavior":
 		switch m.cfg.Mount.QuitBehavior {
 		case config.MountQuitPrompt:
 			m.cfg.Mount.QuitBehavior = config.MountQuitAlwaysUnmount
@@ -1691,7 +1724,7 @@ func (m *Model) applySettingChange(idx int, action string) {
 		default:
 			m.cfg.Mount.QuitBehavior = config.MountQuitPrompt
 		}
-	case 16: // sync provider
+	case "sync provider":
 		cur := syncProviderIdx(m.cfg.Sync.Provider)
 		if action == "left" {
 			cur = (cur - 1 + len(syncProviderLabels())) % len(syncProviderLabels())
@@ -1706,57 +1739,58 @@ func (m *Model) applySettingChange(idx int, action string) {
 				m.syncManager = syncMgr
 			}
 		}
-	case 17: // cloud status
-	case 18: // sync portable hosts
+	case "cloud status":
+	case "sync portable hosts":
 		if m.cfg.Sync.Provider != config.SyncProviderOff {
 			m.cfg.Sync.Scope.Hosts = !m.cfg.Sync.Scope.Hosts
 			if !m.cfg.Sync.Scope.Hosts {
 				m.cfg.Sync.Scope.Credentials = false
 			}
 		}
-	case 19: // sync credentials
+	case "sync credentials":
 		if m.cfg.Sync.Provider != config.SyncProviderOff && m.cfg.Sync.Scope.Hosts {
 			m.cfg.Sync.Scope.Credentials = !m.cfg.Sync.Scope.Credentials
 		}
-	case 20: // sync token defs
+	case "sync token defs", "sync token definitions":
 		if m.cfg.Sync.Provider != config.SyncProviderOff {
 			m.cfg.Sync.Scope.TokenDefinitions = !m.cfg.Sync.Scope.TokenDefinitions
 			m.cfg.Automation.SyncTokenDefinitions = m.cfg.Sync.Scope.TokenDefinitions
 			m.enableExistingTokenDefinitionSyncIfNeeded()
 		}
-	case 21: // sync health
+	case "sync health":
 		if m.cfg.Sync.Provider != config.SyncProviderOff {
 			m.cfg.Sync.Scope.Health = !m.cfg.Sync.Scope.Health
 		}
-	case 22: // sync mounts
+	case "sync mounts":
 		if m.cfg.Sync.Provider != config.SyncProviderOff {
 			m.cfg.Sync.Scope.MountState = !m.cfg.Sync.Scope.MountState
 		}
-	case 23, 24, 25, 26: // sync repo/key/branch/local - editable
-	case 27: // beta releases
+	case "repo url", "ssh key path", "branch", "local path":
+	case "beta releases":
 		if strings.EqualFold(m.cfg.Updates.ReleaseChannel, "beta") {
 			m.cfg.Updates.ReleaseChannel = "stable"
 		} else {
 			m.cfg.Updates.ReleaseChannel = "beta"
 		}
-	case 28: // auto apply updates
+	case "auto apply updates":
 		m.cfg.Updates.AutoApplyUpdates = !m.cfg.Updates.AutoApplyUpdates
-	case 37: // manage tokens (opens token page)
-	case 38: // sync token definitions
-		if m.cfg.Sync.Provider != config.SyncProviderOff {
-			m.cfg.Sync.Scope.TokenDefinitions = !m.cfg.Sync.Scope.TokenDefinitions
-			m.cfg.Automation.SyncTokenDefinitions = m.cfg.Sync.Scope.TokenDefinitions
-			m.enableExistingTokenDefinitionSyncIfNeeded()
-		}
+	case "manage tokens", "feed", "channel", "version", "check now", "apply update", "PATH health", "fix PATH", updateSettingsNoteLabel():
 	}
 }
 
 func (m *Model) applySettingsEditValue(idx int, val string) bool {
 	val = strings.TrimSpace(val)
+	if len(m.settingsItems) == 0 {
+		m.settingsItems = m.buildSettingsItems()
+	}
+	if idx < 0 || idx >= len(m.settingsItems) {
+		return true
+	}
+	item := m.settingsItems[idx]
 	if m.appMode == appModeTeams {
 		ctx := context.Background()
-		switch idx {
-		case 3:
+		switch item.Label {
+		case "create team":
 			if val == "" {
 				m.err = fmt.Errorf("team name cannot be empty")
 				return false
@@ -1766,7 +1800,7 @@ func (m *Model) applySettingsEditValue(idx int, val string) bool {
 				return false
 			}
 			m.err = fmt.Errorf("✓ Team created")
-		case 4:
+		case "rename team":
 			if val == "" {
 				m.err = fmt.Errorf("team name cannot be empty")
 				return false
@@ -1780,8 +1814,8 @@ func (m *Model) applySettingsEditValue(idx int, val string) bool {
 		return true
 	}
 
-	switch idx {
-	case 7: // keepalive
+	switch item.Label {
+	case "keepalive seconds":
 		n, err := strconv.Atoi(val)
 		if err != nil {
 			m.err = fmt.Errorf("keepalive must be a number")
@@ -1794,15 +1828,15 @@ func (m *Model) applySettingsEditValue(idx int, val string) bool {
 			n = 600
 		}
 		m.cfg.SSH.KeepAliveSeconds = n
-	case 9: // TERM custom
+	case "TERM custom":
 		m.cfg.SSH.TermCustom = val
-	case 13: // mount remote path
+	case "default remote path":
 		if val != "" && !strings.HasPrefix(val, "/") {
 			m.err = fmt.Errorf("\u26A0 remote path must be absolute (start with /)")
 			return false
 		}
 		m.cfg.Mount.DefaultRemotePath = val
-	case 14: // local mount path
+	case "local mount path":
 		if val != "" {
 			if !strings.HasPrefix(val, "/") {
 				m.err = fmt.Errorf("\u26A0 mount path must be absolute (start with /)")
@@ -1820,16 +1854,16 @@ func (m *Model) applySettingsEditValue(idx int, val string) bool {
 			}
 		}
 		m.cfg.Mount.LocalMountPath = val
-	case 23: // sync repo
+	case "repo url":
 		m.cfg.Sync.RepoURL = val
-	case 24: // sync key path
+	case "ssh key path":
 		m.cfg.Sync.SSHKeyPath = val
-	case 25: // sync branch
+	case "branch":
 		if val == "" {
 			val = "main"
 		}
 		m.cfg.Sync.Branch = val
-	case 26: // sync local path
+	case "local path":
 		m.cfg.Sync.LocalPath = val
 	}
 	return true

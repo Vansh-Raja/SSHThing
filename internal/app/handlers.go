@@ -654,7 +654,7 @@ func (m Model) handleAddHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.loadGroups()
 		m.rebuildListItems()
 		m.closeAddHostOverlay()
-		return m, nil
+		return m, m.beginPersonalCloudAutoSync()
 	}
 
 	// Shift+Enter / Ctrl+S always submits
@@ -1011,7 +1011,7 @@ func (m Model) handleDeleteHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
 		m = doDelete()
-		return m, nil
+		return m, m.beginPersonalCloudAutoSync()
 	case "n", "N", "esc":
 		m.overlay = OverlayNone
 		return m, nil
@@ -1021,6 +1021,7 @@ func (m Model) handleDeleteHostKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.deleteCursor == 0 {
 			m = doDelete()
+			return m, m.beginPersonalCloudAutoSync()
 		} else {
 			m.overlay = OverlayNone
 		}
@@ -1072,7 +1073,7 @@ func (m Model) handleGroupInputKeys(msg tea.KeyMsg, isRename bool) (tea.Model, t
 		m.overlay = OverlayNone
 		m.groupInputValue = ""
 		m.groupInputCursor = 0
-		return m, nil
+		return m, m.beginPersonalCloudAutoSync()
 	}
 
 	cancel := func() (tea.Model, tea.Cmd) {
@@ -1169,7 +1170,7 @@ func (m Model) handleDeleteGroupKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.rebuildListItems()
 		m.overlay = OverlayNone
 		m.groupDeleteCursor = 1
-		return m, nil
+		return m, m.beginPersonalCloudAutoSync()
 	}
 
 	if msg.String() == "enter" {
@@ -1820,7 +1821,7 @@ func (m Model) handleTokensKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.tokenRevealValue = raw
 			m.tokenRevealCopied = false
 			m.err = fmt.Errorf("\u2713 Token created")
-			return m, nil
+			return m, m.beginPersonalCloudAutoSync()
 		}
 		return m, nil
 	}
@@ -1896,7 +1897,7 @@ func (m Model) revokeSelectedToken() (tea.Model, tea.Cmd) {
 	}
 	m.loadTokenSummaries()
 	m.err = fmt.Errorf("\u2713 Token revoked")
-	return m, nil
+	return m, m.beginPersonalCloudAutoSync()
 }
 
 func (m Model) deleteSelectedRevokedToken() (tea.Model, tea.Cmd) {
@@ -1919,7 +1920,7 @@ func (m Model) deleteSelectedRevokedToken() (tea.Model, tea.Cmd) {
 	}
 	m.loadTokenSummaries()
 	m.err = fmt.Errorf("\u2713 Revoked token deleted")
-	return m, nil
+	return m, m.beginPersonalCloudAutoSync()
 }
 
 // ── Quit request ──────────────────────────────────────────────────────

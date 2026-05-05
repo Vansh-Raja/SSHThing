@@ -72,6 +72,41 @@ type HostHealth struct {
 	Error              string
 }
 
+type SyncItemState struct {
+	ItemType        string
+	SyncID          string
+	LocalRevision   string
+	RemoteRevision  string
+	LocalUpdatedAt  *time.Time
+	RemoteUpdatedAt *time.Time
+	Dirty           bool
+	Deleted         bool
+	LastPushedAt    *time.Time
+	LastPulledAt    *time.Time
+	LastError       string
+}
+
+type SyncProviderState struct {
+	Provider           string
+	VaultID            string
+	LastPulledRevision string
+	LastPushedRevision string
+	LastSyncAt         *time.Time
+	LastError          string
+}
+
+type SyncOutboxItem struct {
+	ID               int64
+	ItemType         string
+	SyncID           string
+	Operation        string
+	BaseRevision     string
+	EncryptedPayload string
+	CreatedAt        time.Time
+	Attempts         int
+	LastError        string
+}
+
 // DBPath returns the path to the database file
 func DBPath() (string, error) {
 	// Allow overriding the DB path for testing or custom setups.
@@ -427,6 +462,59 @@ func createSchema(db *sql.DB) error {
 		gpu_name TEXT,
 		error TEXT
 	);
+	`)
+	if err != nil {
+		return err
+	}
+
+	if err := createSyncMetadataSchema(db); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func createSyncMetadataSchema(db *sql.DB) error {
+	_, err := db.Exec(`
+	CREATE TABLE IF NOT EXISTS sync_items (
+		item_type TEXT NOT NULL,
+		sync_id TEXT NOT NULL,
+		local_revision TEXT,
+		remote_revision TEXT,
+		local_updated_at DATETIME,
+		remote_updated_at DATETIME,
+		dirty INTEGER NOT NULL DEFAULT 0,
+		deleted INTEGER NOT NULL DEFAULT 0,
+		last_pushed_at DATETIME,
+		last_pulled_at DATETIME,
+		last_error TEXT,
+		PRIMARY KEY (item_type, sync_id)
+	);
+
+	CREATE TABLE IF NOT EXISTS sync_state (
+		provider TEXT PRIMARY KEY,
+		vault_id TEXT,
+		last_pulled_revision TEXT,
+		last_pushed_revision TEXT,
+		last_sync_at DATETIME,
+		last_error TEXT
+	);
+
+	CREATE TABLE IF NOT EXISTS sync_outbox (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		item_type TEXT NOT NULL,
+		sync_id TEXT NOT NULL,
+		operation TEXT NOT NULL,
+		base_revision TEXT,
+		encrypted_payload TEXT,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		attempts INTEGER NOT NULL DEFAULT 0,
+		last_error TEXT
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_sync_items_dirty ON sync_items(dirty, item_type);
+	CREATE INDEX IF NOT EXISTS idx_sync_outbox_created ON sync_outbox(created_at, id);
+	CREATE INDEX IF NOT EXISTS idx_sync_outbox_item ON sync_outbox(item_type, sync_id);
 	`)
 	return err
 }

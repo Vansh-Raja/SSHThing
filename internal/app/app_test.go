@@ -61,6 +61,40 @@ func TestBuildSettingsItemsOmitsTeamsRows(t *testing.T) {
 	}
 }
 
+func TestBuildSettingsItemsHidesGitRowsForConvexSync(t *testing.T) {
+	m := NewModel()
+	m.cfg.Sync.Provider = config.SyncProviderConvex
+	items := m.buildSettingsItems()
+
+	hidden := map[string]bool{
+		"repo url":     true,
+		"ssh key path": true,
+		"branch":       true,
+		"local path":   true,
+	}
+	for _, item := range items {
+		if hidden[item.Label] {
+			t.Fatalf("did not expect git-only sync row %q for convex provider", item.Label)
+		}
+	}
+}
+
+func TestBuildSettingsItemsShowsGitRowsForGitSync(t *testing.T) {
+	m := NewModel()
+	m.cfg.Sync.Provider = config.SyncProviderGit
+	items := m.buildSettingsItems()
+
+	found := map[string]bool{}
+	for _, item := range items {
+		found[item.Label] = true
+	}
+	for _, label := range []string{"repo url", "ssh key path", "branch", "local path"} {
+		if !found[label] {
+			t.Fatalf("expected git sync row %q", label)
+		}
+	}
+}
+
 func TestBuildSettingsItemsTeamsModeOmitsTeamManagementRows(t *testing.T) {
 	m := NewModel()
 	m.teamsSession = teamSessionForTests(time.Now().Add(time.Hour))

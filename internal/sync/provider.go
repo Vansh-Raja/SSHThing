@@ -21,8 +21,10 @@ type Provider interface {
 }
 
 type RemoteState struct {
-	Revision  string
-	UpdatedAt time.Time
+	Revision       string
+	LatestRevision int64
+	UpdatedAt      time.Time
+	ItemRevisions  map[string]string
 }
 
 type GitProvider struct {
@@ -78,7 +80,9 @@ func (p *GitProvider) Push(ctx context.Context, data *SyncData, password string,
 type PersonalCloudClient interface {
 	GetPersonalVault(ctx context.Context, accessToken string) (personalsync.VaultSummary, error)
 	ListPersonalVaultItems(ctx context.Context, accessToken, since string) (personalsync.ListItemsResponse, error)
+	ListPersonalVaultChanges(ctx context.Context, accessToken, sinceRevision string) (personalsync.ChangesResponse, error)
 	UpsertPersonalVaultItems(ctx context.Context, accessToken string, req personalsync.UpsertRequest) (personalsync.UpsertResponse, error)
+	MarkPersonalVaultDeviceSeen(ctx context.Context, accessToken string, req personalsync.DeviceSeenRequest) error
 	RecordPersonalSyncEvent(ctx context.Context, accessToken string, req personalsync.SyncEventRequest) error
 }
 
@@ -105,6 +109,10 @@ func (p *ConvexProvider) Init(ctx context.Context) error {
 }
 
 func (p *ConvexProvider) Pull(ctx context.Context, password string) (*SyncData, *RemoteState, error) {
+	return p.PullChanges(ctx, password, "")
+}
+
+func (p *ConvexProvider) PullChanges(ctx context.Context, password, sinceRevision string) (*SyncData, *RemoteState, error) {
 	accessToken, err := p.accessTokenProvider(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -113,7 +121,12 @@ func (p *ConvexProvider) Pull(ctx context.Context, password string) (*SyncData, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("personal cloud vault unavailable: %w", err)
 	}
-	resp, err := p.client.ListPersonalVaultItems(ctx, accessToken, "")
+	var resp personalsync.ChangesResponse
+	if strings.TrimSpace(sinceRevision) != "" {
+		resp, err = p.client.ListPersonalVaultChanges(ctx, accessToken, sinceRevision)
+	} else {
+		resp, err = p.client.ListPersonalVaultItems(ctx, accessToken, "")
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("personal cloud items unavailable: %w", err)
 	}
@@ -122,7 +135,12 @@ func (p *ConvexProvider) Pull(ctx context.Context, password string) (*SyncData, 
 		return nil, nil, err
 	}
 	_ = p.client.RecordPersonalSyncEvent(ctx, accessToken, personalsync.SyncEventRequest{DeviceID: p.deviceID, Source: "tui", Action: "pull", ItemCount: len(resp.Items)})
-	return data, &RemoteState{Revision: resp.Revision, UpdatedAt: time.UnixMilli(vault.UpdatedAt)}, nil
+	latest := resp.LatestRevision
+	if latest == 0 {
+		latest = vault.LatestRevision
+	}
+	_ = p.client.MarkPersonalVaultDeviceSeen(ctx, accessToken, personalsync.DeviceSeenRequest{DeviceID: p.deviceID, LastPulledRevision: latest})
+	return data, &RemoteState{Revision: resp.Revision, LatestRevision: latest, UpdatedAt: time.UnixMilli(vault.UpdatedAt), ItemRevisions: itemRevisions(resp.Items)}, nil
 }
 
 func (p *ConvexProvider) Push(ctx context.Context, data *SyncData, password string, state *RemoteState) error {
@@ -141,6 +159,13 @@ func (p *ConvexProvider) Push(ctx context.Context, data *SyncData, password stri
 	baseRevision := ""
 	if state != nil {
 		baseRevision = state.Revision
+		for i := range items {
+			itemRevision := state.ItemRevisions[items[i].ItemType+":"+items[i].SyncID]
+			if itemRevision == "" {
+				itemRevision = baseRevision
+			}
+			items[i].BaseRevision = itemRevision
+		}
 	}
 	resp, err := p.client.UpsertPersonalVaultItems(ctx, accessToken, personalsync.UpsertRequest{
 		BaseRevision: baseRevision,
@@ -148,13 +173,48 @@ func (p *ConvexProvider) Push(ctx context.Context, data *SyncData, password stri
 		Items:        items,
 	})
 	if err != nil {
-		return fmt.Errorf("personal cloud items save failed: %w", err)
+		if !isUnsupportedBaseRevisionError(err) {
+			return fmt.Errorf("personal cloud items save failed: %w", err)
+		}
+		compatItems := clearItemBaseRevisions(items)
+		resp, err = p.client.UpsertPersonalVaultItems(ctx, accessToken, personalsync.UpsertRequest{
+			BaseRevision: baseRevision,
+			DeviceID:     p.deviceID,
+			Items:        compatItems,
+		})
+		if err != nil {
+			return fmt.Errorf("personal cloud items save failed: %w", err)
+		}
 	}
 	if len(resp.Conflicts) > 0 {
 		return fmt.Errorf("personal cloud sync conflict: pull and retry")
 	}
+	if state != nil {
+		state.Revision = resp.Revision
+		state.LatestRevision = resp.LatestRevision
+		state.UpdatedAt = time.Now().UTC()
+	}
 	_ = p.client.RecordPersonalSyncEvent(ctx, accessToken, personalsync.SyncEventRequest{DeviceID: p.deviceID, Source: "tui", Action: "push", ItemCount: len(items)})
+	_ = p.client.MarkPersonalVaultDeviceSeen(ctx, accessToken, personalsync.DeviceSeenRequest{DeviceID: p.deviceID, LastPushedRevision: resp.LatestRevision})
 	return nil
+}
+
+func isUnsupportedBaseRevisionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "baseRevision") &&
+		(strings.Contains(msg, "extra field") || strings.Contains(msg, "not in the validator"))
+}
+
+func clearItemBaseRevisions(items []personalsync.VaultItem) []personalsync.VaultItem {
+	out := make([]personalsync.VaultItem, len(items))
+	copy(out, items)
+	for i := range out {
+		out[i].BaseRevision = ""
+	}
+	return out
 }
 
 type personalPlainItem struct {
@@ -231,6 +291,21 @@ func encryptOneVaultItem(itemType, syncID string, updatedAt time.Time, deletedAt
 		deletedAtMS = &ms
 	}
 	return personalsync.VaultItem{ItemType: itemType, SyncID: strings.TrimSpace(syncID), Ciphertext: ciphertext, Nonce: "", UpdatedAt: updatedAt.UnixMilli(), DeletedAt: deletedAtMS, SchemaVersion: CurrentSyncVersion}, nil
+}
+
+func itemRevisions(items []personalsync.VaultItem) map[string]string {
+	out := make(map[string]string, len(items))
+	for _, item := range items {
+		rev := item.ItemRevision
+		if rev == 0 {
+			rev = item.UpdatedAt
+		}
+		if rev == 0 {
+			continue
+		}
+		out[item.ItemType+":"+item.SyncID] = fmt.Sprintf("%d", rev)
+	}
+	return out
 }
 
 func decryptVaultItems(items []personalsync.VaultItem, password, saltHex string) (*SyncData, error) {

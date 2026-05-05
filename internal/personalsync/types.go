@@ -12,6 +12,7 @@ type VaultSummary struct {
 	EncryptionVersion string `json:"encryptionVersion"`
 	KDF               KDF    `json:"kdf"`
 	UpdatedAt         int64  `json:"updatedAt"`
+	LatestRevision    int64  `json:"latestRevision,omitempty"`
 }
 
 type VaultItem struct {
@@ -22,12 +23,17 @@ type VaultItem struct {
 	UpdatedAt     int64  `json:"updatedAt"`
 	DeletedAt     *int64 `json:"deletedAt,omitempty"`
 	SchemaVersion int    `json:"schemaVersion"`
+	ItemRevision  int64  `json:"itemRevision,omitempty"`
+	BaseRevision  string `json:"baseRevision,omitempty"`
 }
 
 type ListItemsResponse struct {
-	Revision string      `json:"revision"`
-	Items    []VaultItem `json:"items"`
+	Revision       string      `json:"revision"`
+	LatestRevision int64       `json:"latestRevision,omitempty"`
+	Items          []VaultItem `json:"items"`
 }
+
+type ChangesResponse = ListItemsResponse
 
 type UpsertRequest struct {
 	BaseRevision string      `json:"baseRevision,omitempty"`
@@ -44,9 +50,18 @@ type Conflict struct {
 }
 
 type UpsertResponse struct {
-	OK        bool       `json:"ok"`
-	Revision  string     `json:"revision"`
-	Conflicts []Conflict `json:"conflicts,omitempty"`
+	OK             bool       `json:"ok"`
+	Revision       string     `json:"revision"`
+	LatestRevision int64      `json:"latestRevision,omitempty"`
+	Accepted       int        `json:"accepted,omitempty"`
+	Conflicts      []Conflict `json:"conflicts,omitempty"`
+}
+
+type DeviceSeenRequest struct {
+	DeviceID           string `json:"deviceId"`
+	DeviceName         string `json:"deviceName,omitempty"`
+	LastPulledRevision int64  `json:"lastPulledRevision,omitempty"`
+	LastPushedRevision int64  `json:"lastPushedRevision,omitempty"`
 }
 
 type SyncEventRequest struct {

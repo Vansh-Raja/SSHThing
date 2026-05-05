@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vansh-Raja/SSHThing/internal/authtoken"
 	"github.com/Vansh-Raja/SSHThing/internal/crypto"
 )
 
@@ -103,5 +104,64 @@ func TestLoadFromFile_LegacyPlaintext(t *testing.T) {
 	}
 	if loaded.Version != 2 {
 		t.Fatalf("expected legacy version 2, got %d", loaded.Version)
+	}
+}
+
+func TestExportDataToFilePreservesPortableProviderPayload(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, SyncFileName)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	data := &SyncData{
+		Version:   CurrentSyncVersion,
+		Salt:      "abc123",
+		UpdatedAt: now,
+		Groups: []SyncGroup{{
+			SyncID:    "group-1",
+			Name:      "Work",
+			CreatedAt: now,
+			UpdatedAt: now,
+		}},
+		Hosts: []SyncHost{{
+			ID:        1,
+			SyncID:    "host-1",
+			Label:     "GPU",
+			GroupName: "Work",
+			Hostname:  "gpu.example.com",
+			Username:  "root",
+			Port:      22,
+			KeyData:   "ciphertext",
+			KeyType:   "private_key",
+			CreatedAt: now,
+			UpdatedAt: now,
+		}},
+		TokenDefs: []authtoken.SyncTokenDef{{
+			TokenID:     "token-1",
+			Name:        "agent",
+			CreatedAt:   now,
+			UpdatedAt:   now,
+			SyncEnabled: true,
+			Hosts:       []authtoken.SyncTokenHost{{HostID: 1, DisplayLabel: "GPU"}},
+		}},
+	}
+
+	if err := ExportDataToFile(data, path, "pw"); err != nil {
+		t.Fatalf("ExportDataToFile failed: %v", err)
+	}
+	loaded, err := LoadFromFile(path, "pw")
+	if err != nil {
+		t.Fatalf("LoadFromFile failed: %v", err)
+	}
+	if loaded.Version != CurrentSyncVersion || loaded.Salt != data.Salt {
+		t.Fatalf("unexpected loaded metadata: %+v", loaded)
+	}
+	if len(loaded.Groups) != 1 || loaded.Groups[0].SyncID != "group-1" {
+		t.Fatalf("expected group payload preserved, got %+v", loaded.Groups)
+	}
+	if len(loaded.Hosts) != 1 || loaded.Hosts[0].SyncID != "host-1" || loaded.Hosts[0].KeyData != "ciphertext" {
+		t.Fatalf("expected host payload preserved, got %+v", loaded.Hosts)
+	}
+	if len(loaded.TokenDefs) != 1 || loaded.TokenDefs[0].TokenID != "token-1" {
+		t.Fatalf("expected token definitions preserved, got %+v", loaded.TokenDefs)
 	}
 }

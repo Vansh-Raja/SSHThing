@@ -22,6 +22,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for rele
 
 ### Changed
 - Personal sync now supports one active provider (`off`, `github`, or `sshthing cloud`) with portable sync scope controls for hosts, credentials, token definitions, health, and mounts.
+- SSHThing Cloud sync now tracks Convex revisions for incremental pulls, device sync state, and safer Git-to-cloud / cloud-to-Git migration through the shared portable sync payload.
+- Personal host, group, and token-definition changes now trigger a Convex cloud sync automatically when `sshthing cloud` is the active sync provider.
+- Settings now hide GitHub-only sync fields when `sshthing cloud` is selected.
 - Replaced long main-view keybind footers with a minimal universal footer focused on navigation, search, commands, and quit.
 - Tokens mode now adapts to Personal vs Teams mode: personal tokens stay local, while Teams mode manages team-scoped automation tokens through the backend.
 - Teams health refresh now checks all team hosts with bounded concurrency instead of only the selected host.
