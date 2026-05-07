@@ -1,0 +1,31 @@
+appId: com.sshthing.desktop
+productName: SSHThing
+directories:
+  output: dist
+  buildResources: assets
+files:
+  - dist/**/*
+  - node_modules/**/*
+  - package.json
+  - bin/sshthing-daemon
+mac:
+  category: public.app-category.utilities
+  target: dmg
+  icon: assets/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+win:
+  target: nsis
+  icon: assets/icon.ico
+linux:
+  target: AppImage
+  icon: assets/icon.png
+  category: Network
+publish:
+  provider: github
+  owner: Vansh-Raja
+  repo: SSHThing
+  releaseType: release
+extraResources:
+  - from: bin/sshthing-daemon
+    to: bin/sshthing-daemon

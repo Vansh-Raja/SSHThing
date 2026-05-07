@@ -1,0 +1,52 @@
+name: Desktop Build
+
+on:
+  push:
+    branches:
+      - kimi/desktop-polish
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build daemon
+        run: go build -o desktop/bin/sshthing-daemon ./cmd/sshthing-daemon
+
+      - name: Install desktop deps
+        run: cd desktop && pnpm install
+
+      - name: Build renderer
+        run: cd desktop && pnpm run build
+
+      - name: Build Electron app
+        run: cd desktop && pnpm run dist
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshthing-desktop-${{ matrix.os }}
+          path: desktop/dist/*

@@ -61,6 +61,7 @@ export interface AppSettings {
   hostKeyPolicy: string;
   passwordBackend: string;
   syncProvider: 'off' | 'git' | 'cloud';
+  autoSyncAfterCRUD?: boolean;
   releaseChannel?: 'stable' | 'beta';
   autoApplyUpdates?: boolean;
 }

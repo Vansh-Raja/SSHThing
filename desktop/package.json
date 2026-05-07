@@ -9,19 +9,29 @@
     "dev:renderer": "vite",
     "build": "pnpm run build:main && pnpm run build:renderer",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux",
     "dev": "pnpm run daemon:build && pnpm run build && electron .",
     "daemon:build": "cd .. && go build -ldflags=\"-X github.com/Vansh-Raja/SSHThing/internal/cloud.DefaultBaseURL=https://testsshthing.vanshraja.me\" -o desktop/bin/sshthing-daemon ./cmd/sshthing-daemon"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.0",
+    "@vitejs/plugin-react": "^4.7.0",
     "electron": "^34.0.0",
     "electron-builder": "^25.0.0",
     "esbuild": "^0.28.0",
+    "jsdom": "^29.1.1",
     "typescript": "^5.7.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vitest": "^4.1.5"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.0",

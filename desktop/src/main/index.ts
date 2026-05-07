@@ -20,7 +20,12 @@ let daemonProc: child_process.ChildProcess | null = null;
 let client: DaemonClient | null = null;
 
 function resolveDaemonBinary(): string {
-  // In production: packaged binary lives next to resources.
+  // In production: electron-builder extraResources places the binary at
+  // resources/bin/sshthing-daemon.
+  const prodBin = path.resolve(process.resourcesPath, 'bin', 'sshthing-daemon');
+  if (fs.existsSync(prodBin)) {
+    return prodBin;
+  }
   // In development: look in ../bin/sshthing-daemon relative to this file,
   // then fall back to a PATH lookup.
   const devBin = path.resolve(__dirname, '..', '..', 'bin', 'sshthing-daemon');

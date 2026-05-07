@@ -1,6 +1,6 @@
 /**
- * Settings — Phase 3D.
- * Sections: Vault, Appearance, SSH Defaults, Sync Provider.
+ * Settings — Phase 3D + Sync depth features.
+ * Sections: Vault, Appearance, SSH Defaults, Sync Provider, Updates, Health Monitoring.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -8,6 +8,7 @@ import Button from '../ui/Button';
 // Note: useNavigate is retained for the lock vault redirect.
 import PasswordField from '../ui/PasswordField';
 import Select from '../ui/Select';
+import TextField from '../ui/TextField';
 import Dialog from '../ui/Dialog';
 import { toast } from '../ui/toast';
 import { useTheme } from '../hooks/useTheme';
@@ -35,6 +36,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   hostKeyPolicy: 'strict',
   passwordBackend: 'keychain',
   syncProvider: 'off',
+  autoSyncAfterCRUD: false,
 };
 
 export default function Settings() {
@@ -77,6 +79,24 @@ export default function Settings() {
   const [syncNowLoading, setSyncNowLoading] = useState(false);
   const [signOutLoading, setSignOutLoading] = useState(false);
 
+  // Sync devices
+  const [devices, setDevices] = useState<Record<string, unknown>[]>([]);
+  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [forgetDeviceId, setForgetDeviceId] = useState<string | null>(null);
+  const [forgetLoading, setForgetLoading] = useState(false);
+
+  // Sync events
+  const [events, setEvents] = useState<Array<{ source: string; action: string; itemType?: string; itemCount?: number; createdAt: number }>>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+
+  // Git wizard
+  const [gitRepoUrl, setGitRepoUrl] = useState('');
+  const [gitBranch, setGitBranch] = useState('main');
+  const [gitSshKeyPath, setGitSshKeyPath] = useState('');
+  const [gitTestLoading, setGitTestLoading] = useState(false);
+  const [gitTestResult, setGitTestResult] = useState<{ ok: boolean; message?: string } | null>(null);
+  const [gitSaveLoading, setGitSaveLoading] = useState(false);
+
   // Updates
   const [daemonVersion, setDaemonVersion] = useState('');
   const [checkUpdateLoading, setCheckUpdateLoading] = useState(false);
@@ -96,6 +116,34 @@ export default function Settings() {
     window.sshthing.daemonVersion()
       .then((v) => setDaemonVersion(v.version))
       .catch(() => setDaemonVersion(''));
+  }, []);
+
+  // Load sync devices and events on mount
+  useEffect(() => {
+    const loadDevices = async () => {
+      setDevicesLoading(true);
+      try {
+        const res = await window.sshthing.syncDevices();
+        setDevices(res.devices ?? []);
+      } catch {
+        // ignore; stubbed on some builds
+      } finally {
+        setDevicesLoading(false);
+      }
+    };
+    const loadEvents = async () => {
+      setEventsLoading(true);
+      try {
+        const res = await window.sshthing.syncEvents();
+        setEvents(res.events ?? []);
+      } catch {
+        // ignore; stubbed on some builds
+      } finally {
+        setEventsLoading(false);
+      }
+    };
+    void loadDevices();
+    void loadEvents();
   }, []);
 
   const patchSettings = async (patch: Partial<AppSettings>) => {
@@ -164,6 +212,59 @@ export default function Settings() {
     } finally {
       setVacuumLoading(false);
       setVacuumOpen(false);
+    }
+  };
+
+  const handleForgetDevice = async () => {
+    if (!forgetDeviceId) return;
+    setForgetLoading(true);
+    try {
+      await window.sshthing.syncForgetDevice(forgetDeviceId);
+      setDevices((prev) => prev.filter((d) => (d.id ?? d.deviceId) !== forgetDeviceId));
+      toast.success('Device removed');
+    } catch (err: unknown) {
+      const e = err as Error;
+      toast.error(e.message ?? 'Failed to remove device');
+    } finally {
+      setForgetLoading(false);
+      setForgetDeviceId(null);
+    }
+  };
+
+  const handleTestGit = async () => {
+    if (!gitRepoUrl.trim()) {
+      setGitTestResult({ ok: false, message: 'Repository URL is required.' });
+      return;
+    }
+    setGitTestLoading(true);
+    setGitTestResult(null);
+    try {
+      const res = await window.sshthing.syncTestGit(gitRepoUrl.trim(), gitSshKeyPath.trim());
+      setGitTestResult(res);
+    } catch (err: unknown) {
+      const e = err as Error;
+      setGitTestResult({ ok: false, message: e.message ?? 'Connection test failed' });
+    } finally {
+      setGitTestLoading(false);
+    }
+  };
+
+  const handleSaveGit = async () => {
+    setGitSaveLoading(true);
+    try {
+      await window.sshthing.syncConfigure({
+        provider: 'git',
+        repoUrl: gitRepoUrl.trim(),
+        branch: gitBranch.trim() || 'main',
+        sshKeyPath: gitSshKeyPath.trim(),
+      });
+      toast.success('Git sync configuration saved');
+      await loadSettings();
+    } catch (err: unknown) {
+      const e = err as Error;
+      toast.error(e.message ?? 'Failed to save configuration');
+    } finally {
+      setGitSaveLoading(false);
     }
   };
 
@@ -343,14 +444,10 @@ export default function Settings() {
         </div>
       </section>
 
-      {/* ---- Sync Provider ---- */}
+      {/* ---- Sync ---- */}
       <section className="settings-section">
         <div className="settings-section__title">Sync Provider</div>
         <div className="settings-section__body">
-          <p style={{ color: 'var(--muted)', fontSize: 12, margin: 0 }}>
-            Cloud sync and git sync will be available in a future release.
-            Sign in via the sign-in button (coming in Phase 4) to enable cloud sync.
-          </p>
           <div className="settings-row">
             <div className="settings-row__label">Provider</div>
             <div className="segmented">
@@ -362,12 +459,183 @@ export default function Settings() {
                   aria-selected={settings.syncProvider === p}
                   onClick={() => void patchSettings({ syncProvider: p })}
                   style={{ textTransform: 'capitalize' }}
-                  disabled={p !== 'off'}
+                  disabled={p === 'cloud'}
                 >
                   {p}
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Auto-sync toggle */}
+          <div className="settings-row">
+            <div>
+              <div className="settings-row__label">Auto-sync after changes</div>
+              <div className="settings-row__hint">Automatically sync after adding, updating, or removing hosts.</div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.autoSyncAfterCRUD ?? false}
+              onClick={() => void patchSettings({ autoSyncAfterCRUD: !(settings.autoSyncAfterCRUD ?? false) })}
+              style={{
+                width: 40,
+                height: 22,
+                borderRadius: 11,
+                background: (settings.autoSyncAfterCRUD ?? false) ? 'var(--accent)' : 'var(--line)',
+                border: 'none',
+                cursor: 'pointer',
+                position: 'relative',
+                flexShrink: 0,
+                transition: 'background 0.2s',
+              }}
+            >
+              <span
+                style={{
+                  position: 'absolute',
+                  top: 2,
+                  left: (settings.autoSyncAfterCRUD ?? false) ? 20 : 2,
+                  width: 18,
+                  height: 18,
+                  borderRadius: '50%',
+                  background: 'white',
+                  transition: 'left 0.2s',
+                }}
+              />
+            </button>
+          </div>
+
+          {/* Git sync wizard */}
+          {settings.syncProvider === 'git' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+              <TextField
+                label="Repository URL"
+                placeholder="git@github.com:user/repo.git"
+                value={gitRepoUrl}
+                onChange={(e) => setGitRepoUrl(e.target.value)}
+              />
+              <TextField
+                label="Branch"
+                placeholder="main"
+                value={gitBranch}
+                onChange={(e) => setGitBranch(e.target.value)}
+              />
+              <TextField
+                label="SSH key path"
+                placeholder="~/.ssh/id_rsa"
+                value={gitSshKeyPath}
+                onChange={(e) => setGitSshKeyPath(e.target.value)}
+                hint={
+                  <span>
+                    {/* TODO: add a native file picker for SSH key files instead of manual path entry */}
+                    Path to the private SSH key used to access the repository.
+                  </span>
+                }
+              />
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <Button variant="secondary" onClick={handleTestGit} loading={gitTestLoading}>
+                  Test connection
+                </Button>
+                <Button variant="primary" onClick={handleSaveGit} loading={gitSaveLoading}>
+                  Save
+                </Button>
+              </div>
+              {gitTestResult && (
+                <p
+                  style={{
+                    color: gitTestResult.ok ? 'var(--success)' : 'var(--danger)',
+                    fontSize: 12,
+                    margin: 0,
+                  }}
+                >
+                  {gitTestResult.ok ? 'OK' : gitTestResult.message ?? 'Error'}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Sync Devices */}
+          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Sync Devices</div>
+            {devicesLoading ? (
+              <p style={{ color: 'var(--muted)', fontSize: 12, margin: 0 }}>Loading…</p>
+            ) : devices.length === 0 ? (
+              <p style={{ color: 'var(--muted)', fontSize: 12, margin: 0 }}>No devices registered yet.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {devices.map((d, idx) => {
+                  const deviceId = (d.id ?? d.deviceId ?? `device-${idx}`) as string;
+                  const lastSync = d.lastSyncAt ?? d.lastSyncedAt ?? d.lastSyncTime ?? null;
+                  return (
+                    <div
+                      key={deviceId}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        padding: '8px 10px',
+                        borderRadius: 6,
+                        background: 'var(--paper-3)',
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {deviceId}
+                        </div>
+                        {lastSync && (
+                          <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                            Last sync: {new Date(lastSync as string | number).toLocaleString()}
+                          </div>
+                        )}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        onClick={() => setForgetDeviceId(deviceId)}
+                        style={{ minHeight: 28, padding: '0 8px', fontSize: 12 }}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Sync History */}
+          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Sync History</div>
+            {eventsLoading ? (
+              <p style={{ color: 'var(--muted)', fontSize: 12, margin: 0 }}>Loading…</p>
+            ) : events.length === 0 ? (
+              <p style={{ color: 'var(--muted)', fontSize: 12, margin: 0 }}>No sync events yet.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {events.map((e, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 2,
+                      padding: '8px 10px',
+                      borderRadius: 6,
+                      background: 'var(--paper-3)',
+                    }}
+                  >
+                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                      {new Date(e.createdAt).toLocaleString()}
+                    </div>
+                    <div style={{ fontSize: 13 }}>
+                      {e.source} — {e.action}
+                      {e.itemType ? ` · ${e.itemType}` : ''}
+                      {typeof e.itemCount === 'number' ? ` (${e.itemCount})` : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </section>
@@ -543,6 +811,17 @@ export default function Settings() {
         confirmLabel="Vacuum"
         onConfirm={() => void handleVacuum()}
         loading={vacuumLoading}
+      />
+
+      <Dialog
+        open={forgetDeviceId !== null}
+        onClose={() => setForgetDeviceId(null)}
+        title="Remove device"
+        message="Remove this device from the sync registry? It can re-register on its next sync."
+        confirmLabel="Remove"
+        confirmVariant="danger"
+        onConfirm={() => void handleForgetDevice()}
+        loading={forgetLoading}
       />
       </div>
       </div>
