@@ -155,17 +155,51 @@ type RevealedTeamHostCredential struct {
 }
 
 type TeamAuditEvent struct {
-	ID                string `json:"id"`
-	TeamID            string `json:"teamId"`
-	ActorClerkUserID  string `json:"actorClerkUserId"`
-	ActorDisplayName  string `json:"actorDisplayName"`
-	EntityType        string `json:"entityType"`
-	EntityID          string `json:"entityId"`
-	EventType         string `json:"eventType"`
-	TargetClerkUserID string `json:"targetClerkUserId,omitempty"`
-	TargetDisplayName string `json:"targetDisplayName,omitempty"`
-	Summary           string `json:"summary"`
-	CreatedAt         int64  `json:"createdAt"`
+	ID                string                 `json:"id"`
+	TeamID            string                 `json:"teamId"`
+	ActorClerkUserID  string                 `json:"actorClerkUserId"`
+	ActorDisplayName  string                 `json:"actorDisplayName"`
+	EntityType        string                 `json:"entityType"`
+	EntityID          string                 `json:"entityId"`
+	EventType         string                 `json:"eventType"`
+	TargetClerkUserID string                 `json:"targetClerkUserId,omitempty"`
+	TargetDisplayName string                 `json:"targetDisplayName,omitempty"`
+	Summary           string                 `json:"summary"`
+	Metadata          map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt         int64                  `json:"createdAt"`
+}
+
+// UpsertMyCredentialRequest is the body sent to PUT /api/teams/hosts/{hostId}/my-credential.
+type UpsertMyCredentialRequest struct {
+	CredentialType string `json:"credentialType"` // "password" | "private_key"
+	Secret         string `json:"secret"`
+	Username       string `json:"username,omitempty"`
+}
+
+// ImportPersonalHostPreviewResult is returned by teams.hosts.importPersonal.preview.
+type ImportPersonalHostPreviewResult struct {
+	HasConflict     bool          `json:"hasConflict"`
+	IsIdentical     bool          `json:"isIdentical,omitempty"`
+	ExistingHostID  string        `json:"existingHostId,omitempty"`
+	ExistingLabel   string        `json:"existingLabel,omitempty"`
+	Proposed        CreateTeamHostRequest `json:"proposed"`
+}
+
+// ImportPersonalHostCommitAction is one of "create", "update", "duplicate".
+type ImportPersonalHostCommitAction string
+
+const (
+	ImportActionCreate    ImportPersonalHostCommitAction = "create"
+	ImportActionUpdate    ImportPersonalHostCommitAction = "update"
+	ImportActionDuplicate ImportPersonalHostCommitAction = "duplicate"
+)
+
+// ImportPersonalHostCommitRequest is the body sent to teams.hosts.importPersonal.commit.
+type ImportPersonalHostCommitRequest struct {
+	PersonalHostID string                         `json:"personalHostId"`
+	TeamID         string                         `json:"teamId"`
+	Action         ImportPersonalHostCommitAction `json:"action"`
+	ExistingHostID string                         `json:"existingHostId,omitempty"` // required for update
 }
 
 type TeamAutomationTokenHostGrant struct {

@@ -1,0 +1,103 @@
+/* =========================================================
+ * SSHThing Desktop — design tokens
+ * Linear-inspired dark palette (default). Light mode is a
+ * minimal inversion mainly used for printing / a11y.
+ * =======================================================*/
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --paper:    #0e1117;   /* app background */
+  --paper-2:  #13171f;   /* sidebar / cards */
+  --paper-3:  #1a1f2a;   /* hover / nested */
+  --paper-4:  #232733;   /* drawer / modal surface */
+  --rail:     #0a0d12;   /* left icon rail */
+
+  /* Text */
+  --ink:        #e6e8eb;
+  --ink-soft:   #c5cad3;
+  --muted:      #8b95a5;
+  --muted-2:    #6e7787;
+
+  /* Borders / dividers */
+  --line:       rgba(255, 255, 255, 0.06);
+  --line-2:     rgba(255, 255, 255, 0.10);
+  --line-strong: rgba(255, 255, 255, 0.16);
+
+  /* Accent (primary action) */
+  --accent:     #3b82f6;
+  --accent-2:   #2563eb;
+  --accent-soft: rgba(59, 130, 246, 0.14);
+  --accent-ink: #ffffff;
+
+  /* Status */
+  --status-online:  #22c55e;
+  --status-warn:    #eab308;
+  --status-offline: #ef4444;
+  --status-unknown: #6e7787;
+
+  /* Feedback */
+  --danger:     #ef4444;
+  --success:    #22c55e;
+  --warning:    #eab308;
+  --info:       #3b82f6;
+
+  /* Tag pills */
+  --tag-bg:     rgba(59, 130, 246, 0.14);
+  --tag-ink:    #93c5fd;
+
+  /* Geometry */
+  --radius-sm: 4px;
+  --radius:    6px;
+  --radius-lg: 10px;
+
+  /* Shadows (subtle, for floating elements) */
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.55);
+
+  /* Layout */
+  --rail-width: 56px;
+  --topbar-height: 44px;
+  --bottombar-height: 48px;
+
+  /* Type */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'SF Pro Text', 'Segoe UI',
+    Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+html, body {
+  font-family: var(--font-sans);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Optional light mode (for completeness) */
+html.light {
+  color-scheme: light;
+  --paper:    #ffffff;
+  --paper-2:  #f7f8fa;
+  --paper-3:  #eef0f4;
+  --paper-4:  #e6e9ef;
+  --rail:     #f1f3f7;
+  --ink:        #0e1117;
+  --ink-soft:   #2a3140;
+  --muted:      #5b6472;
+  --muted-2:    #7a8290;
+  --line:       rgba(0, 0, 0, 0.06);
+  --line-2:     rgba(0, 0, 0, 0.10);
+  --line-strong: rgba(0, 0, 0, 0.16);
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.18);
+  /* Tag pills — readable on white backgrounds */
+  --tag-bg:       rgba(37, 99, 235, 0.10);
+  --tag-ink:      #1d4ed8;
+  /* Accent soft — visible on white */
+  --accent-soft:  rgba(37, 99, 235, 0.10);
+}

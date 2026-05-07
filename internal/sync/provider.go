@@ -84,6 +84,7 @@ type PersonalCloudClient interface {
 	UpsertPersonalVaultItems(ctx context.Context, accessToken string, req personalsync.UpsertRequest) (personalsync.UpsertResponse, error)
 	MarkPersonalVaultDeviceSeen(ctx context.Context, accessToken string, req personalsync.DeviceSeenRequest) error
 	RecordPersonalSyncEvent(ctx context.Context, accessToken string, req personalsync.SyncEventRequest) error
+	ListPersonalSyncEvents(ctx context.Context, accessToken string) ([]personalsync.SyncEvent, error)
 }
 
 type ConvexProvider struct {

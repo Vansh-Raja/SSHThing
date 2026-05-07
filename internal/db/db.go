@@ -263,6 +263,125 @@ func Init(password string) (*Store, error) {
 	}, nil
 }
 
+// ChangePassword re-encrypts the database and all per-key secret blobs with a new password.
+//
+// Order of operations (blob re-encryption before PRAGMA rekey so that the most failure-prone
+// step — the SQL transaction — runs before the irreversible step):
+//  1. Decrypt every hosts.key_data blob using the current masterKey.
+//  2. Derive the new masterKey from newPassword + existing per-key salt.
+//  3. Re-encrypt all blobs with newMasterKey and update rows in a single transaction.
+//  4. PRAGMA rekey to change the SQLCipher layer key (runs last, is irreversible).
+//  5. Update s.masterKey in memory.
+//
+// If step 3 fails, the PRAGMA rekey has not run yet so the DB is still openable with oldPassword.
+// If step 4 fails, the blobs are already updated for newMasterKey — the DB is in a corrupt state.
+// That scenario is extremely rare (PRAGMA rekey fails only on I/O error at the page level).
+// Callers should consider making a backup copy of the DB file before calling this method in
+// production paths.
+func (s *Store) ChangePassword(newPassword string) error {
+	// ── Phase 1: snapshot all encrypted blobs under the current masterKey ────
+	type hostBlob struct {
+		id      int
+		keyData string // current ciphertext (may be empty)
+	}
+	rows, err := s.db.Query("SELECT id, COALESCE(key_data, '') FROM hosts")
+	if err != nil {
+		return fmt.Errorf("changePassword: query hosts: %w", err)
+	}
+	var blobs []hostBlob
+	for rows.Next() {
+		var b hostBlob
+		if err := rows.Scan(&b.id, &b.keyData); err != nil {
+			rows.Close()
+			return fmt.Errorf("changePassword: scan: %w", err)
+		}
+		blobs = append(blobs, b)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("changePassword: rows err: %w", err)
+	}
+
+	// Decrypt each blob with the current masterKey.
+	type decrypted struct {
+		id    int
+		plain []byte // nil → empty secret
+	}
+	plains := make([]decrypted, 0, len(blobs))
+	for _, b := range blobs {
+		if b.keyData == "" {
+			plains = append(plains, decrypted{id: b.id})
+			continue
+		}
+		pt, err := crypto.Decrypt(b.keyData, s.masterKey)
+		if err != nil {
+			return fmt.Errorf("changePassword: decrypt host %d: %w", b.id, err)
+		}
+		plains = append(plains, decrypted{id: b.id, plain: pt})
+	}
+
+	// ── Phase 2: derive new per-key masterKey ────────────────────────────────
+	saltHex, err := s.GetSalt()
+	if err != nil {
+		return fmt.Errorf("changePassword: get salt: %w", err)
+	}
+	saltBytes, err := hex.DecodeString(saltHex)
+	if err != nil {
+		return fmt.Errorf("changePassword: decode salt: %w", err)
+	}
+	newMasterKey, _, err := crypto.DeriveKey(newPassword, saltBytes)
+	if err != nil {
+		return fmt.Errorf("changePassword: derive new master key: %w", err)
+	}
+
+	// ── Phase 3: re-encrypt all blobs in a transaction (before PRAGMA rekey) ──
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("changePassword: begin tx: %w", err)
+	}
+	stmt, err := tx.Prepare("UPDATE hosts SET key_data=? WHERE id=?")
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("changePassword: prepare stmt: %w", err)
+	}
+
+	for _, d := range plains {
+		var newCiphertext string
+		if d.plain != nil {
+			newCiphertext, err = crypto.Encrypt(d.plain, newMasterKey)
+			if err != nil {
+				stmt.Close()
+				_ = tx.Rollback()
+				return fmt.Errorf("changePassword: re-encrypt host %d: %w", d.id, err)
+			}
+		}
+		if _, err := stmt.Exec(newCiphertext, d.id); err != nil {
+			stmt.Close()
+			_ = tx.Rollback()
+			return fmt.Errorf("changePassword: update host %d: %w", d.id, err)
+		}
+	}
+	stmt.Close()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("changePassword: commit: %w", err)
+	}
+
+	// ── Phase 4: rekey SQLCipher layer (irreversible; runs after tx commit) ───
+	sqlcipherSalt := []byte("ssh-manager-sqlcipher-salt-v1")
+	newDBKey, _, err := crypto.DeriveKey(newPassword, sqlcipherSalt)
+	if err != nil {
+		return fmt.Errorf("changePassword: derive new db key: %w", err)
+	}
+	newKeyHex := hex.EncodeToString(newDBKey)
+	if _, err := s.db.Exec(fmt.Sprintf("PRAGMA rekey = \"x'%s'\"", newKeyHex)); err != nil {
+		return fmt.Errorf("changePassword: pragma rekey: %w", err)
+	}
+
+	// Update in-memory masterKey so subsequent operations use the new key.
+	s.masterKey = newMasterKey
+	return nil
+}
+
 func verifyUnlocked(db *sql.DB) error {
 	// If config table exists, reading from it should succeed with the correct key.
 	// With an incorrect key, SQLCipher should fail to read any pages and error.

@@ -109,15 +109,16 @@ type Config struct {
 	} `json:"mount"`
 
 	Sync struct {
-		Enabled       bool           `json:"enabled"`
-		Provider      SyncProvider   `json:"provider,omitempty"`
-		RepoURL       string         `json:"repo_url"`
-		AuthMethod    SyncAuthMethod `json:"auth_method"`
-		SSHKeyPath    string         `json:"ssh_key_path"`
-		Branch        string         `json:"branch"`
-		LocalPath     string         `json:"local_path"`
-		ConvexVaultID string         `json:"convex_vault_id,omitempty"`
-		Scope         SyncScope      `json:"scope"`
+		Enabled            bool           `json:"enabled"`
+		Provider           SyncProvider   `json:"provider,omitempty"`
+		RepoURL            string         `json:"repo_url"`
+		AuthMethod         SyncAuthMethod `json:"auth_method"`
+		SSHKeyPath         string         `json:"ssh_key_path"`
+		Branch             string         `json:"branch"`
+		LocalPath          string         `json:"local_path"`
+		ConvexVaultID      string         `json:"convex_vault_id,omitempty"`
+		Scope              SyncScope      `json:"scope"`
+		AutoSyncAfterCRUD  bool           `json:"auto_sync_after_crud,omitempty"`
 	} `json:"sync"`
 
 	Updates struct {
@@ -183,6 +184,7 @@ func Default() Config {
 	c.Sync.Scope.TokenDefinitions = true
 	c.Sync.Scope.Health = false
 	c.Sync.Scope.MountState = false
+	c.Sync.AutoSyncAfterCRUD = false
 
 	c.Automation.SyncTokenDefinitions = false
 	c.Automation.SessionTTLSeconds = 900

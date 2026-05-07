@@ -71,3 +71,13 @@ type SyncEventRequest struct {
 	ItemType  string `json:"itemType,omitempty"`
 	ItemCount int    `json:"itemCount,omitempty"`
 }
+
+// SyncEvent is a single row from the server's events log.
+// Mirrors the shape returned by convex/personalVaults.ts listEvents.
+type SyncEvent struct {
+	Source    string  `json:"source"`
+	Action    string  `json:"action"`
+	ItemType  *string `json:"itemType"` // nullable
+	ItemCount *int    `json:"itemCount"` // nullable
+	CreatedAt int64   `json:"createdAt"` // Unix ms
+}

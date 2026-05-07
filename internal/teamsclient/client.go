@@ -199,6 +199,58 @@ func (c *Client) DeleteMemberCredentialAsAdmin(ctx context.Context, accessToken,
 	return c.doJSON(ctx, http.MethodDelete, "/api/teams/hosts/"+url.PathEscape(hostID)+"/credentials/"+url.PathEscape(memberID), accessToken, nil, nil)
 }
 
+// UpsertMyCredential sets the current user's per-member credential for a host.
+// Wraps PUT /api/teams/hosts/{hostId}/my-credential.
+func (c *Client) UpsertMyCredential(ctx context.Context, accessToken, hostID string, req teams.UpsertMyCredentialRequest) error {
+	return c.doJSON(ctx, http.MethodPut, "/api/teams/hosts/"+url.PathEscape(hostID)+"/my-credential", accessToken, req, nil)
+}
+
+// ── Member management ─────────────────────────────────────────────────────────
+
+func (c *Client) ListTeamMembers(ctx context.Context, accessToken, teamID string) ([]teams.TeamMember, error) {
+	var out []teams.TeamMember
+	err := c.doJSON(ctx, http.MethodGet, "/api/teams/"+url.PathEscape(teamID)+"/members", accessToken, nil, &out)
+	return out, err
+}
+
+// InviteTeamMember sends an invite to the given email.
+func (c *Client) InviteTeamMember(ctx context.Context, accessToken, teamID, email string, role teams.TeamRole) (teams.TeamInvite, error) {
+	var out teams.TeamInvite
+	err := c.doJSON(ctx, http.MethodPost, "/api/teams/"+url.PathEscape(teamID)+"/invites", accessToken,
+		map[string]string{"email": email, "role": string(role)}, &out)
+	return out, err
+}
+
+// UpdateTeamMemberRole changes an existing member's role.
+func (c *Client) UpdateTeamMemberRole(ctx context.Context, accessToken, teamID, memberID string, role teams.TeamRole) error {
+	return c.doJSON(ctx, http.MethodPatch, "/api/teams/"+url.PathEscape(teamID)+"/members/"+url.PathEscape(memberID), accessToken,
+		map[string]string{"role": string(role)}, nil)
+}
+
+// RemoveTeamMember removes a member from the team.
+func (c *Client) RemoveTeamMember(ctx context.Context, accessToken, teamID, memberID string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/api/teams/"+url.PathEscape(teamID)+"/members/"+url.PathEscape(memberID), accessToken, nil, nil)
+}
+
+// ListTeamInvites returns pending invites for the team (sent + incoming).
+func (c *Client) ListTeamInvites(ctx context.Context, accessToken, teamID string) (teams.TeamInviteList, error) {
+	var out teams.TeamInviteList
+	err := c.doJSON(ctx, http.MethodGet, "/api/teams/"+url.PathEscape(teamID)+"/invites", accessToken, nil, &out)
+	return out, err
+}
+
+// AcceptTeamInvite accepts a pending invite by invite ID.
+func (c *Client) AcceptTeamInvite(ctx context.Context, accessToken, inviteID string) error {
+	return c.doJSON(ctx, http.MethodPost, "/api/teams/invites/"+url.PathEscape(inviteID)+"/accept", accessToken, map[string]any{}, nil)
+}
+
+// RevokeTeamInvite revokes a sent invite by invite ID.
+func (c *Client) RevokeTeamInvite(ctx context.Context, accessToken, teamID, inviteID string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/api/teams/"+url.PathEscape(teamID)+"/invites/"+url.PathEscape(inviteID), accessToken, nil, nil)
+}
+
+// ── Audit ─────────────────────────────────────────────────────────────────────
+
 func (c *Client) ListTeamAuditEvents(ctx context.Context, accessToken, teamID string) ([]teams.TeamAuditEvent, error) {
 	var out []teams.TeamAuditEvent
 	err := c.doJSON(ctx, http.MethodGet, "/api/teams/"+url.PathEscape(teamID)+"/audit", accessToken, nil, &out)
@@ -279,6 +331,16 @@ func (c *Client) MarkPersonalVaultDeviceSeen(ctx context.Context, accessToken st
 
 func (c *Client) RecordPersonalSyncEvent(ctx context.Context, accessToken string, req personalsync.SyncEventRequest) error {
 	return c.doJSON(ctx, http.MethodPost, "/api/personal/vault/events", accessToken, req, nil)
+}
+
+// ListPersonalSyncEvents fetches the last 50 sync events for the authenticated user.
+// Maps to GET /api/personal/vault/events → convex personalVaults.listEvents.
+func (c *Client) ListPersonalSyncEvents(ctx context.Context, accessToken string) ([]personalsync.SyncEvent, error) {
+	var out []personalsync.SyncEvent
+	if err := c.doJSON(ctx, http.MethodGet, "/api/personal/vault/events", accessToken, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path, accessToken string, body any, out any) error {
