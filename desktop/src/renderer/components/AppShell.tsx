@@ -22,6 +22,7 @@ import { toast } from '../ui/toast';
 import ErrorBoundary from './ErrorBoundary';
 import DaemonHealthBanner from './DaemonHealthBanner';
 import TeamSwitcherTopbar from './TeamSwitcherTopbar';
+import InvitesBadge from './InvitesBadge';
 import {
   TerminalIcon,
   UserIcon,
@@ -173,6 +174,8 @@ function Topbar({
       )}
 
       <div className="topbar__right">
+        <InvitesBadge />
+
         {sync.state === 'ok' && (
           <span className="topbar__sync topbar__sync--ok" title="Last synced just now">
             <CheckIcon /> Synced

@@ -383,6 +383,9 @@ const sshthing = {
   updateHost: (host: HostUpdate): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('hosts:update', host),
 
+  updateHostWithKey: (host: HostUpdate & { plainKey: string }): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('hosts:updateWithKey', host),
+
   deleteHost: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('hosts:delete', id),
 
@@ -539,6 +542,9 @@ const sshthing = {
   mountList: (): Promise<{ mounts: MountSummary[] }> =>
     ipcRenderer.invoke('mount:list'),
 
+  mountCheckPrereqs: (): Promise<{ ok: boolean; platform: string; missing: string[]; hints: string[] }> =>
+    ipcRenderer.invoke('mount:checkPrereqs'),
+
   // ---- Transfer ----
   transferUpload: (params: TransferParams): Promise<{ transferId: string }> =>
     ipcRenderer.invoke('transfer:upload', params),
@@ -586,6 +592,21 @@ const sshthing = {
 
   syncConfigure: (params: SyncConfigureParams): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('sync:configure', params),
+
+  syncEvents: (): Promise<{ events: Array<{ source: string; action: string; itemType?: string; itemCount?: number; createdAt: number }> }> =>
+    ipcRenderer.invoke('sync:events'),
+
+  syncDevices: (): Promise<{ devices: Array<Record<string, unknown>> }> =>
+    ipcRenderer.invoke('sync:devices'),
+
+  syncForgetDevice: (deviceId: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('sync:forgetDevice', deviceId),
+
+  syncTestGit: (repoUrl: string, sshKeyPath: string): Promise<{ ok: boolean; message?: string }> =>
+    ipcRenderer.invoke('sync:testGit', repoUrl, sshKeyPath),
+
+  keyringHealthCheck: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('keyring:healthCheck'),
 
   // ---- System ----
   /** Opens a path in the system file manager (Finder on macOS). Returns empty string on success. */

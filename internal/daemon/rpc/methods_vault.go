@@ -15,6 +15,7 @@ func RegisterVault(s *Server, v *service.Vault) {
 	s.Register("vault.create", makeVaultCreate(v))
 	s.Register("vault.changePassword", makeVaultChangePassword(v))
 	s.Register("vault.lock", makeVaultLock(v))
+	s.Register("vault.vacuum", makeVaultVacuum(v))
 	s.Register("keyring.healthCheck", handleKeyringHealthCheck)
 }
 
@@ -98,6 +99,18 @@ func makeVaultChangePassword(v *service.Vault) Handler {
 func makeVaultLock(v *service.Vault) Handler {
 	return func(_ context.Context, _ uint64, _ json.RawMessage) (any, *RPCError) {
 		v.Lock()
+		return map[string]bool{"ok": true}, nil
+	}
+}
+
+func makeVaultVacuum(v *service.Vault) Handler {
+	return func(_ context.Context, _ uint64, _ json.RawMessage) (any, *RPCError) {
+		if err := v.Vacuum(); err != nil {
+			if errors.Is(err, service.ErrVaultLocked) {
+				return nil, &RPCError{Code: CodeVaultLocked, Message: "vault is locked"}
+			}
+			return nil, &RPCError{Code: CodeInternalError, Message: "vacuum failed: " + err.Error()}
+		}
 		return map[string]bool{"ok": true}, nil
 	}
 }

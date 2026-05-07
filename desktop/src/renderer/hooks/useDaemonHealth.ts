@@ -14,7 +14,7 @@ import { useEffect, useState } from 'react';
 
 /** Extended type that includes the optional daemon-exit callback. */
 type SSHThingExtended = typeof window.sshthing & {
-  onDaemonExit?: (cb: () => void) => () => void;
+  onDaemonExited?: (cb: () => void) => () => void;
 };
 
 export type DaemonHealthState = 'alive' | 'disconnected';
@@ -24,11 +24,11 @@ export function useDaemonHealth(): DaemonHealthState {
 
   useEffect(() => {
     const api = window.sshthing as SSHThingExtended;
-    if (typeof api.onDaemonExit !== 'function') {
+    if (typeof api.onDaemonExited !== 'function') {
       // Older preload or preload hasn't wired this yet — safe to ignore.
       return;
     }
-    const unsub = api.onDaemonExit(() => {
+    const unsub = api.onDaemonExited(() => {
       setState('disconnected');
     });
     return unsub;

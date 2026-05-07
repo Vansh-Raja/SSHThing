@@ -842,9 +842,12 @@ textarea.field__input {
 .settings-section__title {
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--paper-3);
 }
 
 .settings-section__body {
@@ -1036,6 +1039,37 @@ textarea.field__input {
 .topbar__sync--err   { color: var(--danger); }
 .topbar__sync--idle  { color: var(--muted); }
 
+.topbar__invites {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.topbar__invites:hover {
+  color: var(--ink);
+  background: var(--paper-3);
+}
+
+.topbar__invites-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--paper);
+}
+
 .topbar__avatar {
   width: 28px;
   height: 28px;
@@ -1132,6 +1166,15 @@ textarea.field__input {
 }
 
 .bottombar__send:hover { color: var(--ink); background: var(--paper-4); }
+
+.settings-page__header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  padding: 24px 32px 12px;
+}
 
 /* =========================================================
  * Three-pane: sidebar + detail

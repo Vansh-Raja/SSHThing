@@ -847,6 +847,12 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// Vacuum rebuilds the database file to reclaim space and defragment.
+func (s *Store) Vacuum() error {
+	_, err := s.db.Exec("VACUUM")
+	return err
+}
+
 // GetSalt returns the encryption salt for this database (hex encoded)
 func (s *Store) GetSalt() (string, error) {
 	var saltHex string

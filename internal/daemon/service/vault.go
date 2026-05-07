@@ -32,6 +32,8 @@ type Vault struct {
 	// successful vault unlock. Useful for services that need to perform
 	// post-unlock initialization (e.g. mount restore, sync startup checks).
 	OnUnlock func()
+	// Notify emits a JSON-RPC notification to all connected clients.
+	Notify func(method string, params any)
 }
 
 // UnlockResult is returned on a successful unlock.
@@ -188,6 +190,20 @@ func (v *Vault) Lock() {
 	}
 	v.mu.Unlock()
 	_ = unlock.Clear()
+	if v.Notify != nil {
+		v.Notify("vault.locked", map[string]any{})
+	}
+}
+
+// Vacuum rebuilds the encrypted database to reclaim space.
+func (v *Vault) Vacuum() error {
+	v.mu.RLock()
+	store := v.store
+	v.mu.RUnlock()
+	if store == nil {
+		return ErrVaultLocked
+	}
+	return store.Vacuum()
 }
 
 // ChangePassword re-keys the SQLCipher DB and re-encrypts all host secrets.

@@ -159,18 +159,19 @@ export default function Settings() {
 
   return (
     <div className="page-scroll" style={{ width: '100%' }}>
-      <div
-        style={{
-          padding: '28px 32px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 20,
-          maxWidth: 720,
-          margin: '0 auto',
-          width: '100%',
-        }}
-      >
-      <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.01em', margin: 0, marginBottom: 4 }}>Settings</h1>
+      <div style={{ maxWidth: 720, margin: '0 auto', width: '100%' }}>
+        <div className="settings-page__header">
+          <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.01em', margin: 0 }}>Settings</h1>
+        </div>
+        <div
+          style={{
+            padding: '8px 32px 32px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 24,
+            width: '100%',
+          }}
+        >
 
       {loadError && (
         <p style={{ color: 'var(--muted)', fontSize: 12, fontStyle: 'italic' }}>{loadError}</p>
@@ -449,6 +450,7 @@ export default function Settings() {
         onConfirm={() => void handleVacuum()}
         loading={vacuumLoading}
       />
+      </div>
       </div>
     </div>
   );

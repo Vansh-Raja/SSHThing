@@ -501,6 +501,10 @@ export class DaemonClient extends EventEmitter {
     return this.call('hosts.update', host);
   }
 
+  updateHostWithKey(host: HostUpdate & { plainKey: string }): Promise<{ ok: boolean }> {
+    return this.call('hosts.updateWithKey', host);
+  }
+
   deleteHost(id: string): Promise<{ ok: boolean }> {
     return this.call('hosts.delete', { id });
   }
@@ -709,6 +713,10 @@ export class DaemonClient extends EventEmitter {
     return this.call('mount.list', {});
   }
 
+  mountCheckPrereqs(): Promise<{ ok: boolean; platform: string; missing: string[]; hints: string[] }> {
+    return this.call('mount.checkPrereqs', {});
+  }
+
   // ---- Transfer ----
 
   transferUpload(params: TransferParams): Promise<{ transferId: string }> {
@@ -767,6 +775,26 @@ export class DaemonClient extends EventEmitter {
 
   syncConfigure(params: SyncConfigureParams): Promise<{ ok: boolean }> {
     return this.call('sync.configure', params);
+  }
+
+  syncEvents(): Promise<{ events: Array<{ source: string; action: string; itemType?: string; itemCount?: number; createdAt: number }> }> {
+    return this.call('sync.events', {});
+  }
+
+  syncDevices(): Promise<{ devices: Array<Record<string, unknown>> }> {
+    return this.call('sync.devices', {});
+  }
+
+  syncForgetDevice(deviceId: string): Promise<{ ok: boolean }> {
+    return this.call('sync.forgetDevice', { deviceId });
+  }
+
+  syncTestGit(repoUrl: string, sshKeyPath: string): Promise<{ ok: boolean; message?: string }> {
+    return this.call('sync.testGit', { repoUrl, sshKeyPath });
+  }
+
+  keyringHealthCheck(): Promise<{ ok: boolean; error?: string }> {
+    return this.call('keyring.healthCheck', {});
   }
 
   disconnect(): void {

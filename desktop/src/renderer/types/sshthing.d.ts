@@ -261,8 +261,6 @@ declare global {
     memAvailBytes?: number;
     diskTotalBytes?: number;
     diskAvailBytes?: number;
-    gpuPresent?: boolean;
-    gpuName?: string;
   }
 
   interface MountSummary {
@@ -364,6 +362,7 @@ declare global {
     getHost: (id: string) => Promise<HostSummary>;
     createHost: (host: HostCreate) => Promise<{ id: string }>;
     updateHost: (host: HostUpdate) => Promise<{ ok: boolean }>;
+    updateHostWithKey: (host: HostUpdate & { plainKey: string }) => Promise<{ ok: boolean }>;
     deleteHost: (id: string) => Promise<{ ok: boolean }>;
     revealCredential: (hostId: string) => Promise<{ credential: string; authMode: string }>;
     generateKey: (keyType: string, comment: string) => Promise<GenerateKeyResult>;
@@ -429,10 +428,12 @@ declare global {
     mountStart: (hostId: string, remotePath: string) => Promise<MountSummary>;
     mountStop: (hostId: string) => Promise<{ ok: boolean }>;
     mountList: () => Promise<{ mounts: MountSummary[] }>;
+    mountCheckPrereqs: () => Promise<{ ok: boolean; platform: string; missing: string[]; hints: string[] }>;
 
     // Transfer
     transferUpload: (params: TransferParams) => Promise<{ transferId: string }>;
     transferDownload: (params: TransferParams) => Promise<{ transferId: string }>;
+    transferCancel: (transferId: string) => Promise<{ ok: boolean }>;
 
     // Exec
     sessionExec: (hostId: string, cmd: string, timeoutMs?: number) => Promise<ExecResult>;
@@ -449,9 +450,17 @@ declare global {
     syncStatus: () => Promise<SyncStatusResult>;
     syncNow: () => Promise<SyncNowResult>;
     syncConfigure: (params: SyncConfigureParams) => Promise<{ ok: boolean }>;
+    syncEvents: () => Promise<{ events: Array<{ source: string; action: string; itemType?: string; itemCount?: number; createdAt: number }> }>;
+    syncDevices: () => Promise<{ devices: Array<Record<string, unknown>> }>;
+    syncForgetDevice: (deviceId: string) => Promise<{ ok: boolean }>;
+    syncTestGit: (repoUrl: string, sshKeyPath: string) => Promise<{ ok: boolean; message?: string }>;
+    keyringHealthCheck: () => Promise<{ ok: boolean; error?: string }>;
 
     // System
     openPath: (filePath: string) => Promise<string>;
+
+    // Dialog
+    chooseDirectory: () => Promise<{ canceled: boolean; path: string | null }>;
 
     // Notifications
     onNotification: (cb: (method: string, params: unknown) => void) => () => void;

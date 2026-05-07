@@ -123,6 +123,7 @@ func main() {
 
 	// Create the RPC server.
 	srv := rpc.NewServer(token)
+	vault.Notify = srv.Notify
 
 	transferSvc := &service.TransferService{
 		Vault:    vault,

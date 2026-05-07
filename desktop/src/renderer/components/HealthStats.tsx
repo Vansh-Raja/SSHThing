@@ -219,12 +219,6 @@ export default function HealthStats({ result, probing, onProbe }: HealthStatsPro
                 fraction={diskUsedFraction(result)}
               />
             )}
-            {result.gpuPresent && (
-              <Stat
-                label="GPU"
-                value={result.gpuName?.trim() || 'Present'}
-              />
-            )}
           </div>
 
           <div style={{ marginTop: 10, fontSize: 11, color: 'var(--muted-2)' }}>

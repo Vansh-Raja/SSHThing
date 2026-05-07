@@ -164,6 +164,7 @@ function registerIPC(c: DaemonClient): void {
   ipcMain.handle('hosts:get', (_e, id: string) => c.getHost(id));
   ipcMain.handle('hosts:create', (_e, host: HostCreate) => c.createHost(host));
   ipcMain.handle('hosts:update', (_e, host: HostUpdate) => c.updateHost(host));
+  ipcMain.handle('hosts:updateWithKey', (_e, host: HostUpdate & { plainKey: string }) => c.updateHostWithKey(host));
   ipcMain.handle('hosts:delete', (_e, id: string) => c.deleteHost(id));
   ipcMain.handle('hosts:revealCredential', (_e, hostId: string) => c.revealCredential(hostId));
   ipcMain.handle('hosts:generateKey', (_e, keyType: string, comment: string) =>
@@ -233,6 +234,7 @@ function registerIPC(c: DaemonClient): void {
   ipcMain.handle('mount:start', (_e, hostId: string, remotePath: string) => c.mountStart(hostId, remotePath));
   ipcMain.handle('mount:stop', (_e, hostId: string) => c.mountStop(hostId));
   ipcMain.handle('mount:list', () => c.mountList());
+  ipcMain.handle('mount:checkPrereqs', () => c.mountCheckPrereqs());
 
   // ---- Transfer IPC ----
   ipcMain.handle('transfer:upload', (_e, params: TransferParams) => c.transferUpload(params));
@@ -258,6 +260,11 @@ function registerIPC(c: DaemonClient): void {
   ipcMain.handle('sync:status', () => c.syncStatus());
   ipcMain.handle('sync:now', () => c.syncNow());
   ipcMain.handle('sync:configure', (_e, params: SyncConfigureParams) => c.syncConfigure(params));
+  ipcMain.handle('sync:events', () => c.syncEvents());
+  ipcMain.handle('sync:devices', () => c.syncDevices());
+  ipcMain.handle('sync:forgetDevice', (_e, deviceId: string) => c.syncForgetDevice(deviceId));
+  ipcMain.handle('sync:testGit', (_e, repoUrl: string, sshKeyPath: string) => c.syncTestGit(repoUrl, sshKeyPath));
+  ipcMain.handle('keyring:healthCheck', () => c.keyringHealthCheck());
 
   // ---- System IPC ----
   // shell.openPath returns a string: empty on success, error message on failure.
