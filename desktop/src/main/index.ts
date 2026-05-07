@@ -9,9 +9,11 @@
  * 5. Kill the daemon when all windows are closed.
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from 'electron';
+import { autoUpdater, type UpdateInfo } from 'electron-updater';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as child_process from 'child_process';
+import windowStateKeeper from 'electron-window-state';
 import { DaemonClient, defaultSocketPath, defaultTokenPath, type HostCreate, type HostUpdate, type AppSettings, type CreateTeamHostRequest, type UpdateTeamHostRequest, type TeamRole, type TokenHostGrant, type TransferParams, type SyncConfigureParams, type UpsertMyCredentialRequest, type ImportPersonalHostCommitRequest } from './daemon';
 
 let daemonProc: child_process.ChildProcess | null = null;
@@ -124,9 +126,16 @@ function killDaemon(): void {
 }
 
 function createWindow(): BrowserWindow {
+  const state = windowStateKeeper({
+    defaultWidth: 1280,
+    defaultHeight: 820,
+  });
+
   const win = new BrowserWindow({
-    width: 1280,
-    height: 820,
+    width: state.width,
+    height: state.height,
+    x: state.x,
+    y: state.y,
     minWidth: 880,
     minHeight: 540,
     webPreferences: {
@@ -136,11 +145,15 @@ function createWindow(): BrowserWindow {
     },
     title: 'SSHThing',
     backgroundColor: '#0e1117',
+    // macOS uses the app bundle icon; Linux/Windows need an explicit path.
+    icon: process.platform === 'darwin' ? undefined : path.resolve(__dirname, '..', '..', 'assets', 'icon.png'),
     // On macOS, integrate the traffic lights into our custom topbar so
     // we don't end up with a redundant OS title row above our chrome.
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 14, y: 14 },
   });
+
+  state.manage(win);
 
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   // In dev, open DevTools.
@@ -278,6 +291,15 @@ function registerIPC(c: DaemonClient): void {
     return { canceled: result.canceled, path: result.filePaths[0] ?? null };
   });
 
+  // ---- Update IPC ----
+  ipcMain.handle('update:install', () => {
+    autoUpdater.quitAndInstall();
+  });
+
+  ipcMain.handle('update:check', () => {
+    void autoUpdater.checkForUpdatesAndNotify();
+  });
+
   // Forward daemon notifications to renderer.
   c.on('notification', (method: string, params: unknown) => {
     BrowserWindow.getAllWindows().forEach((w) => {
@@ -305,7 +327,10 @@ function buildAppMenu(): void {
   const macAppMenu: MenuItemConstructorOptions = {
     label: 'SSHThing',
     submenu: [
-      { role: 'about' },
+      {
+        label: 'About SSHThing',
+        click: () => sendMenuCommand('open-about'),
+      },
       { type: 'separator' },
       {
         label: 'Settings',
@@ -437,7 +462,29 @@ app.whenReady().then(async () => {
   }
 
   buildAppMenu();
-  createWindow();
+  const win = createWindow();
+
+  // Auto-updater wiring
+  autoUpdater.on('update-available', (info: UpdateInfo) => {
+    BrowserWindow.getAllWindows().forEach((w) => {
+      if (!w.isDestroyed()) {
+        w.webContents.send('app:update-available', info);
+      }
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
+    BrowserWindow.getAllWindows().forEach((w) => {
+      if (!w.isDestroyed()) {
+        w.webContents.send('app:update-downloaded', info);
+      }
+    });
+  });
+
+  // Check for updates on start (don't block window creation).
+  setTimeout(() => {
+    void autoUpdater.checkForUpdatesAndNotify();
+  }, 3000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -455,6 +502,64 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
-  killDaemon();
+let isQuitting = false;
+
+app.on('before-quit', (event) => {
+  if (isQuitting) {
+    killDaemon();
+    return;
+  }
+
+  // We need to do async work (check mounts, maybe show a dialog), so prevent
+  // default now and call app.quit() manually once the decision is made.
+  event.preventDefault();
+
+  (async () => {
+    try {
+      if (!client) {
+        isQuitting = true;
+        app.quit();
+        return;
+      }
+
+      const { mounts } = await client.mountList();
+      if (mounts.length === 0) {
+        isQuitting = true;
+        app.quit();
+        return;
+      }
+
+      const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        title: 'Active mounts',
+        message: 'You have active SSHFS mounts. Quitting will unmount them.',
+        buttons: ['Unmount & Quit', 'Leave Mounted', 'Cancel'],
+        defaultId: 0,
+        cancelId: 2,
+      });
+
+      if (response === 2) {
+        // Cancel — keep the app running.
+        return;
+      }
+
+      if (response === 0) {
+        // Unmount & Quit
+        for (const m of mounts) {
+          try {
+            await client.mountStop(m.hostId);
+          } catch {
+            // ignore individual unmount failures
+          }
+        }
+      }
+
+      // response === 1: Leave Mounted — just kill daemon and quit.
+      isQuitting = true;
+      app.quit();
+    } catch {
+      isQuitting = true;
+      app.quit();
+    }
+  })();
 });

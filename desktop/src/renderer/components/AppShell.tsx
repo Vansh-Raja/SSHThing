@@ -21,6 +21,7 @@ import { useSyncStatus } from '../hooks/useSyncStatus';
 import { toast } from '../ui/toast';
 import ErrorBoundary from './ErrorBoundary';
 import DaemonHealthBanner from './DaemonHealthBanner';
+import UpdateBanner from './UpdateBanner';
 import TeamSwitcherTopbar from './TeamSwitcherTopbar';
 import InvitesBadge from './InvitesBadge';
 import {
@@ -256,6 +257,7 @@ export default function AppShell({ search, onSearch, onPaletteOpen, onHelpOpen, 
     <div className="app-shell">
       <Rail />
       <Topbar search={search} onSearch={onSearch} onPaletteOpen={onPaletteOpen} teams={teams} onTeamsChange={onTeamsChange} />
+      <UpdateBanner />
       <main className="main">
         <ErrorBoundary>
           <Outlet />

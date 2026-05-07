@@ -8,10 +8,11 @@
  *
  * Transfer ownership is stubbed "Coming soon" — no web API route exists.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Modal from '../../ui/Modal';
 import { toast } from '../../ui/toast';
 import { useTeamContext } from '../../contexts/TeamContext';
+import { useTeamMembers } from '../../hooks/useTeamMembers';
 
 type TeamSettingsTabProps = {
   team: TeamSummary;
@@ -23,6 +24,37 @@ type TeamSettingsTabProps = {
 export default function TeamSettingsTab({ team, viewerRole, onRefresh }: TeamSettingsTabProps) {
   const { setActiveTeamId } = useTeamContext();
   const isOwner = viewerRole === 'owner';
+
+  // ── Transfer ownership ────────────────────────────────────────────────────
+  const { members } = useTeamMembers(team.id);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferTargetId, setTransferTargetId] = useState('');
+  const [transferring, setTransferring] = useState(false);
+
+  useEffect(() => {
+    if (transferOpen) {
+      setTransferTargetId('');
+      setTransferring(false);
+    }
+  }, [transferOpen]);
+
+  const handleTransfer = useCallback(async () => {
+    if (!transferTargetId) return;
+    setTransferring(true);
+    try {
+      // TODO: wire up when backend adds teams.transferOwnership
+      // await window.sshthing.teamsTransferOwnership(team.id, transferTargetId);
+      toast.info('Contact support to transfer ownership');
+      setTransferOpen(false);
+      setTransferTargetId('');
+      // onRefresh?.();
+    } catch (err) {
+      const e = err as Error;
+      toast.error(e.message ?? 'Failed to transfer ownership');
+    } finally {
+      setTransferring(false);
+    }
+  }, [team.id, transferTargetId]);
 
   // ── Rename ────────────────────────────────────────────────────────────────
   const [renameName, setRenameName] = useState(team.name);
@@ -145,15 +177,20 @@ export default function TeamSettingsTab({ team, viewerRole, onRefresh }: TeamSet
           Danger zone
         </h3>
         <div style={{ border: '1px solid var(--line)', borderRadius: 6, overflow: 'hidden' }}>
-          {/* Transfer ownership — stub (no API route exists) */}
+          {/* Transfer ownership */}
           {isOwner && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderBottom: '1px solid var(--line)' }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 500 }}>Transfer ownership</div>
                 <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>Transfer ownership to another member</div>
               </div>
-              <button type="button" className="btn btn--ghost" disabled style={{ fontSize: 12, opacity: 0.5 }}>
-                Coming soon
+              <button
+                type="button"
+                className="btn btn--ghost"
+                style={{ fontSize: 12 }}
+                onClick={() => setTransferOpen(true)}
+              >
+                Transfer…
               </button>
             </div>
           )}
@@ -242,6 +279,51 @@ export default function TeamSettingsTab({ team, viewerRole, onRefresh }: TeamSet
         <p style={{ margin: 0, fontSize: 13, color: 'var(--ink)' }}>
           You will lose access to <strong>{team.name}</strong> and all its hosts. You can only rejoin if re-invited.
         </p>
+      </Modal>
+
+      {/* ── Transfer ownership modal ── */}
+      <Modal
+        open={transferOpen}
+        onClose={() => setTransferOpen(false)}
+        title="Transfer ownership"
+        maxWidth={420}
+        footer={
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn--ghost" onClick={() => setTransferOpen(false)} disabled={transferring}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn--danger"
+              onClick={() => void handleTransfer()}
+              disabled={transferring || !transferTargetId}
+            >
+              {transferring ? 'Transferring…' : 'Transfer ownership'}
+            </button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--ink)' }}>
+            Select the new owner for <strong>{team.name}</strong>. This action cannot be undone.
+          </p>
+          <label style={{ fontSize: 12, color: 'var(--muted)' }}>New owner</label>
+          <select
+            className="input"
+            value={transferTargetId}
+            onChange={(e) => setTransferTargetId(e.target.value)}
+            disabled={transferring}
+          >
+            <option value="">Choose a member…</option>
+            {members
+              .filter((m) => m.role !== 'owner')
+              .map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.displayName || m.email} ({m.role})
+                </option>
+              ))}
+          </select>
+        </div>
       </Modal>
     </div>
   );

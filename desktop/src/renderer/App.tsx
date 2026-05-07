@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import Unlock from './pages/Unlock';
+import Welcome from './pages/Welcome';
 import Hosts from './pages/Hosts';
 import Settings from './pages/Settings';
 import Teams from './pages/Teams';
@@ -11,6 +12,7 @@ import Toaster from './ui/Toaster';
 import AppShell from './components/AppShell';
 import CommandPalette, { recordRecentHost } from './components/CommandPalette';
 import HelpOverlay from './components/HelpOverlay';
+import AboutModal from './components/AboutModal';
 import { openTerminalSession } from './components/TerminalTab';
 import { useTheme } from './hooks/useTheme';
 import { useTeams } from './hooks/useTeams';
@@ -59,6 +61,7 @@ function AppLayout() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteInitialQuery, setPaletteInitialQuery] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [hosts, setHosts] = useState<HostSummary[]>([]);
   // Stable ref so menu-command handler doesn't re-register on every render
   const navigateRef = useRef(navigate);
@@ -116,6 +119,9 @@ function AppLayout() {
           break;
         case 'open-account':
           navigateRef.current('/account');
+          break;
+        case 'open-about':
+          setAboutOpen(true);
           break;
         default:
           break;
@@ -195,6 +201,7 @@ function AppLayout() {
         initialQuery={paletteInitialQuery}
       />
       <HelpOverlay open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </>
   );
 }
@@ -219,6 +226,7 @@ export default function App() {
             </AuthGuard>
           }
         >
+          <Route path="/welcome" element={<Welcome />} />
           <Route path="/hosts" element={<Hosts />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/teams" element={<Teams />} />

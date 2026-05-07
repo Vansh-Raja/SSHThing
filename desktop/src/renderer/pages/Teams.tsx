@@ -213,6 +213,7 @@ export default function Teams() {
           teams={teams}
           activeTeamId={effectiveTeamId}
           onSelect={handleSelectTeam}
+          onReorder={reload}
         />
         <div style={{ flex: 1 }} />
         <button

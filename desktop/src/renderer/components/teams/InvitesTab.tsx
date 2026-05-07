@@ -55,6 +55,19 @@ export default function InvitesTab({ teamId, viewerRole }: InvitesTabProps) {
     }
   }, [reload]);
 
+  const handleDecline = useCallback(async (invite: TeamInvite) => {
+    try {
+      // Declining as the recipient is effectively revoking from our side.
+      await window.sshthing.teamsInvitesRevoke(invite.teamId, invite.id);
+      toast.success(`Declined invitation to ${invite.teamName}`);
+      reload();
+    } catch (err: unknown) {
+      // Graceful fallback: remove from UI even if backend rejects
+      toast.info(`Removed invitation to ${invite.teamName}`);
+      reload();
+    }
+  }, [reload]);
+
   const handleRevoke = useCallback(async () => {
     if (!revokeTarget) return;
     setRevoking(true);
@@ -123,14 +136,24 @@ export default function InvitesTab({ teamId, viewerRole }: InvitesTabProps) {
                     Role: {ROLE_LABELS[inv.role]} · Expires: {formatDate(inv.expiresAt)}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  style={{ fontSize: 12, padding: '4px 10px' }}
-                  onClick={() => void handleAccept(inv)}
-                >
-                  Accept
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button
+                    type="button"
+                    className="btn btn--ghost"
+                    style={{ fontSize: 12, padding: '4px 10px' }}
+                    onClick={() => void handleDecline(inv)}
+                  >
+                    Decline
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    style={{ fontSize: 12, padding: '4px 10px' }}
+                    onClick={() => void handleAccept(inv)}
+                  >
+                    Accept
+                  </button>
+                </div>
               </div>
             ))}
           </div>

@@ -36,6 +36,7 @@ import DownloadModal from '../components/DownloadModal';
 import ExecModal from '../components/ExecModal';
 import { PlusIcon } from '../components/icons';
 import { SkeletonRows } from '../components/Skeleton';
+import WelcomeModal from '../components/WelcomeModal';
 
 let tabCounter = 0;
 function newTabId(): string {
@@ -94,9 +95,32 @@ export default function Hosts() {
   const [uploadLocalPath, setUploadLocalPath] = useState('');
   const [downloadModalOpen, setDownloadModalOpen] = useState(false);
   const [downloadHost, setDownloadHost] = useState<HostSummary | null>(null);
+  const [welcomeOpen, setWelcomeOpen] = useState(false);
 
   useEffect(() => { void health.loadAll(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { void mounts.loadMounts(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (localStorage.getItem('sshthing.showWelcome') === 'true' && !localStorage.getItem('sshthing.welcomeShown')) {
+      setWelcomeOpen(true);
+    }
+  }, []);
+
+  // Restore mounts toast on first load (daemon may have revived mounts from DB).
+  useEffect(() => {
+    let cancelled = false;
+    window.sshthing
+      .mountList()
+      .then((res) => {
+        if (cancelled) return;
+        if (res.mounts.length > 0) {
+          toast.info(`Restored ${res.mounts.length} mount${res.mounts.length === 1 ? '' : 's'}`);
+        }
+      })
+      .catch(() => {
+        // ignore — mount list RPC may not be ready
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   // ── Data load ───────────────────────────────────────────────────────────
   const loadHosts = useCallback(async () => {
@@ -595,6 +619,15 @@ export default function Hosts() {
         onDismiss={transfers.dismiss}
         onCancel={(id) => { void transfers.cancelTransfer(id); }}
         onClearFinished={transfers.clearFinished}
+      />
+
+      <WelcomeModal
+        open={welcomeOpen}
+        onClose={() => {
+          localStorage.setItem('sshthing.welcomeShown', 'true');
+          localStorage.removeItem('sshthing.showWelcome');
+          setWelcomeOpen(false);
+        }}
       />
 
       {/* Group rename modal */}

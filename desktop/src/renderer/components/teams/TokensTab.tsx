@@ -37,6 +37,9 @@ export default function TokensTab({ teamId, viewerRole }: TokensTabProps) {
   const [revokeTarget, setRevokeTarget] = useState<TokenSummary | null>(null);
   const [revoking, setRevoking] = useState(false);
 
+  // Execution history
+  const [historyToken, setHistoryToken] = useState<TokenSummary | null>(null);
+
   const canManage = viewerRole === 'owner' || viewerRole === 'admin';
 
   const reload = useCallback(() => {
@@ -156,7 +159,9 @@ export default function TokensTab({ teamId, viewerRole }: TokensTabProps) {
           {tokens.map((token) => {
             const isRevoked = token.status === 'revoked';
             const menuItems: MenuItemDef[] = [];
+            menuItems.push({ kind: 'item', label: 'Execution history', onClick: () => setHistoryToken(token) });
             if (canManage) {
+              menuItems.push({ kind: 'separator' });
               if (!isRevoked) {
                 menuItems.push({ kind: 'item', label: 'Revoke', danger: true, onClick: () => setRevokeTarget(token) });
               } else {
@@ -327,6 +332,85 @@ export default function TokensTab({ teamId, viewerRole }: TokensTabProps) {
           }}
         >
           {newRawToken}
+        </div>
+      </Modal>
+
+      {/* Execution history modal (placeholder until backend endpoint exists) */}
+      <Modal
+        open={!!historyToken}
+        onClose={() => setHistoryToken(null)}
+        title={`Execution history — ${historyToken?.name ?? ''}`}
+        maxWidth={520}
+        footer={
+          <div className="modal__actions">
+            <button type="button" className="btn btn--ghost" onClick={() => setHistoryToken(null)}>
+              Close
+            </button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* TODO: replace with real data from backend when token execution audit endpoint is available */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '8px 10px',
+              borderRadius: 4,
+              background: 'var(--paper-2)',
+              border: '1px solid var(--line)',
+            }}
+          >
+            <span className="chip" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              success
+            </span>
+            <div style={{ flex: 1, fontSize: 12 }}>
+              <code style={{ fontFamily: 'var(--font-mono)' }}>deploy.sh --prod</code>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--muted)' }}>2 days ago</div>
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '8px 10px',
+              borderRadius: 4,
+              background: 'var(--paper-2)',
+              border: '1px solid var(--line)',
+            }}
+          >
+            <span className="chip" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              success
+            </span>
+            <div style={{ flex: 1, fontSize: 12 }}>
+              <code style={{ fontFamily: 'var(--font-mono)' }}>deploy.sh --staging</code>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--muted)' }}>5 days ago</div>
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '8px 10px',
+              borderRadius: 4,
+              background: 'var(--paper-2)',
+              border: '1px solid var(--line)',
+            }}
+          >
+            <span className="chip" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--danger)' }}>
+              failed
+            </span>
+            <div style={{ flex: 1, fontSize: 12 }}>
+              <code style={{ fontFamily: 'var(--font-mono)' }}>deploy.sh --prod</code>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--muted)' }}>1 week ago</div>
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--muted)', margin: '4px 0 0' }}>
+            Historical data is illustrative. Wire up the audit endpoint when the backend supports it.
+          </p>
         </div>
       </Modal>
 

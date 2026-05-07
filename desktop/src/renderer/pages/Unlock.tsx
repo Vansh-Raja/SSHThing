@@ -13,6 +13,20 @@ export default function Unlock() {
   const [error, setError] = useState('');
   const navigate = useNavigate();
 
+  const goPostUnlock = async () => {
+    try {
+      const { hosts } = await window.sshthing.listHosts();
+      const hasSeen = localStorage.getItem('sshthing-welcome-shown') === 'true';
+      if (hosts.length === 0 && !hasSeen) {
+        navigate('/welcome');
+      } else {
+        navigate('/hosts');
+      }
+    } catch {
+      navigate('/hosts');
+    }
+  };
+
   const handleUnlock = async (e: FormEvent) => {
     e.preventDefault();
     if (!password) return;
@@ -20,7 +34,7 @@ export default function Unlock() {
     setError('');
     try {
       await window.sshthing.unlock(password);
-      navigate('/hosts');
+      await goPostUnlock();
     } catch (err: unknown) {
       const e2 = err as Error & { code?: number };
       if (e2.code === -32010) {
@@ -55,7 +69,7 @@ export default function Unlock() {
       await window.sshthing.createVault(password);
       // After creation, unlock so the app transitions into the unlocked state.
       await window.sshthing.unlock(password);
-      navigate('/hosts');
+      await goPostUnlock();
     } catch (err: unknown) {
       const e2 = err as Error & { code?: number };
       if (e2.code === -32601) {

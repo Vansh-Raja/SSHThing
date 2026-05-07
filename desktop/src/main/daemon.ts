@@ -68,6 +68,8 @@ export interface AppSettings {
   hostKeyPolicy: string;
   passwordBackend: string;
   syncProvider: 'off' | 'git' | 'cloud';
+  releaseChannel?: 'stable' | 'beta';
+  autoApplyUpdates?: boolean;
 }
 
 export interface SessionInfo {

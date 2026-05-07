@@ -61,6 +61,8 @@ export interface AppSettings {
   hostKeyPolicy: string;
   passwordBackend: string;
   syncProvider: 'off' | 'git' | 'cloud';
+  releaseChannel?: 'stable' | 'beta';
+  autoApplyUpdates?: boolean;
 }
 
 export interface SessionInfo {
@@ -608,6 +610,13 @@ const sshthing = {
   keyringHealthCheck: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('keyring:healthCheck'),
 
+  // ---- Updates ----
+  installUpdate: (): Promise<void> =>
+    ipcRenderer.invoke('update:install'),
+
+  checkForUpdates: (): Promise<void> =>
+    ipcRenderer.invoke('update:check'),
+
   // ---- System ----
   /** Opens a path in the system file manager (Finder on macOS). Returns empty string on success. */
   openPath: (filePath: string): Promise<string> =>
@@ -630,7 +639,7 @@ const sshthing = {
   /**
    * Subscribe to app-menu commands forwarded from the Electron main process.
    * Known commands: 'open-settings' | 'lock-vault' | 'sign-out' |
-   *                 'open-help' | 'new-tab' | 'open-account'
+   *                 'open-help' | 'new-tab' | 'open-account' | 'open-about'
    * Returns an unsubscribe function.
    */
   onMenuCommand: (cb: (cmd: string) => void): (() => void) => {
@@ -652,6 +661,34 @@ const sshthing = {
     ipcRenderer.on('app:daemon-exited', handler);
     return () => {
       ipcRenderer.removeListener('app:daemon-exited', handler);
+    };
+  },
+
+  /**
+   * Subscribe to update-available notifications from electron-updater.
+   * Returns an unsubscribe function.
+   */
+  onUpdateAvailable: (cb: (info: { version: string; releaseDate: string; releaseNotes?: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: { version: string; releaseDate: string; releaseNotes?: string }) => {
+      cb(info);
+    };
+    ipcRenderer.on('app:update-available', handler);
+    return () => {
+      ipcRenderer.removeListener('app:update-available', handler);
+    };
+  },
+
+  /**
+   * Subscribe to update-downloaded notifications from electron-updater.
+   * Returns an unsubscribe function.
+   */
+  onUpdateDownloaded: (cb: (info: { version: string; releaseDate: string; releaseNotes?: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: { version: string; releaseDate: string; releaseNotes?: string }) => {
+      cb(info);
+    };
+    ipcRenderer.on('app:update-downloaded', handler);
+    return () => {
+      ipcRenderer.removeListener('app:update-downloaded', handler);
     };
   },
 };

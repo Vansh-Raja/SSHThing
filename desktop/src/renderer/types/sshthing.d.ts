@@ -62,6 +62,8 @@ declare global {
     hostKeyPolicy: string;
     passwordBackend: string;
     syncProvider: 'off' | 'git' | 'cloud';
+    releaseChannel?: 'stable' | 'beta';
+    autoApplyUpdates?: boolean;
   }
 
   interface SessionInfo {
@@ -456,6 +458,10 @@ declare global {
     syncTestGit: (repoUrl: string, sshKeyPath: string) => Promise<{ ok: boolean; message?: string }>;
     keyringHealthCheck: () => Promise<{ ok: boolean; error?: string }>;
 
+    // Updates
+    installUpdate: () => Promise<void>;
+    checkForUpdates: () => Promise<void>;
+
     // System
     openPath: (filePath: string) => Promise<string>;
 
@@ -470,6 +476,12 @@ declare global {
 
     // Fired when the daemon process exits unexpectedly
     onDaemonExited: (cb: () => void) => () => void;
+
+    // Fired when an app update is available
+    onUpdateAvailable: (cb: (info: { version: string; releaseDate: string; releaseNotes?: string }) => void) => () => void;
+
+    // Fired when an app update has been downloaded
+    onUpdateDownloaded: (cb: (info: { version: string; releaseDate: string; releaseNotes?: string }) => void) => () => void;
   }
 
   interface Window {

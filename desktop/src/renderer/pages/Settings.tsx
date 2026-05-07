@@ -77,6 +77,10 @@ export default function Settings() {
   const [syncNowLoading, setSyncNowLoading] = useState(false);
   const [signOutLoading, setSignOutLoading] = useState(false);
 
+  // Updates
+  const [daemonVersion, setDaemonVersion] = useState('');
+  const [checkUpdateLoading, setCheckUpdateLoading] = useState(false);
+
   const loadSettings = useCallback(async () => {
     try {
       const s = await window.sshthing.getSettings();
@@ -87,6 +91,12 @@ export default function Settings() {
   }, []);
 
   useEffect(() => { void loadSettings(); }, [loadSettings]);
+
+  useEffect(() => {
+    window.sshthing.daemonVersion()
+      .then((v) => setDaemonVersion(v.version))
+      .catch(() => setDaemonVersion(''));
+  }, []);
 
   const patchSettings = async (patch: Partial<AppSettings>) => {
     const next = { ...settings, ...patch };
@@ -358,6 +368,90 @@ export default function Settings() {
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ---- Updates ---- */}
+      <section className="settings-section">
+        <div className="settings-section__title">Updates</div>
+        <div className="settings-section__body">
+          <div className="settings-row">
+            <div className="settings-row__label">Release channel</div>
+            <div className="segmented">
+              {(['stable', 'beta'] as const).map((ch) => (
+                <button
+                  key={ch}
+                  type="button"
+                  className="segmented__item"
+                  aria-selected={settings.releaseChannel === ch}
+                  onClick={() => void patchSettings({ releaseChannel: ch })}
+                  style={{ textTransform: 'capitalize' }}
+                >
+                  {ch}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="settings-row">
+            <div>
+              <div className="settings-row__label">Auto-apply updates</div>
+              <div className="settings-row__hint">Restart and install automatically when an update is downloaded.</div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.autoApplyUpdates ?? false}
+              onClick={() => void patchSettings({ autoApplyUpdates: !(settings.autoApplyUpdates ?? false) })}
+              style={{
+                width: 40,
+                height: 22,
+                borderRadius: 11,
+                background: (settings.autoApplyUpdates ?? false) ? 'var(--accent)' : 'var(--line)',
+                border: 'none',
+                cursor: 'pointer',
+                position: 'relative',
+                flexShrink: 0,
+                transition: 'background 0.2s',
+              }}
+            >
+              <span
+                style={{
+                  position: 'absolute',
+                  top: 2,
+                  left: (settings.autoApplyUpdates ?? false) ? 20 : 2,
+                  width: 18,
+                  height: 18,
+                  borderRadius: '50%',
+                  background: 'white',
+                  transition: 'left 0.2s',
+                }}
+              />
+            </button>
+          </div>
+
+          <div className="settings-row">
+            <div>
+              <div className="settings-row__label">Current version</div>
+              <div className="settings-row__hint">{daemonVersion || '—'}</div>
+            </div>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setCheckUpdateLoading(true);
+                window.sshthing.checkForUpdates()
+                  .then(() => toast.success('Checking for updates…'))
+                  .catch((err: unknown) => {
+                    const e = err as Error;
+                    toast.error(e.message ?? 'Check failed');
+                  })
+                  .finally(() => setCheckUpdateLoading(false));
+              }}
+              loading={checkUpdateLoading}
+            >
+              Check now
+            </Button>
           </div>
         </div>
       </section>
