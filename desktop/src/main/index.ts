@@ -78,9 +78,23 @@ async function startDaemon(): Promise<DaemonClient> {
     }
   }
 
+  // Ensure the daemon inherits a sensible PATH on macOS so it can find
+  // Homebrew-installed tools (sshfs, fusermount, etc.) even when the app
+  // is launched from Finder/Dock rather than a terminal.
+  const spawnEnv = { ...process.env };
+  if (process.platform === 'darwin') {
+    const currentPath = spawnEnv.PATH ?? '';
+    const brewPaths = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/local/sbin'];
+    const missing = brewPaths.filter((p) => !currentPath.split(':').includes(p));
+    if (missing.length > 0) {
+      spawnEnv.PATH = [...missing, currentPath].filter(Boolean).join(':');
+    }
+  }
+
   daemonProc = child_process.spawn(bin, [], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
+    env: spawnEnv,
   });
 
   daemonProc.stdout?.on('data', (d: Buffer) => {
@@ -198,6 +212,9 @@ function registerIPC(c: DaemonClient): void {
   ipcMain.handle('session:open', (_e, hostId: string, cols: number, rows: number, term?: string) =>
     c.openSession(hostId, cols, rows, term)
   );
+  ipcMain.handle('session:openTeam', (_e, hostId: string, cols: number, rows: number, term?: string) =>
+    c.openTeamSession(hostId, cols, rows, term)
+  );
   ipcMain.handle('session:write', (_e, sessionId: string, data: number[]) =>
     c.sessionWrite(sessionId, new Uint8Array(data))
   );
@@ -243,6 +260,12 @@ function registerIPC(c: DaemonClient): void {
   ipcMain.handle('tokens:create', (_e, name: string, grants: TokenHostGrant[]) => c.tokensCreate(name, grants));
   ipcMain.handle('tokens:revoke', (_e, tokenId: string) => c.tokensRevoke(tokenId));
   ipcMain.handle('tokens:deleteRevoked', (_e, tokenId: string) => c.tokensDeleteRevoked(tokenId));
+
+  // ---- Team Tokens IPC ----
+  ipcMain.handle('teams:tokens:list', (_e, teamId: string) => c.teamsTokensList(teamId));
+  ipcMain.handle('teams:tokens:create', (_e, teamId: string, name: string, hostIds: string[]) => c.teamsTokensCreate(teamId, name, hostIds));
+  ipcMain.handle('teams:tokens:revoke', (_e, teamId: string, tokenDocId: string) => c.teamsTokensRevoke(teamId, tokenDocId));
+  ipcMain.handle('teams:tokens:deleteRevoked', (_e, teamId: string, tokenDocId: string) => c.teamsTokensDeleteRevoked(teamId, tokenDocId));
 
   // ---- Health IPC ----
   ipcMain.handle('health:probe', (_e, hostId: string) => c.healthProbe(hostId));
@@ -460,6 +483,13 @@ function buildAppMenu(): void {
 app.whenReady().then(async () => {
   try {
     client = await startDaemon();
+    // Swallow socket errors so a broken daemon connection doesn't crash the main process.
+    client.on('error', (err) => {
+      console.error('[main] daemon client error:', err);
+    });
+    client.on('close', () => {
+      console.error('[main] daemon socket closed');
+    });
     registerIPC(client);
   } catch (err) {
     console.error('[main] failed to start daemon:', err);

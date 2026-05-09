@@ -174,3 +174,23 @@ export async function openTerminalSession(
     throw err;
   }
 }
+
+/**
+ * Opens a new team SSH session and returns the session ID.
+ * Call this before creating a TerminalTab.
+ */
+export async function openTeamTerminalSession(
+  host: TeamHost,
+  cols: number,
+  rows: number,
+  termType = 'xterm-256color',
+): Promise<string> {
+  try {
+    const result = await window.sshthing.openTeamSession(host.id, cols, rows, termType);
+    return result.sessionId;
+  } catch (err: unknown) {
+    const e = err as Error;
+    toast.error(`Failed to connect to ${host.label || host.hostname}: ${e.message}`);
+    throw err;
+  }
+}

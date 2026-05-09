@@ -85,7 +85,7 @@ func (m *Manager) checkPrereqsDarwin() error {
 		}
 	}
 	if m.sshfsBin == "" {
-		return errors.New("⚠ Mount (beta) requires FUSE-T + SSHFS.\nInstall:\n  brew install --cask fuse-t\n  brew tap macos-fuse-t/homebrew-cask\n  brew install --cask fuse-t-sshfs")
+		return errors.New("⚠ Mount (beta) requires SSHFS.\nInstall FUSE-T (recommended):\n  brew install --cask fuse-t\n  brew tap macos-fuse-t/homebrew-cask\n  brew install --cask fuse-t-sshfs\n\nOr macFUSE + SSHFS:\n  brew install --cask macfuse\n  brew install sshfs")
 	}
 
 	if _, err := exec.LookPath("umount"); err != nil {
@@ -320,7 +320,11 @@ func (m *Manager) FinalizeMount(p *PreparedMount) error {
 	}
 	if !ok {
 		m.AbortMount(p)
-		return fmt.Errorf("⚠ mount did not appear at %s", p.LocalPath)
+		errMsg := fmt.Sprintf("⚠ mount did not appear at %s", p.LocalPath)
+		if stderr := p.Stderr(); stderr != "" {
+			errMsg += "\n" + stderr
+		}
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	pid := 0

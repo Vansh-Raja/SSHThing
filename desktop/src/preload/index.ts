@@ -417,6 +417,8 @@ const sshthing = {
   // ---- Sessions ----
   openSession: (hostId: string, cols: number, rows: number, term?: string): Promise<{ sessionId: string }> =>
     ipcRenderer.invoke('session:open', hostId, cols, rows, term),
+  openTeamSession: (hostId: string, cols: number, rows: number, term?: string): Promise<{ sessionId: string }> =>
+    ipcRenderer.invoke('session:openTeam', hostId, cols, rows, term),
 
   /** data must be a plain Array of byte values (not Uint8Array — that can't cross IPC). */
   sessionWrite: (sessionId: string, data: number[]): Promise<{ ok: boolean }> =>
@@ -527,6 +529,19 @@ const sshthing = {
 
   tokensDeleteRevoked: (tokenId: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('tokens:deleteRevoked', tokenId),
+
+  // ---- Team Tokens ----
+  teamsTokensList: (teamId: string): Promise<{ tokens: TokenSummary[] }> =>
+    ipcRenderer.invoke('teams:tokens:list', teamId),
+
+  teamsTokensCreate: (teamId: string, name: string, hostIds: string[]): Promise<{ rawToken: string }> =>
+    ipcRenderer.invoke('teams:tokens:create', teamId, name, hostIds),
+
+  teamsTokensRevoke: (teamId: string, tokenDocId: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('teams:tokens:revoke', teamId, tokenDocId),
+
+  teamsTokensDeleteRevoked: (teamId: string, tokenDocId: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('teams:tokens:deleteRevoked', teamId, tokenDocId),
 
   // ---- Health ----
   healthProbe: (hostId: string): Promise<HealthResult> =>

@@ -18,6 +18,7 @@ import { useEffect } from 'react';
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useSyncStatus } from '../hooks/useSyncStatus';
+import { useAppMode } from '../contexts/AppModeContext';
 import { toast } from '../ui/toast';
 import ErrorBoundary from './ErrorBoundary';
 import DaemonHealthBanner from './DaemonHealthBanner';
@@ -28,8 +29,8 @@ import {
   TerminalIcon,
   UserIcon,
   GearIcon,
-  KeyIcon,
   TeamsIcon,
+  TokenIcon,
   SignOutIcon,
   SearchIcon,
   CheckIcon,
@@ -71,6 +72,7 @@ function RailButton({
 function Rail() {
   const navigate = useNavigate();
   const { session } = useAuth();
+  const { mode } = useAppMode();
 
   const handleSignOut = async () => {
     try {
@@ -84,11 +86,14 @@ function Rail() {
 
   return (
     <nav className="rail" aria-label="Primary">
-      <RailButton to="/hosts" title="Hosts"><TerminalIcon /></RailButton>
-      <RailButton to="/account" title="Account"><UserIcon /></RailButton>
+      {mode === 'personal' ? (
+        <RailButton to="/hosts" title="Hosts"><TerminalIcon /></RailButton>
+      ) : (
+        <RailButton to="/teams" title="Teams"><TeamsIcon /></RailButton>
+      )}
+      <RailButton to="/profile" title="Profile"><UserIcon /></RailButton>
       <RailButton to="/settings" title="Settings"><GearIcon /></RailButton>
-      <RailButton to="/keys" title="Keys"><KeyIcon /></RailButton>
-      <RailButton to="/teams" title="Teams"><TeamsIcon /></RailButton>
+      <RailButton to="/tokens" title="Tokens"><TokenIcon /></RailButton>
       <div className="rail__spacer" />
       {session ? (
         <RailButton title="Sign out" onClick={handleSignOut}><SignOutIcon /></RailButton>
@@ -96,6 +101,47 @@ function Rail() {
         <RailButton title="Sign in" onClick={() => navigate('/sign-in')}><SignOutIcon /></RailButton>
       )}
     </nav>
+  );
+}
+
+// ──────────────────────────────────────────────────────────
+// Mode toggle
+// ──────────────────────────────────────────────────────────
+function ModeToggle() {
+  const { mode, toggleMode } = useAppMode();
+  const navigate = useNavigate();
+
+  const switchToPersonal = () => {
+    if (mode === 'personal') return;
+    toggleMode();
+    navigate('/hosts');
+  };
+
+  const switchToTeams = () => {
+    if (mode === 'teams') return;
+    toggleMode();
+    navigate('/teams');
+  };
+
+  return (
+    <div className="segmented" role="group" aria-label="App mode" style={{ marginRight: 8 }}>
+      <button
+        type="button"
+        className="segmented__item"
+        aria-selected={mode === 'personal'}
+        onClick={switchToPersonal}
+      >
+        Personal
+      </button>
+      <button
+        type="button"
+        className="segmented__item"
+        aria-selected={mode === 'teams'}
+        onClick={switchToTeams}
+      >
+        Teams
+      </button>
+    </div>
   );
 }
 
@@ -133,6 +179,8 @@ function Topbar({
       <Link to="/hosts" style={{ textDecoration: 'none', color: 'inherit' }}>
         <span className="topbar__brand">sshthing</span>
       </Link>
+
+      <ModeToggle />
 
       <div className="topbar__search">
         <span className="topbar__search-icon"><SearchIcon /></span>
@@ -197,7 +245,7 @@ function Topbar({
         )}
 
         {session ? (
-          <Link to="/account" className="topbar__avatar" title={session.userEmail ?? 'Account'}>
+          <Link to="/profile" className="topbar__avatar" title={session.userEmail ?? 'Profile'}>
             {initials || '·'}
           </Link>
         ) : (
@@ -223,35 +271,48 @@ interface AppShellProps {
   search: string;
   onSearch: (q: string) => void;
   onPaletteOpen: (query?: string) => void;
+  onSpotlightOpen: () => void;
   onHelpOpen: () => void;
   teams: TeamSummary[];
   onTeamsChange: () => void;
 }
 
-export default function AppShell({ search, onSearch, onPaletteOpen, onHelpOpen, teams, onTeamsChange }: AppShellProps) {
-  // Cmd+K anywhere → open palette
+export default function AppShell({ search, onSearch, onPaletteOpen, onSpotlightOpen, onHelpOpen, teams, onTeamsChange }: AppShellProps) {
+  // Global shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Cmd+K → open palette
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         onPaletteOpen();
         return;
       }
+      // Ignore if focus is in an input/textarea/contenteditable
+      const target = e.target;
+      if (target instanceof HTMLElement && target.matches('input, textarea, [contenteditable]')) {
+        return;
+      }
+      // `/` outside an input → open spotlight
+      if (e.key === '/' && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        onSpotlightOpen();
+        return;
+      }
+      // `:` outside an input → open palette in command mode
+      if (e.key === ':' && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        onPaletteOpen('/');
+        return;
+      }
       // `?` outside an input → open help overlay
-      if (
-        e.key === '?' &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !(e.target instanceof HTMLElement &&
-          e.target.matches('input, textarea, [contenteditable]'))
-      ) {
+      if (e.key === '?' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         onHelpOpen();
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onPaletteOpen, onHelpOpen]);
+  }, [onPaletteOpen, onSpotlightOpen, onHelpOpen]);
 
   return (
     <div className="app-shell">

@@ -54,7 +54,7 @@ h1, h2, h3, h4, p {
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.12); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
 
 /* =========================================================
- * Buttons
+ * Buttons — pill-shaped with subtle glow
  * =======================================================*/
 
 .btn {
@@ -63,15 +63,15 @@ h1, h2, h3, h4, p {
   justify-content: center;
   gap: 8px;
   height: 34px;
-  padding: 0 14px;
+  padding: 0 18px;
   border: 1px solid var(--line-2);
   background: var(--paper-3);
   color: var(--ink);
   font-family: var(--font-sans);
   font-weight: 500;
   font-size: 13px;
-  border-radius: var(--radius);
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  border-radius: var(--radius-pill);
+  transition: background 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -83,6 +83,7 @@ h1, h2, h3, h4, p {
 
 .btn:active:not(:disabled) {
   background: var(--paper-3);
+  transform: translateY(0.5px);
 }
 
 .btn--primary {
@@ -90,11 +91,13 @@ h1, h2, h3, h4, p {
   border-color: var(--accent);
   color: var(--accent-ink);
   font-weight: 600;
+  box-shadow: var(--glow-accent-sm);
 }
 
 .btn--primary:hover:not(:disabled) {
   background: var(--accent-2);
   border-color: var(--accent-2);
+  box-shadow: var(--glow-accent);
 }
 
 .btn--danger {
@@ -115,12 +118,12 @@ h1, h2, h3, h4, p {
 
 .btn--lg {
   height: 40px;
-  padding: 0 18px;
+  padding: 0 22px;
   font-size: 13px;
 }
 
 .btn:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
@@ -142,8 +145,8 @@ h1, h2, h3, h4, p {
 
 .field__input {
   width: 100%;
-  height: 34px;
-  padding: 7px 10px;
+  height: 36px;
+  padding: 7px 12px;
   border: 1px solid var(--line-2);
   background: var(--paper-3);
   color: var(--ink);
@@ -151,12 +154,13 @@ h1, h2, h3, h4, p {
   font: inherit;
   font-size: 13px;
   outline: none;
-  transition: border-color 120ms ease, background 120ms ease;
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
 }
 
 .field__input:focus {
   border-color: var(--accent);
   background: var(--paper-4);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .field__input::placeholder {
@@ -180,8 +184,8 @@ textarea.field__input {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 9px;
-  border-radius: var(--radius);
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
   font-size: 11px;
   font-weight: 500;
   color: var(--tag-ink);
@@ -217,11 +221,11 @@ textarea.field__input {
 .drawer__backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.60);
   opacity: 0;
-  transition: opacity 180ms ease;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  transition: opacity 220ms ease;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .drawer--entered .drawer__backdrop {
@@ -235,7 +239,7 @@ textarea.field__input {
   border-left: 1px solid var(--line-2);
   box-shadow: var(--shadow-lg);
   transform: translateX(100%);
-  transition: transform 220ms ease;
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
   display: flex;
   flex-direction: column;
   outline: none;
@@ -329,11 +333,11 @@ textarea.field__input {
 .modal__backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.60);
   opacity: 0;
-  transition: opacity 140ms ease;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  transition: opacity 180ms ease;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .modal--entered .modal__backdrop {
@@ -349,7 +353,7 @@ textarea.field__input {
   border-radius: var(--radius-lg);
   transform: scale(0.96);
   opacity: 0;
-  transition: transform 160ms ease, opacity 160ms ease;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease;
   display: flex;
   flex-direction: column;
   outline: none;
@@ -413,7 +417,7 @@ textarea.field__input {
 .toast {
   pointer-events: auto;
   text-align: left;
-  padding: 11px 14px;
+  padding: 12px 16px;
   background: var(--paper-3);
   color: var(--ink);
   border: 1px solid var(--line-2);
@@ -423,8 +427,8 @@ textarea.field__input {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  animation: toast-in 160ms ease;
-  border-radius: var(--radius);
+  animation: toast-in 200ms ease;
+  border-radius: var(--radius-lg);
 }
 
 .toast--success { border-left-color: var(--success); }
@@ -444,14 +448,15 @@ textarea.field__input {
   display: inline-flex;
   gap: 2px;
   border: 1px solid var(--line-2);
-  padding: 2px;
-  border-radius: var(--radius);
+  padding: 3px;
+  border-radius: var(--radius-pill);
   background: var(--paper-3);
   align-self: flex-start;
+  -webkit-app-region: no-drag;
 }
 
 .segmented__item {
-  padding: 5px 12px;
+  padding: 5px 14px;
   background: transparent;
   border: 0;
   color: var(--muted);
@@ -459,9 +464,9 @@ textarea.field__input {
   font-weight: 500;
   font-size: 12px;
   cursor: pointer;
-  border-radius: calc(var(--radius) - 1px);
+  border-radius: var(--radius-pill);
   white-space: nowrap;
-  transition: background 100ms ease, color 100ms ease;
+  transition: background 180ms ease, color 180ms ease;
 }
 
 .segmented__item:hover { color: var(--ink); }
@@ -482,7 +487,7 @@ textarea.field__input {
   gap: 10px;
   padding: 24px;
   border: 1px dashed var(--line-2);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   color: var(--muted);
 }
 
@@ -502,8 +507,8 @@ textarea.field__input {
   background: var(--paper-3);
   border: 1px solid var(--line-2);
   box-shadow: var(--shadow-lg);
-  border-radius: var(--radius);
-  padding: 4px;
+  border-radius: var(--radius-lg);
+  padding: 6px;
   z-index: 80;
   display: flex;
   flex-direction: column;
@@ -514,7 +519,7 @@ textarea.field__input {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 7px 10px;
+  padding: 8px 12px;
   background: transparent;
   border: 0;
   color: var(--ink);
@@ -523,7 +528,7 @@ textarea.field__input {
   font-size: 13px;
   text-align: left;
   cursor: pointer;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
 }
 
 .dropdown-menu__item:hover:not([disabled]) {
@@ -571,9 +576,9 @@ textarea.field__input {
   align-items: flex-start;
   justify-content: center;
   padding-top: 96px;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.60);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .palette-panel {
@@ -675,6 +680,7 @@ textarea.field__input {
 .palette-item:hover,
 .palette-item--selected {
   background: var(--paper-4);
+  border-radius: var(--radius);
 }
 
 .palette-row-icon {
@@ -810,7 +816,7 @@ textarea.field__input {
   height: 8px;
   border-radius: 999px;
   background: currentColor;
-  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent), 0 0 12px color-mix(in srgb, currentColor 40%, transparent);
 }
 
 .status-pill--online   { color: var(--status-online); }
@@ -824,10 +830,19 @@ textarea.field__input {
   height: 8px;
   border-radius: 999px;
 }
-.status-dot--online  { background: var(--status-online); }
-.status-dot--offline { background: var(--status-offline); }
-.status-dot--warn    { background: var(--status-warn); }
-.status-dot--unknown { background: var(--status-unknown); }
+.status-dot--online  { background: var(--status-online); box-shadow: 0 0 8px rgba(34, 197, 94, 0.45); }
+.status-dot--offline { background: var(--status-offline); box-shadow: 0 0 8px rgba(239, 68, 68, 0.35); }
+.status-dot--warn    { background: var(--status-warn); box-shadow: 0 0 8px rgba(234, 179, 8, 0.35); }
+.status-dot--unknown { background: var(--status-unknown); box-shadow: 0 0 8px rgba(115, 115, 115, 0.25); }
+
+@keyframes dot-pulse {
+  0%   { opacity: 1; transform: scale(1); }
+  50%  { opacity: 0.4; transform: scale(0.7); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.status-dot--probing {
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
 
 /* =========================================================
  * Settings sections
@@ -835,26 +850,27 @@ textarea.field__input {
 
 .settings-section {
   border: 1px solid var(--line-2);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   background: var(--paper-2);
+  overflow: hidden;
 }
 
 .settings-section__title {
-  padding: 12px 14px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--line);
   font-size: 11px;
   font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   background: var(--paper-3);
 }
 
 .settings-section__body {
-  padding: 14px;
+  padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .settings-row {
@@ -903,7 +919,7 @@ textarea.field__input {
   flex-direction: column;
   align-items: center;
   padding: 14px 0;
-  gap: 4px;
+  gap: 6px;
   /* macOS traffic-light gutter on top — the lights overlay this area. */
   padding-top: 44px;
   /* Empty rail area is draggable; individual buttons opt out below. */
@@ -916,17 +932,17 @@ textarea.field__input {
 }
 
 .rail__btn {
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 0;
   background: transparent;
-  color: var(--muted);
+  color: var(--muted-2);
   border-radius: var(--radius);
   cursor: pointer;
-  transition: background 100ms ease, color 100ms ease;
+  transition: background 180ms ease, color 180ms ease, box-shadow 180ms ease;
 }
 
 .rail__btn:hover:not(:disabled) {
@@ -937,6 +953,7 @@ textarea.field__input {
 .rail__btn--active {
   color: var(--accent);
   background: var(--accent-soft);
+  box-shadow: var(--glow-accent-sm);
 }
 
 .rail__btn--active:hover:not(:disabled) {
@@ -956,20 +973,21 @@ textarea.field__input {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 14px;
+  padding: 0 16px;
   -webkit-app-region: drag;
 }
 
 .topbar__brand {
-  font-weight: 600;
-  font-size: 13px;
-  letter-spacing: -0.01em;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: -0.02em;
   margin-right: 8px;
+  color: var(--ink);
 }
 
 .topbar__search {
   flex: 1;
-  max-width: 520px;
+  max-width: 480px;
   margin: 0 auto;
   position: relative;
   -webkit-app-region: no-drag;
@@ -977,21 +995,22 @@ textarea.field__input {
 
 .topbar__search-input {
   width: 100%;
-  height: 30px;
+  height: 32px;
   padding: 0 70px 0 36px;
   border: 1px solid var(--line-2);
-  background: var(--paper-3);
+  background: var(--paper-2);
   color: var(--ink);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font: inherit;
   font-size: 13px;
   outline: none;
-  transition: border-color 120ms ease, background 120ms ease;
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
 }
 
 .topbar__search-input:focus {
-  border-color: var(--line-strong);
-  background: var(--paper-4);
+  border-color: var(--accent);
+  background: var(--paper-3);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .topbar__search-icon {
@@ -1207,8 +1226,11 @@ textarea.field__input {
 
 .sidebar__group-title {
   padding: 0 18px 8px;
-  font-size: 12px;
-  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-2);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1246,7 +1268,7 @@ textarea.field__input {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 18px 8px 14px;
+  padding: 9px 18px 9px 14px;
   border: 0;
   background: transparent;
   color: var(--ink-soft);
@@ -1257,7 +1279,7 @@ textarea.field__input {
   width: 100%;
   text-align: left;
   border-left: 3px solid transparent;
-  transition: background 80ms ease, color 80ms ease;
+  transition: background 180ms ease, color 180ms ease;
   position: relative;
 }
 
@@ -1297,7 +1319,7 @@ textarea.field__input {
 }
 
 .detail__inner {
-  max-width: 760px;
+  max-width: none;
   padding: 36px 40px;
 }
 
@@ -1309,9 +1331,9 @@ textarea.field__input {
 }
 
 .detail__title {
-  font-size: 28px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   margin: 0;
 }
 
@@ -1338,7 +1360,9 @@ textarea.field__input {
   gap: 8px;
   color: var(--muted);
   font-size: 14px;
-  margin-bottom: 10px;
+  margin-bottom: 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 .detail__copy {
@@ -1393,7 +1417,7 @@ textarea.field__input {
 .detail__actions {
   display: flex;
   gap: 10px;
-  margin-top: 28px;
+  margin-top: 32px;
   flex-wrap: wrap;
 }
 

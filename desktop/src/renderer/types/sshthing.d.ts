@@ -379,6 +379,7 @@ declare global {
 
     // Sessions
     openSession: (hostId: string, cols: number, rows: number, term?: string) => Promise<{ sessionId: string }>;
+    openTeamSession: (hostId: string, cols: number, rows: number, term?: string) => Promise<{ sessionId: string }>;
     sessionWrite: (sessionId: string, data: number[]) => Promise<{ ok: boolean }>;
     sessionResize: (sessionId: string, cols: number, rows: number) => Promise<{ ok: boolean }>;
     sessionClose: (sessionId: string) => Promise<{ ok: boolean }>;
@@ -422,6 +423,12 @@ declare global {
     tokensCreate: (name: string, grants: TokenHostGrant[]) => Promise<{ rawToken: string }>;
     tokensRevoke: (tokenId: string) => Promise<{ ok: boolean }>;
     tokensDeleteRevoked: (tokenId: string) => Promise<{ ok: boolean }>;
+
+    // Team Tokens
+    teamsTokensList: (teamId: string) => Promise<{ tokens: TokenSummary[] }>;
+    teamsTokensCreate: (teamId: string, name: string, hostIds: string[]) => Promise<{ rawToken: string }>;
+    teamsTokensRevoke: (teamId: string, tokenDocId: string) => Promise<{ ok: boolean }>;
+    teamsTokensDeleteRevoked: (teamId: string, tokenDocId: string) => Promise<{ ok: boolean }>;
 
     // Health
     healthProbe: (hostId: string) => Promise<HealthResult>;

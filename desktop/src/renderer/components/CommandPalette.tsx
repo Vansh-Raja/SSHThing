@@ -24,6 +24,14 @@ import {
   SearchIcon,
   ConnectIcon,
   UserIcon,
+  TokenIcon,
+  PlusIcon,
+  XCircleIcon,
+  CopyIcon,
+  MountIcon,
+  CheckIcon,
+  ArrowUpIcon,
+  InfoIcon,
 } from './icons';
 import type { SVGProps } from 'react';
 
@@ -144,135 +152,70 @@ export default function CommandPalette({
 
     const syncAction = async () => {
       onClose();
-      try {
-        await window.sshthing.syncNow();
-      } catch {
-        // ignore — toast happens elsewhere
-      }
+      try { await window.sshthing.syncNow(); } catch { /* ignore */ }
     };
 
     const lockAction = async () => {
       onClose();
-      try {
-        await window.sshthing.lockVault();
-      } catch {
-        // ignore
-      }
+      try { await window.sshthing.lockVault(); } catch { /* ignore */ }
       navigate_('/unlock');
     };
 
     const signOutAction = async () => {
       onClose();
-      try {
-        await window.sshthing.authSignOut();
-      } catch {
-        // ignore
-      }
+      try { await window.sshthing.authSignOut(); } catch { /* ignore */ }
     };
 
     const probeAllAction = () => {
       onClose();
-      const visible = hosts.slice();
-      visible.forEach((h) => {
-        window.sshthing.healthProbe(h.id).catch(() => {
-          // ignore
-        });
-      });
-      // No toast here to avoid import coupling; App can handle via notifications.
+      hosts.forEach((h) => { window.sshthing.healthProbe(h.id).catch(() => { /* ignore */ }); });
     };
 
-    return [
-      {
-        id: 'cmd-sync',
-        kind: 'command',
-        label: '/sync',
-        subtitle: 'Sync now with cloud',
-        icon: <RowIcon><SearchIcon {...iconProps()} /></RowIcon>,
-        kbd: '↵',
-        action: syncAction,
-      },
-      {
-        id: 'cmd-lock',
-        kind: 'command',
-        label: '/lock',
-        subtitle: 'Lock vault and sign out',
-        icon: <RowIcon><GearIcon {...iconProps()} /></RowIcon>,
-        kbd: '↵',
-        action: lockAction,
-      },
-      {
-        id: 'cmd-sign-in',
-        kind: 'command',
-        label: '/sign-in',
-        subtitle: 'Go to sign-in page',
-        icon: <RowIcon><UserIcon {...iconProps()} /></RowIcon>,
-        kbd: '↵',
-        action: () => { onClose(); navigate_('/sign-in'); },
-      },
-      {
-        id: 'cmd-sign-out',
-        kind: 'command',
-        label: '/sign-out',
-        subtitle: 'Sign out of SSHThing Cloud',
-        icon: <RowIcon><UserIcon {...iconProps()} /></RowIcon>,
-        kbd: '↵',
-        action: signOutAction,
-      },
-      {
-        id: 'cmd-settings',
-        kind: 'command',
-        label: '/settings',
-        subtitle: 'Open settings',
-        icon: <RowIcon><GearIcon {...iconProps()} /></RowIcon>,
-        kbd: '⌘,',
-        action: () => { onClose(); navigate_('/settings'); },
-      },
-      {
-        id: 'cmd-teams',
-        kind: 'command',
-        label: '/teams',
-        subtitle: 'Open teams',
-        icon: <RowIcon><TeamsIcon {...iconProps()} /></RowIcon>,
-        kbd: '↵',
-        action: () => { onClose(); navigate_('/teams'); },
-      },
-      {
-        id: 'cmd-account',
-        kind: 'command',
-        label: '/account',
-        subtitle: 'Open account',
-        icon: <RowIcon><UserIcon {...iconProps()} /></RowIcon>,
-        kbd: '↵',
-        action: () => { onClose(); navigate_('/account'); },
-      },
-      {
-        id: 'cmd-keys',
-        kind: 'command',
-        label: '/keys',
-        subtitle: 'Manage SSH keys',
-        icon: <RowIcon><KeyIcon {...iconProps()} /></RowIcon>,
-        kbd: '↵',
-        action: () => { onClose(); navigate_('/keys'); },
-      },
-      {
-        id: 'cmd-help',
-        kind: 'command',
-        label: '/help',
-        subtitle: 'Show keyboard shortcuts',
-        icon: <RowIcon><GearIcon {...iconProps()} /></RowIcon>,
-        kbd: '?',
-        action: () => { onClose(); onHelpOpen?.(); },
-      },
-      {
-        id: 'cmd-probe-all',
-        kind: 'command',
-        label: '/probe-all',
-        subtitle: `Probe all ${hosts.length} visible hosts`,
-        icon: <RowIcon><TerminalIcon {...iconProps()} /></RowIcon>,
-        kbd: '↵',
-        action: probeAllAction,
-      },
+    const navCmd = (path: string) => () => { onClose(); navigate_(path); };
+    const emitCmd = (event: string) => () => { onClose(); window.dispatchEvent(new CustomEvent(event)); };
+
+    const cmds: PaletteItem[] = [
+      { id: 'cmd-sync',   kind: 'command', label: '/sync',   subtitle: 'Sync now with cloud',           icon: <RowIcon><SearchIcon {...iconProps()} /></RowIcon>, kbd: '↵', action: syncAction },
+      { id: 'cmd-lock',   kind: 'command', label: '/lock',   subtitle: 'Lock vault and sign out',        icon: <RowIcon><GearIcon {...iconProps()} /></RowIcon>,  kbd: '↵', action: lockAction },
+      { id: 'cmd-signin', kind: 'command', label: '/sign-in', subtitle: 'Go to sign-in page',            icon: <RowIcon><UserIcon {...iconProps()} /></RowIcon>,  kbd: '↵', action: navCmd('/sign-in') },
+      { id: 'cmd-signout',kind: 'command', label: '/sign-out',subtitle: 'Sign out of SSHThing Cloud',     icon: <RowIcon><UserIcon {...iconProps()} /></RowIcon>,  kbd: '↵', action: signOutAction },
+      { id: 'cmd-settings',kind:'command', label: '/settings',subtitle: 'Open settings',                  icon: <RowIcon><GearIcon {...iconProps()} /></RowIcon>,  kbd: '⌘,',action: navCmd('/settings') },
+      { id: 'cmd-teams',  kind: 'command', label: '/teams',  subtitle: 'Open teams',                     icon: <RowIcon><TeamsIcon {...iconProps()} /></RowIcon>, kbd: '↵', action: navCmd('/teams') },
+      { id: 'cmd-profile',kind: 'command', label: '/profile',subtitle: 'Open profile',                   icon: <RowIcon><UserIcon {...iconProps()} /></RowIcon>,  kbd: '↵', action: navCmd('/profile') },
+      { id: 'cmd-keys',   kind: 'command', label: '/keys',   subtitle: 'Manage SSH keys',                icon: <RowIcon><KeyIcon {...iconProps()} /></RowIcon>,   kbd: '↵', action: navCmd('/keys') },
+      { id: 'cmd-tokens', kind: 'command', label: '/tokens', subtitle: 'Manage automation tokens',       icon: <RowIcon><TokenIcon {...iconProps()} /></RowIcon>,kbd: '↵', action: navCmd('/tokens') },
+      { id: 'cmd-help',   kind: 'command', label: '/help',   subtitle: 'Show keyboard shortcuts',        icon: <RowIcon><GearIcon {...iconProps()} /></RowIcon>,  kbd: '?', action: () => { onClose(); onHelpOpen?.(); } },
+      { id: 'cmd-probe',  kind: 'command', label: '/probe-all',subtitle: `Probe all ${hosts.length} visible hosts`, icon: <RowIcon><TerminalIcon {...iconProps()} /></RowIcon>, kbd: '↵', action: probeAllAction },
+
+      // Context-aware commands (emit events for current page)
+      { id: 'cmd-new',    kind: 'command', label: '/new',    subtitle: 'Add a new host',                 icon: <RowIcon><PlusIcon {...iconProps()} /></RowIcon>,  kbd: '↵', action: emitCmd('sshthing:cmd-new-host') },
+      { id: 'cmd-edit',   kind: 'command', label: '/edit',   subtitle: 'Edit selected host',             icon: <RowIcon><TerminalIcon {...iconProps()} /></RowIcon>,kbd:'↵', action: emitCmd('sshthing:cmd-edit-selected') },
+      { id: 'cmd-delete', kind: 'command', label: '/delete', subtitle: 'Delete selected host',           icon: <RowIcon><XCircleIcon {...iconProps()} /></RowIcon>,kbd:'↵', action: emitCmd('sshthing:cmd-delete-selected') },
+      { id: 'cmd-copy',   kind: 'command', label: '/copy',   subtitle: 'Duplicate selected host',        icon: <RowIcon><CopyIcon {...iconProps()} /></RowIcon>,  kbd: '↵', action: emitCmd('sshthing:cmd-copy-selected') },
+      { id: 'cmd-mount',  kind: 'command', label: '/mount',  subtitle: 'Mount selected host (SFTP)',     icon: <RowIcon><MountIcon {...iconProps()} /></RowIcon>, kbd: '↵', action: emitCmd('sshthing:cmd-mount-selected') },
+      { id: 'cmd-exec',   kind: 'command', label: '/exec',   subtitle: 'Execute command on selected host',icon:<RowIcon><TerminalIcon {...iconProps()} /></RowIcon>,kbd:'↵', action: emitCmd('sshthing:cmd-exec-selected') },
+      { id: 'cmd-health', kind: 'command', label: '/health', subtitle: 'Health-check selected host',     icon: <RowIcon><CheckIcon {...iconProps()} /></RowIcon>, kbd: '↵', action: emitCmd('sshthing:cmd-health-selected') },
+      { id: 'cmd-sort',   kind: 'command', label: '/sort',   subtitle: 'Cycle host sort order',          icon: <RowIcon><ArrowUpIcon {...iconProps()} /></RowIcon>,kbd:'↵', action: emitCmd('sshthing:cmd-sort') },
+      { id: 'cmd-about',  kind: 'command', label: '/about',  subtitle: 'About SSHThing',                 icon: <RowIcon><InfoIcon {...iconProps()} /></RowIcon>,  kbd: '↵', action: emitCmd('sshthing:cmd-about') },
+
+      // Aliases (same actions, shorter labels)
+      { id: 'cmd-q',      kind: 'command', label: '/q',      subtitle: 'Quit SSHThing',                  icon: <RowIcon><XCircleIcon {...iconProps()} /></RowIcon>,kbd:'↵', action: () => { onClose(); window.close(); } },
+      { id: 'cmd-w',      kind: 'command', label: '/w',      subtitle: 'Sync now (write)',               icon: <RowIcon><SearchIcon {...iconProps()} /></RowIcon>, kbd: '↵', action: syncAction },
+      { id: 'cmd-n',      kind: 'command', label: '/n',      subtitle: 'Add a new host',                 icon: <RowIcon><PlusIcon {...iconProps()} /></RowIcon>,  kbd: '↵', action: emitCmd('sshthing:cmd-new-host') },
+      { id: 'cmd-e',      kind: 'command', label: '/e',      subtitle: 'Edit selected host',             icon: <RowIcon><TerminalIcon {...iconProps()} /></RowIcon>,kbd:'↵', action: emitCmd('sshthing:cmd-edit-selected') },
+      { id: 'cmd-d',      kind: 'command', label: '/d',      subtitle: 'Delete selected host',           icon: <RowIcon><XCircleIcon {...iconProps()} /></RowIcon>,kbd:'↵', action: emitCmd('sshthing:cmd-delete-selected') },
+      { id: 'cmd-cp',     kind: 'command', label: '/cp',     subtitle: 'Duplicate selected host',        icon: <RowIcon><CopyIcon {...iconProps()} /></RowIcon>,  kbd: '↵', action: emitCmd('sshthing:cmd-copy-selected') },
+      { id: 'cmd-m',      kind: 'command', label: '/m',      subtitle: 'Mount selected host',            icon: <RowIcon><MountIcon {...iconProps()} /></RowIcon>, kbd: '↵', action: emitCmd('sshthing:cmd-mount-selected') },
+      { id: 'cmd-x',      kind: 'command', label: '/x',      subtitle: 'Execute on selected host',       icon: <RowIcon><TerminalIcon {...iconProps()} /></RowIcon>,kbd:'↵', action: emitCmd('sshthing:cmd-exec-selected') },
+      { id: 'cmd-h',      kind: 'command', label: '/h',      subtitle: 'Health-check selected host',     icon: <RowIcon><CheckIcon {...iconProps()} /></RowIcon>, kbd: '↵', action: emitCmd('sshthing:cmd-health-selected') },
+      { id: 'cmd-s',      kind: 'command', label: '/s',      subtitle: 'Cycle host sort order',          icon: <RowIcon><ArrowUpIcon {...iconProps()} /></RowIcon>,kbd:'↵', action: emitCmd('sshthing:cmd-sort') },
+      { id: 'cmd-t',      kind: 'command', label: '/t',      subtitle: 'Open teams',                     icon: <RowIcon><TeamsIcon {...iconProps()} /></RowIcon>, kbd: '↵', action: navCmd('/teams') },
+      { id: 'cmd-p',      kind: 'command', label: '/p',      subtitle: 'Open profile',                   icon: <RowIcon><UserIcon {...iconProps()} /></RowIcon>,  kbd: '↵', action: navCmd('/profile') },
+      { id: 'cmd-k',      kind: 'command', label: '/k',      subtitle: 'Manage SSH keys',                icon: <RowIcon><KeyIcon {...iconProps()} /></RowIcon>,   kbd: '↵', action: navCmd('/keys') },
+      { id: 'cmd-tok',    kind: 'command', label: '/tok',    subtitle: 'Manage automation tokens',       icon: <RowIcon><TokenIcon {...iconProps()} /></RowIcon>, kbd: '↵', action: navCmd('/tokens') },
+      { id: 'cmd-set',    kind: 'command', label: '/set',    subtitle: 'Open settings',                  icon: <RowIcon><GearIcon {...iconProps()} /></RowIcon>,  kbd: '⌘,',action: navCmd('/settings') },
     ];
+    return cmds;
   }, [navigate, onClose, hosts, onHelpOpen]);
 
   // ── Fuse instances ────────────────────────────────────

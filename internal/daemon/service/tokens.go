@@ -17,22 +17,49 @@ type TokensService struct {
 
 // CreateTokenParams holds the parameters for token creation.
 type CreateTokenParams struct {
-	Name   string             `json:"name"`
+	Name   string                `json:"name"`
 	Grants []authtoken.HostGrant `json:"grants"`
 }
 
-// ListTokens returns summaries of all non-deleted personal tokens.
-// Mirrors: internal/app/backend.go loadTokenSummaries → authtoken.LoadVault.
-func (ts *TokensService) List() ([]authtoken.TokenSummary, error) {
+func tokenSummaryFromRecord(t authtoken.TokenSummary) TokenSummary {
+	status := "active"
+	if t.RevokedAt != nil {
+		status = "revoked"
+	}
+	ts := TokenSummary{
+		ID:        t.TokenID,
+		Name:      t.Name,
+		Status:    status,
+		CreatedAt: t.CreatedAt.Unix(),
+		UseCount:  t.UseCount,
+		HostCount: t.HostCount,
+	}
+	if t.RevokedAt != nil {
+		v := t.RevokedAt.Unix()
+		ts.RevokedAt = &v
+	}
+	if t.LastUsedAt != nil {
+		v := t.LastUsedAt.Unix()
+		ts.LastUsedAt = &v
+	}
+	return ts
+}
+
+// List returns summaries of all non-deleted personal tokens.
+func (ts *TokensService) List() ([]TokenSummary, error) {
 	vault, err := authtoken.LoadVault()
 	if err != nil {
 		return nil, fmt.Errorf("load token vault: %w", err)
 	}
-	return vault.ListSummaries(), nil
+	raw := vault.ListSummaries()
+	out := make([]TokenSummary, 0, len(raw))
+	for _, r := range raw {
+		out = append(out, tokenSummaryFromRecord(r))
+	}
+	return out, nil
 }
 
 // Create generates a new automation token and saves it to the token vault.
-// Mirrors: internal/app/backend.go createToken().
 func (ts *TokensService) Create(params CreateTokenParams) (string, error) {
 	if len(params.Grants) == 0 {
 		return "", fmt.Errorf("at least one host grant is required")
@@ -78,7 +105,6 @@ func (ts *TokensService) Create(params CreateTokenParams) (string, error) {
 }
 
 // Revoke marks a token as revoked without deleting it.
-// Mirrors: internal/app/backend.go revokeToken().
 func (ts *TokensService) Revoke(tokenID string) error {
 	vault, err := authtoken.LoadVault()
 	if err != nil {
@@ -91,7 +117,6 @@ func (ts *TokensService) Revoke(tokenID string) error {
 }
 
 // DeleteRevoked permanently deletes a previously-revoked token.
-// Mirrors: internal/app/backend.go deleteRevokedToken().
 func (ts *TokensService) DeleteRevoked(tokenID string) error {
 	vault, err := authtoken.LoadVault()
 	if err != nil {

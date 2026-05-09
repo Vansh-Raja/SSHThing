@@ -373,9 +373,17 @@ export class DaemonClient extends EventEmitter {
       sock.once('error', (err) => {
         if (!this.socket) {
           reject(err);
-        } else {
-          this.emit('error', err);
         }
+        // Post-connection errors are handled by the persistent 'error' listener below.
+      });
+
+      sock.on('error', (err) => {
+        // Reject all pending requests when the socket errors.
+        for (const [, pending] of this.pending) {
+          pending.reject(err);
+        }
+        this.pending.clear();
+        this.emit('error', err);
       });
 
       sock.on('data', (chunk: string) => {
@@ -447,7 +455,12 @@ export class DaemonClient extends EventEmitter {
         method,
         params,
       }) + '\n';
-      this.socket.write(req);
+      try {
+        this.socket.write(req);
+      } catch (err) {
+        this.pending.delete(id);
+        reject(err as Error);
+      }
     });
   }
 
@@ -473,6 +486,10 @@ export class DaemonClient extends EventEmitter {
 
   openSession(hostId: string, cols: number, rows: number, term?: string): Promise<{ sessionId: string }> {
     return this.call('session.open', { hostId, cols, rows, term: term ?? 'xterm-256color' });
+  }
+
+  openTeamSession(hostId: string, cols: number, rows: number, term?: string): Promise<{ sessionId: string }> {
+    return this.call('session.openTeam', { hostId, cols, rows, term: term ?? 'xterm-256color' });
   }
 
   sessionWrite(sessionId: string, data: Uint8Array): Promise<{ ok: boolean }> {
@@ -689,6 +706,24 @@ export class DaemonClient extends EventEmitter {
 
   tokensDeleteRevoked(tokenId: string): Promise<{ ok: boolean }> {
     return this.call('tokens.deleteRevoked', { tokenId });
+  }
+
+  // ---- Team Tokens ----
+
+  teamsTokensList(teamId: string): Promise<{ tokens: TokenSummary[] }> {
+    return this.call('teams.tokens.list', { teamId });
+  }
+
+  teamsTokensCreate(teamId: string, name: string, hostIds: string[]): Promise<{ rawToken: string }> {
+    return this.call('teams.tokens.create', { teamId, name, hostIds });
+  }
+
+  teamsTokensRevoke(teamId: string, tokenDocId: string): Promise<{ ok: boolean }> {
+    return this.call('teams.tokens.revoke', { teamId, tokenDocId });
+  }
+
+  teamsTokensDeleteRevoked(teamId: string, tokenDocId: string): Promise<{ ok: boolean }> {
+    return this.call('teams.tokens.deleteRevoked', { teamId, tokenDocId });
   }
 
   // ---- Health ----

@@ -1,12 +1,8 @@
 /**
- * Teams — Phase 5 teams UI.
+ * Teams — TUI-parity team host list.
  *
- * Layout:
- * - Top bar with team switcher
- * - Tab strip: Hosts | Members | Invites | Tokens | Audit | Settings
- * - Tab content pane
- *
- * Sign-in guard: if the daemon returns not_signed_in error, shows a prompt.
+ * Layout: top bar with team switcher + pane-shell (sidebar list + detail pane).
+ * Members/Invites/Audit/Settings accessible via dropdown, not primary tabs.
  */
 import { useCallback, useState } from 'react';
 import { useTeams } from '../hooks/useTeams';
@@ -14,7 +10,6 @@ import TeamSwitcher from '../components/teams/TeamSwitcher';
 import TeamHostsTab from '../components/teams/TeamHostsTab';
 import MembersTab from '../components/teams/MembersTab';
 import InvitesTab from '../components/teams/InvitesTab';
-import TokensTab from '../components/teams/TokensTab';
 import AuditTab from '../components/teams/AuditTab';
 import TeamSettingsTab from '../components/teams/TeamSettingsTab';
 import EmptyState from '../components/EmptyState';
@@ -23,36 +18,27 @@ import { useNotifications } from '../hooks/useNotifications';
 import { useTeamContext } from '../contexts/TeamContext';
 import { toast } from '../ui/toast';
 import Modal from '../ui/Modal';
+import DropdownMenu, { type MenuItemDef } from '../ui/DropdownMenu';
 
-type TabId = 'hosts' | 'members' | 'invites' | 'tokens' | 'audit' | 'settings';
-
-const TAB_ITEMS: { id: TabId; label: string }[] = [
-  { id: 'hosts', label: 'Hosts' },
-  { id: 'members', label: 'Members' },
-  { id: 'invites', label: 'Invites' },
-  { id: 'tokens', label: 'Tokens' },
-  { id: 'audit', label: 'Audit' },
-  { id: 'settings', label: 'Settings' },
-];
+type SubView = 'hosts' | 'members' | 'invites' | 'audit' | 'settings';
 
 export default function Teams() {
   const { teams, loading, notSignedIn, error, reload } = useTeams();
   const { activeTeamId, setActiveTeamId } = useTeamContext();
-  const [activeTab, setActiveTab] = useState<TabId>('hosts');
+  const [subView, setSubView] = useState<SubView>('hosts');
 
-  // Create team modal state (for empty-state button)
+  // Create team modal state
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState('');
   const [creating, setCreating] = useState(false);
 
-  // After loading, auto-select the first team if none selected.
   const activeTeam = teams.find((t) => t.id === activeTeamId) ?? teams[0] ?? null;
   const effectiveTeamId = activeTeam?.id ?? null;
   const viewerRole: TeamRole = activeTeam?.role ?? 'member';
 
   const handleSelectTeam = useCallback((team: TeamSummary) => {
     setActiveTeamId(team.id);
-    setActiveTab('hosts');
+    setSubView('hosts');
   }, [setActiveTeamId]);
 
   const handleCreateTeam = useCallback(async () => {
@@ -74,7 +60,6 @@ export default function Teams() {
     }
   }, [createName, setActiveTeamId, reload]);
 
-  // Reload teams if vault lock notification fires
   const handleNotification = useCallback((method: string) => {
     if (method === 'vault.locked') {
       window.location.hash = '/unlock';
@@ -183,172 +168,153 @@ export default function Teams() {
     );
   }
 
+  const moreMenuItems: MenuItemDef[] = [
+    { kind: 'item', label: 'Members', onClick: () => setSubView('members') },
+    { kind: 'item', label: 'Invites', onClick: () => setSubView('invites') },
+    { kind: 'item', label: 'Audit', onClick: () => setSubView('audit') },
+    { kind: 'separator' },
+    { kind: 'item', label: 'Team settings', onClick: () => setSubView('settings') },
+  ];
+
   return (
     <>
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Top bar */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          padding: '8px 16px',
-          borderBottom: '1.5px solid var(--line)',
-          background: 'var(--paper-2)',
-          flexShrink: 0,
-        }}
-      >
-        <span
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+        {/* Top bar */}
+        <div
           style={{
-            fontSize: 11,
-            fontWeight: 800,
-            letterSpacing: '0.14em',
-            textTransform: 'uppercase',
-            color: 'var(--muted)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '8px 16px',
+            borderBottom: '1.5px solid var(--line)',
+            background: 'var(--paper-2)',
+            flexShrink: 0,
           }}
         >
-          Teams
-        </span>
-        <TeamSwitcher
-          teams={teams}
-          activeTeamId={effectiveTeamId}
-          onSelect={handleSelectTeam}
-          onReorder={reload}
-        />
-        <div style={{ flex: 1 }} />
-        <button
-          type="button"
-          className="btn btn--ghost"
-          style={{ fontSize: 11, padding: '3px 8px' }}
-          onClick={() => setCreateOpen(true)}
-        >
-          + New team
-        </button>
-      </div>
-
-      {effectiveTeamId && activeTeam ? (
-        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-          {/* Tab strip — sticky so it stays visible when content scrolls */}
-          <div
-            role="tablist"
-            aria-label="Team tabs"
+          <span
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              background: 'var(--paper-2)',
-              borderBottom: '1.5px solid var(--line)',
-              flexShrink: 0,
-              overflowX: 'auto',
-              scrollbarWidth: 'none',
-              position: 'sticky',
-              top: 0,
-              zIndex: 10,
+              fontSize: 11,
+              fontWeight: 800,
+              letterSpacing: '0.14em',
+              textTransform: 'uppercase',
+              color: 'var(--muted)',
             }}
           >
-            {TAB_ITEMS.map((tab) => (
+            Teams
+          </span>
+          <TeamSwitcher
+            teams={teams}
+            activeTeamId={effectiveTeamId}
+            onSelect={handleSelectTeam}
+            onReorder={reload}
+          />
+          <div style={{ flex: 1 }} />
+          {subView !== 'hosts' && (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              style={{ fontSize: 11, padding: '3px 8px' }}
+              onClick={() => setSubView('hosts')}
+            >
+              ← Back to hosts
+            </button>
+          )}
+          <DropdownMenu
+            trigger={
               <button
-                key={tab.id}
                 type="button"
-                role="tab"
-                aria-selected={activeTab === tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: '8px 14px',
-                  border: 'none',
-                  borderBottom: `2px solid ${activeTab === tab.id ? 'var(--accent)' : 'transparent'}`,
-                  background: 'transparent',
-                  color: activeTab === tab.id ? 'var(--ink)' : 'var(--muted)',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 12,
-                  fontWeight: 700,
-                  letterSpacing: '0.04em',
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                  flexShrink: 0,
-                  outline: 'none',
-                }}
+                className="btn btn--ghost"
+                style={{ fontSize: 14, padding: '3px 8px', lineHeight: 1 }}
+                title="More"
               >
-                {tab.label}
+                ⋯
               </button>
-            ))}
-          </div>
-
-          {/* Tab content */}
-          <div style={{ flex: 1, overflow: 'auto' }}>
-            {activeTab === 'hosts' && (
-              <TeamHostsTab teamId={effectiveTeamId} viewerRole={viewerRole} />
-            )}
-            {activeTab === 'members' && (
-              <MembersTab teamId={effectiveTeamId} viewerRole={viewerRole} />
-            )}
-            {activeTab === 'invites' && (
-              <InvitesTab teamId={effectiveTeamId} viewerRole={viewerRole} />
-            )}
-            {activeTab === 'tokens' && (
-              <TokensTab teamId={effectiveTeamId} viewerRole={viewerRole} />
-            )}
-            {activeTab === 'audit' && (
-              <AuditTab teamId={effectiveTeamId} />
-            )}
-            {activeTab === 'settings' && (
-              <TeamSettingsTab team={activeTeam} viewerRole={viewerRole} onRefresh={reload} />
-            )}
-          </div>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: 'var(--muted)', fontSize: 13 }}>
-          Select a team above to get started.
-        </div>
-      )}
-    </div>
-
-    {/* Create team modal (used from "+ New team" button in header) */}
-    <Modal
-      open={createOpen}
-      onClose={() => { setCreateOpen(false); setCreateName(''); }}
-      title="Create team"
-      maxWidth={400}
-      footer={
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            }
+            items={moreMenuItems}
+          />
           <button
             type="button"
             className="btn btn--ghost"
-            onClick={() => { setCreateOpen(false); setCreateName(''); }}
-            disabled={creating}
+            style={{ fontSize: 11, padding: '3px 8px' }}
+            onClick={() => setCreateOpen(true)}
           >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={() => void handleCreateTeam()}
-            disabled={creating || createName.trim() === ''}
-          >
-            {creating ? 'Creating…' : 'Create'}
+            + New team
           </button>
         </div>
-      }
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <label style={{ fontSize: 12, color: 'var(--muted)' }}>Team name</label>
-        <input
-          className="input"
-          type="text"
-          placeholder="e.g. Acme Corp"
-          value={createName}
-          onChange={(e) => setCreateName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !creating && createName.trim()) {
-              void handleCreateTeam();
-            }
-          }}
-          autoFocus
-          disabled={creating}
-        />
+
+        {/* Main content */}
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          {effectiveTeamId && activeTeam ? (
+            <>
+              {subView === 'hosts' && (
+                <TeamHostsTab teamId={effectiveTeamId} viewerRole={viewerRole} />
+              )}
+              {subView === 'members' && (
+                <MembersTab teamId={effectiveTeamId} viewerRole={viewerRole} />
+              )}
+              {subView === 'invites' && (
+                <InvitesTab teamId={effectiveTeamId} viewerRole={viewerRole} />
+              )}
+              {subView === 'audit' && (
+                <AuditTab teamId={effectiveTeamId} />
+              )}
+              {subView === 'settings' && (
+                <TeamSettingsTab team={activeTeam} viewerRole={viewerRole} onRefresh={reload} />
+              )}
+            </>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: 'var(--muted)', fontSize: 13 }}>
+              Select a team above to get started.
+            </div>
+          )}
+        </div>
       </div>
-    </Modal>
+
+      {/* Create team modal */}
+      <Modal
+        open={createOpen}
+        onClose={() => { setCreateOpen(false); setCreateName(''); }}
+        title="Create team"
+        maxWidth={400}
+        footer={
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => { setCreateOpen(false); setCreateName(''); }}
+              disabled={creating}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => void handleCreateTeam()}
+              disabled={creating || createName.trim() === ''}
+            >
+              {creating ? 'Creating…' : 'Create'}
+            </button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <label style={{ fontSize: 12, color: 'var(--muted)' }}>Team name</label>
+          <input
+            className="input"
+            type="text"
+            placeholder="e.g. Acme Corp"
+            value={createName}
+            onChange={(e) => setCreateName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !creating && createName.trim()) {
+                void handleCreateTeam();
+              }
+            }}
+            autoFocus
+            disabled={creating}
+          />
+        </div>
+      </Modal>
     </>
   );
 }

@@ -26,6 +26,19 @@ type HostSummary struct {
 	AuthMode string `json:"authMode"`
 }
 
+// TokenSummary is the safe over-the-wire representation of a token.
+// Timestamps are Unix seconds for easy JS consumption.
+type TokenSummary struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	CreatedAt   int64  `json:"createdAt"`
+	RevokedAt   *int64 `json:"revokedAt,omitempty"`
+	LastUsedAt  *int64 `json:"lastUsedAt,omitempty"`
+	UseCount    int    `json:"useCount"`
+	HostCount   int    `json:"hostCount"`
+}
+
 // hostSummaryFromModel converts a db.HostModel to a HostSummary.
 // Ref: internal/db/db.go HostModel struct.
 func hostSummaryFromModel(h db.HostModel) HostSummary {

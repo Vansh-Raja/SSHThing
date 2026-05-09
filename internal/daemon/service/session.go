@@ -17,6 +17,8 @@ import (
 	"github.com/creack/pty"
 	"github.com/Vansh-Raja/SSHThing/internal/config"
 	"github.com/Vansh-Raja/SSHThing/internal/ssh"
+	"github.com/Vansh-Raja/SSHThing/internal/teamsclient"
+	"github.com/Vansh-Raja/SSHThing/internal/teamssession"
 )
 
 // NotifyFunc is called by the session reader goroutine to push PTY bytes and
@@ -43,6 +45,9 @@ type Sessions struct {
 	// terminal type) used when building ssh.Connection. Accessed via atomic.Pointer so
 	// settings.set hot-reload is safe without locks.
 	CfgStore *CfgStore
+	// TeamsClient is used for team host connect-config lookups. Optional — if nil,
+	// team host sessions will fail with "teams not configured".
+	TeamsClient *teamsclient.Client
 
 	mu      sync.Mutex
 	byID    map[string]*Session
@@ -178,6 +183,122 @@ func (sm *Sessions) Open(params OpenParams) (string, error) {
 
 	// Start reader goroutine: pumps PTY bytes to the client via session.data notifications.
 	go sm.pumpPTY(ctx, sess)
+
+	return id, nil
+}
+
+// OpenTeam establishes an SSH session for a team host.
+// It fetches the connect config from the cloud API, builds the connection, and
+// attaches a PTY — mirroring the TUI's connectToTeamHost flow.
+func (sm *Sessions) OpenTeam(ctx context.Context, hostID string, cols, rows uint16, term string) (string, error) {
+	if sm.TeamsClient == nil || !sm.TeamsClient.Enabled() {
+		return "", fmt.Errorf("teams client not configured")
+	}
+
+	// Load and refresh access token.
+	sess, err := teamssession.Load()
+	if err != nil {
+		return "", fmt.Errorf("load session: %w", err)
+	}
+	if sess.AccessToken == "" {
+		return "", ErrNotSignedIn
+	}
+	if sess.Expired(time.Now()) {
+		if sess.RefreshToken == "" {
+			_ = teamssession.Clear()
+			return "", ErrNotSignedIn
+		}
+		refreshed, err := sm.TeamsClient.Refresh(ctx, sess.RefreshToken)
+		if err != nil {
+			_ = teamssession.Clear()
+			return "", fmt.Errorf("session expired and refresh failed: %w", err)
+		}
+		sess.AccessToken = refreshed.AccessToken
+		sess.ExpiresAt = refreshed.ExpiresAt
+		_ = teamssession.Save(sess)
+	}
+
+	// Fetch connection config from cloud.
+	cfg, err := sm.TeamsClient.GetTeamHostConnectConfig(ctx, sess.AccessToken, hostID)
+	if err != nil {
+		return "", err
+	}
+
+	// Build ssh.Connection.
+	hostKeyPolicy := string(config.HostKeyAcceptNew)
+	keepAlive := 60
+	passwordBackend := string(config.PasswordBackendSSHPassFirst)
+	if sm.CfgStore != nil {
+		c := sm.CfgStore.Get()
+		hostKeyPolicy = string(c.SSH.HostKeyPolicy)
+		keepAlive = c.SSH.KeepAliveSeconds
+		passwordBackend = string(c.SSH.PasswordBackendUnix)
+	}
+
+	conn := ssh.Connection{
+		Hostname:            cfg.Hostname,
+		Username:            cfg.Username,
+		Port:                cfg.Port,
+		Term:                sm.resolveTerm(term),
+		HostKeyPolicy:       hostKeyPolicy,
+		KeepAliveSeconds:    keepAlive,
+		PasswordBackendUnix: passwordBackend,
+	}
+	switch cfg.CredentialType {
+	case "password":
+		conn.Password = cfg.Secret
+	case "private_key":
+		if strings.TrimSpace(cfg.Secret) == "" {
+			return "", fmt.Errorf("private key not configured for %s", cfg.Label)
+		}
+		if err := ssh.ValidatePrivateKey(cfg.Secret); err != nil {
+			return "", fmt.Errorf("team private key is invalid format: %w", err)
+		}
+		conn.PrivateKey = cfg.Secret
+	}
+
+	// Build the ssh exec.Cmd.
+	cmd, tempKey, err := ssh.Connect(conn)
+	if err != nil {
+		return "", fmt.Errorf("ssh connect: %w", err)
+	}
+
+	// Detach from inherited stdio so the PTY owns them.
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+
+	// Start the command attached to a PTY.
+	ptyMaster, err := pty.StartWithSize(cmd, &pty.Winsize{
+		Rows: rows,
+		Cols: cols,
+	})
+	if err != nil {
+		_ = tempKey.Cleanup()
+		return "", fmt.Errorf("pty start: %w", err)
+	}
+
+	sm.mu.Lock()
+	sm.counter++
+	id := fmt.Sprintf("s_%d", sm.counter)
+	if sm.byID == nil {
+		sm.byID = make(map[string]*Session)
+	}
+	ctx2, cancel := context.WithCancel(context.Background())
+	sess2 := &Session{
+		ID:        id,
+		HostID:    hostID,
+		OpenedAt:  time.Now(),
+		ptyMaster: ptyMaster,
+		cmd:       cmd,
+		tempKey:   tempKey,
+		cancel:    cancel,
+	}
+	sm.byID[id] = sess2
+	sm.mu.Unlock()
+
+	// Start reader goroutine.
+	go sm.pumpPTY(ctx2, sess2)
 
 	return id, nil
 }

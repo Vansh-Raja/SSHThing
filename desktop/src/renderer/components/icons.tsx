@@ -59,6 +59,13 @@ export const TeamsIcon = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 );
 
+export const TokenIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <rect x="4" y="7" width="16" height="10" rx="5" />
+    <circle cx="12" cy="12" r="2.5" />
+  </Icon>
+);
+
 export const SignOutIcon = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4" />

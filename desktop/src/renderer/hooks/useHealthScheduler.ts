@@ -62,8 +62,6 @@ export function useHealthScheduler({
   }, []);
 
   useEffect(() => {
-    if (!enabled) return;
-
     const runCycle = () => {
       const currentHosts = hostsRef.current;
       const currentProbing = probingRef.current;
@@ -78,8 +76,20 @@ export function useHealthScheduler({
       }
     };
 
-    const id = setInterval(runCycle, intervalMs);
-    return () => clearInterval(id);
+    // Always auto-probe on mount / hosts change (TUI parity: auto-refresh on page enter).
+    // Small delay so the UI renders cached health first, then probes update live.
+    const immediateTimer = setTimeout(runCycle, 800);
+
+    // Background interval only when scheduler is explicitly enabled.
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+    if (enabled) {
+      intervalId = setInterval(runCycle, intervalMs);
+    }
+
+    return () => {
+      clearTimeout(immediateTimer);
+      if (intervalId) clearInterval(intervalId);
+    };
   }, [enabled, intervalMs]);
 
   return { enabled, setEnabled, intervalMs };

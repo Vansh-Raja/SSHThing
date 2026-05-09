@@ -6,18 +6,29 @@ import Hosts from './pages/Hosts';
 import Settings from './pages/Settings';
 import Teams from './pages/Teams';
 import SignIn from './pages/SignIn';
-import Account from './pages/Account';
+import Profile from './pages/Profile';
 import Keys from './pages/Keys';
+import Tokens from './pages/Tokens';
 import Toaster from './ui/Toaster';
 import AppShell from './components/AppShell';
 import CommandPalette, { recordRecentHost } from './components/CommandPalette';
 import HelpOverlay from './components/HelpOverlay';
 import AboutModal from './components/AboutModal';
+import Spotlight from './components/Spotlight';
 import { openTerminalSession } from './components/TerminalTab';
 import { useTheme } from './hooks/useTheme';
 import { useTeams } from './hooks/useTeams';
 import { TeamProvider, useTeamContext } from './contexts/TeamContext';
+import { AppModeProvider, useAppMode } from './contexts/AppModeContext';
 import { toast } from './ui/toast';
+
+/**
+ * Redirect root route based on current app mode.
+ */
+function ModeRedirect() {
+  const { mode } = useAppMode();
+  return <Navigate to={mode === 'teams' ? '/teams' : '/hosts'} replace />;
+}
 
 /**
  * Auth gate: makes sure the vault is unlocked before letting the user
@@ -56,10 +67,23 @@ function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { activeTeamId, setActiveTeamId } = useTeamContext();
+  const { mode, setMode } = useAppMode();
+
+  // Keep mode in sync with the current route so the rail + toggle always match
+  // regardless of how navigation happened (mode toggle, palette, back button, etc.)
+  useEffect(() => {
+    const path = location.pathname;
+    if (path === '/teams' && mode !== 'teams') {
+      setMode('teams');
+    } else if (path === '/hosts' && mode !== 'personal') {
+      setMode('personal');
+    }
+  }, [location.pathname, mode, setMode]);
 
   const [search, setSearch] = useState('');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteInitialQuery, setPaletteInitialQuery] = useState('');
+  const [spotlightOpen, setSpotlightOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [hosts, setHosts] = useState<HostSummary[]>([]);
@@ -92,6 +116,8 @@ function AppLayout() {
     setPaletteOpen(true);
   }, []);
 
+  const onSpotlightOpen = useCallback(() => setSpotlightOpen(true), []);
+
   const onHelpOpen = useCallback(() => setHelpOpen(true), []);
 
   // Listen for app-menu commands sent from the Electron main process.
@@ -118,7 +144,7 @@ function AppLayout() {
           window.dispatchEvent(new CustomEvent('sshthing:new-tab'));
           break;
         case 'open-account':
-          navigateRef.current('/account');
+          navigateRef.current('/profile');
           break;
         case 'open-about':
           setAboutOpen(true);
@@ -127,6 +153,18 @@ function AppLayout() {
           break;
       }
     });
+  }, []);
+
+  // Listen for palette commands that need navigation
+  useEffect(() => {
+    const onAbout = () => setAboutOpen(true);
+    const onTokens = () => navigateRef.current('/tokens');
+    window.addEventListener('sshthing:cmd-about', onAbout);
+    window.addEventListener('sshthing:cmd-tokens', onTokens);
+    return () => {
+      window.removeEventListener('sshthing:cmd-about', onAbout);
+      window.removeEventListener('sshthing:cmd-tokens', onTokens);
+    };
   }, []);
 
   // Cmd+1..9 → quick-switch to indexed team (1-based, sorted by displayOrder).
@@ -185,6 +223,7 @@ function AppLayout() {
         search={search}
         onSearch={setSearch}
         onPaletteOpen={onPaletteOpen}
+        onSpotlightOpen={onSpotlightOpen}
         onHelpOpen={onHelpOpen}
         teams={sortedTeams}
         onTeamsChange={reloadTeams}
@@ -199,6 +238,12 @@ function AppLayout() {
         }}
         onHelpOpen={onHelpOpen}
         initialQuery={paletteInitialQuery}
+      />
+      <Spotlight
+        open={spotlightOpen}
+        onClose={() => setSpotlightOpen(false)}
+        onOpenPalette={onPaletteOpen}
+        onOpenHelp={onHelpOpen}
       />
       <HelpOverlay open={helpOpen} onClose={() => setHelpOpen(false)} />
       <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
@@ -215,28 +260,31 @@ export default function App() {
   return (
     <HashRouter>
       <ThemeInit />
-      <TeamProvider>
-      <Routes>
-        <Route path="/unlock" element={<Unlock />} />
-        <Route path="/sign-in" element={<SignIn />} />
-        <Route
-          element={
-            <AuthGuard>
-              <AppLayout />
-            </AuthGuard>
-          }
-        >
-          <Route path="/welcome" element={<Welcome />} />
-          <Route path="/hosts" element={<Hosts />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/teams" element={<Teams />} />
-          <Route path="/account" element={<Account />} />
-          <Route path="/keys" element={<Keys />} />
-        </Route>
-        <Route path="/" element={<Navigate to="/unlock" replace />} />
-        <Route path="*" element={<Navigate to="/hosts" replace />} />
-      </Routes>
-      </TeamProvider>
+      <AppModeProvider>
+        <TeamProvider>
+          <Routes>
+            <Route path="/unlock" element={<Unlock />} />
+            <Route path="/sign-in" element={<SignIn />} />
+            <Route
+              element={
+                <AuthGuard>
+                  <AppLayout />
+                </AuthGuard>
+              }
+            >
+              <Route path="/welcome" element={<Welcome />} />
+              <Route path="/hosts" element={<Hosts />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/teams" element={<Teams />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/keys" element={<Keys />} />
+              <Route path="/tokens" element={<Tokens />} />
+            </Route>
+            <Route path="/" element={<ModeRedirect />} />
+            <Route path="*" element={<Navigate to="/hosts" replace />} />
+          </Routes>
+        </TeamProvider>
+      </AppModeProvider>
       <Toaster />
     </HashRouter>
   );

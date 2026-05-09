@@ -10,6 +10,7 @@ import (
 // RegisterSession registers session.* RPC handlers on s.
 func RegisterSession(s *Server, sm *service.Sessions) {
 	s.Register("session.open", makeSessionOpen(sm))
+	s.Register("session.openTeam", makeSessionOpenTeam(sm))
 	s.Register("session.write", makeSessionWrite(sm))
 	s.Register("session.resize", makeSessionResize(sm))
 	s.Register("session.close", makeSessionClose(sm))
@@ -54,6 +55,44 @@ func makeSessionOpen(sm *service.Sessions) Handler {
 				if isHostNotFound(err) {
 					return nil, &RPCError{Code: CodeHostNotFound, Message: "host not found", Data: map[string]string{"kind": "not_found"}}
 				}
+				return nil, &RPCError{Code: CodeSSHSpawnFailed, Message: "ssh spawn failed: " + err.Error(), Data: map[string]string{"kind": "ssh_spawn_failed"}}
+			}
+		}
+		return map[string]string{"sessionId": sessionID}, nil
+	}
+}
+
+func makeSessionOpenTeam(sm *service.Sessions) Handler {
+	return func(ctx context.Context, _ uint64, params json.RawMessage) (any, *RPCError) {
+		var p struct {
+			HostID string `json:"hostId"`
+			Cols   uint16 `json:"cols"`
+			Rows   uint16 `json:"rows"`
+			Term   string `json:"term"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &RPCError{Code: CodeInvalidParams, Message: "invalid params: " + err.Error()}
+		}
+		if p.HostID == "" {
+			return nil, &RPCError{Code: CodeInvalidParams, Message: "hostId is required"}
+		}
+		if p.Cols == 0 {
+			p.Cols = 80
+		}
+		if p.Rows == 0 {
+			p.Rows = 24
+		}
+
+		sessionID, err := sm.OpenTeam(ctx, p.HostID, p.Cols, p.Rows, p.Term)
+		if err != nil {
+			switch {
+			case err == service.ErrNotSignedIn:
+				return nil, &RPCError{Code: CodeNotSignedIn, Message: "not signed in"}
+			case err.Error() == "personal_credential_not_configured":
+				return nil, &RPCError{Code: CodeInternalError, Message: err.Error(), Data: map[string]string{"kind": "personal_credential_not_configured"}}
+			case err.Error() == "shared_credential_not_configured":
+				return nil, &RPCError{Code: CodeInternalError, Message: err.Error(), Data: map[string]string{"kind": "shared_credential_not_configured"}}
+			default:
 				return nil, &RPCError{Code: CodeSSHSpawnFailed, Message: "ssh spawn failed: " + err.Error(), Data: map[string]string{"kind": "ssh_spawn_failed"}}
 			}
 		}

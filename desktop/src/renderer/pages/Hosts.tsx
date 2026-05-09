@@ -54,7 +54,7 @@ type SortOption = 'recent' | 'az';
 export default function Hosts() {
   const [hosts, setHosts] = useState<HostSummary[]>([]);
   const [groups, setGroups] = useState<GroupSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [hostsLoaded, setHostsLoaded] = useState(false);
   const [sortBy, setSortBy] = useState<SortOption>('recent');
 
   // Selected host (left side selection — shown in the detail pane when no
@@ -79,6 +79,31 @@ export default function Hosts() {
   const [renameGroupLoading, setRenameGroupLoading] = useState(false);
   const [deleteGroupTarget, setDeleteGroupTarget] = useState<string | null>(null);
   const [deleteGroupLoading, setDeleteGroupLoading] = useState(false);
+
+  // Host delete confirm
+  const [deleteHostTarget, setDeleteHostTarget] = useState<HostSummary | null>(null);
+  const [deleteHostLoading, setDeleteHostLoading] = useState(false);
+
+  // Collapsible groups
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('sshthing:collapsedGroups') ?? '{}') as Record<string, boolean>;
+    } catch {
+      return {};
+    }
+  });
+  const toggleGroupCollapse = useCallback((name: string) => {
+    setCollapsed((prev) => {
+      const next = { ...prev, [name]: !prev[name] };
+      localStorage.setItem('sshthing:collapsedGroups', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  // Create group modal
+  const [createGroupOpen, setCreateGroupOpen] = useState(false);
+  const [createGroupValue, setCreateGroupValue] = useState('');
+  const [createGroupLoading, setCreateGroupLoading] = useState(false);
 
   // Phase 6 — health, mounts, transfers, exec
   const health = useHealth();
@@ -124,7 +149,6 @@ export default function Hosts() {
 
   // ── Data load ───────────────────────────────────────────────────────────
   const loadHosts = useCallback(async () => {
-    setLoading(true);
     try {
       const result = await window.sshthing.listHosts();
       setHosts(result.hosts);
@@ -135,7 +159,7 @@ export default function Hosts() {
     } catch (err) {
       toast.error((err as Error).message ?? 'Failed to load hosts');
     } finally {
-      setLoading(false);
+      setHostsLoaded(true);
     }
   }, []);
 
@@ -290,7 +314,10 @@ export default function Hosts() {
         });
       }
     }
-    return orderedGroupNames.map((name) => ({ name, hosts: map.get(name)! }));
+    // Move "Ungrouped" to the end
+    const sortedNames = orderedGroupNames.filter((n) => n !== 'Ungrouped');
+    if (orderedGroupNames.includes('Ungrouped')) sortedNames.push('Ungrouped');
+    return sortedNames.map((name) => ({ name, hosts: map.get(name)! }));
   }, [hosts, sortBy]);
 
   const selectedHost = hosts.find((h) => h.id === selectedHostId) ?? null;
@@ -318,15 +345,20 @@ export default function Hosts() {
   }, [mounts]);
 
   const handleAddGroup = useCallback(async () => {
-    const name = prompt('Group name?');
-    if (!name?.trim()) return;
+    const name = createGroupValue.trim();
+    if (!name) return;
+    setCreateGroupLoading(true);
     try {
-      await window.sshthing.createGroup(name.trim());
+      await window.sshthing.createGroup(name);
+      setCreateGroupOpen(false);
+      setCreateGroupValue('');
       await loadGroups();
     } catch (err) {
       toast.error((err as Error).message ?? 'Could not create group');
+    } finally {
+      setCreateGroupLoading(false);
     }
-  }, [loadGroups]);
+  }, [createGroupValue, loadGroups]);
 
   // ── Group rename / delete handlers ──────────────────────────────────────
   const openRenameGroup = useCallback((groupName: string) => {
@@ -370,6 +402,100 @@ export default function Hosts() {
       setDeleteGroupLoading(false);
     }
   }, [deleteGroupTarget, loadGroups, loadHosts]);
+
+  const handleDeleteHost = useCallback(async () => {
+    if (!deleteHostTarget) return;
+    setDeleteHostLoading(true);
+    try {
+      await window.sshthing.deleteHost(deleteHostTarget.id);
+      toast.success(`Host "${deleteHostTarget.label || deleteHostTarget.hostname}" deleted`);
+      setDeleteHostTarget(null);
+      await loadHosts();
+    } catch (err) {
+      toast.error((err as Error).message ?? 'Failed to delete host');
+    } finally {
+      setDeleteHostLoading(false);
+    }
+  }, [deleteHostTarget, loadHosts]);
+
+  const handleDuplicateHost = useCallback(async (host: HostSummary) => {
+    try {
+      const newLabel = `${host.label.trim() || host.hostname} (copy)`;
+      const { id } = await window.sshthing.createHost({
+        label: newLabel,
+        hostname: host.hostname,
+        username: host.username,
+        port: host.port || 22,
+        group: host.group,
+        tags: host.tags,
+        authMode: host.authMode,
+      });
+      toast.success(`Host duplicated as "${newLabel}"`);
+      await loadHosts();
+      setSelectedHostId(id);
+    } catch (err) {
+      toast.error((err as Error).message ?? 'Failed to duplicate host');
+    }
+  }, [loadHosts]);
+
+  // Command palette context-aware commands
+  // NOTE: This useEffect MUST come after handleDuplicateHost is defined
+  // to avoid the Temporal Dead Zone (TDZ) error.
+  useEffect(() => {
+    const onNew = () => { setEditingHost(null); setDrawerOpen(true); };
+    const onEdit = () => {
+      const h = hosts.find((h_) => h_.id === selectedHostId);
+      if (h) { setEditingHost(h); setDrawerOpen(true); }
+    };
+    const onDelete = () => {
+      const h = hosts.find((h_) => h_.id === selectedHostId);
+      if (h) setDeleteHostTarget(h);
+    };
+    const onCopy = () => {
+      const h = hosts.find((h_) => h_.id === selectedHostId);
+      if (h) void handleDuplicateHost(h);
+    };
+    const onMount = () => {
+      const h = hosts.find((h_) => h_.id === selectedHostId);
+      if (h) { setMountTarget(h); setMountDrawerOpen(true); }
+    };
+    const onExec = () => {
+      const h = hosts.find((h_) => h_.id === selectedHostId);
+      if (h) { setExecTarget(h); setExecModalOpen(true); }
+    };
+    const onHealth = () => {
+      const h = hosts.find((h_) => h_.id === selectedHostId);
+      if (h) void health.probe(h.id);
+    };
+    const onSort = () => {
+      setSortBy((prev) => (prev === 'recent' ? 'az' : 'recent'));
+    };
+    const onConnect = () => {
+      const h = hosts.find((h_) => h_.id === selectedHostId);
+      if (h) void connectHost(h);
+    };
+
+    window.addEventListener('sshthing:cmd-new-host', onNew);
+    window.addEventListener('sshthing:cmd-edit-selected', onEdit);
+    window.addEventListener('sshthing:cmd-delete-selected', onDelete);
+    window.addEventListener('sshthing:cmd-copy-selected', onCopy);
+    window.addEventListener('sshthing:cmd-mount-selected', onMount);
+    window.addEventListener('sshthing:cmd-exec-selected', onExec);
+    window.addEventListener('sshthing:cmd-health-selected', onHealth);
+    window.addEventListener('sshthing:cmd-sort', onSort);
+    window.addEventListener('sshthing:cmd-connect-selected', onConnect);
+    return () => {
+      window.removeEventListener('sshthing:cmd-new-host', onNew);
+      window.removeEventListener('sshthing:cmd-edit-selected', onEdit);
+      window.removeEventListener('sshthing:cmd-delete-selected', onDelete);
+      window.removeEventListener('sshthing:cmd-copy-selected', onCopy);
+      window.removeEventListener('sshthing:cmd-mount-selected', onMount);
+      window.removeEventListener('sshthing:cmd-exec-selected', onExec);
+      window.removeEventListener('sshthing:cmd-health-selected', onHealth);
+      window.removeEventListener('sshthing:cmd-sort', onSort);
+      window.removeEventListener('sshthing:cmd-connect-selected', onConnect);
+    };
+  }, [hosts, selectedHostId, handleDuplicateHost, health]);
 
   const groupMenuItems = useCallback((groupName: string): MenuItemDef[] => [
     {
@@ -418,12 +544,12 @@ export default function Hosts() {
         </div>
 
         <div className="sidebar__scroll">
-          {loading && (
+          {!hostsLoaded && (
             <div style={{ padding: '12px 8px' }}>
               <SkeletonRows count={4} />
             </div>
           )}
-          {!loading && groupedHosts.length === 0 && (
+          {hostsLoaded && groupedHosts.length === 0 && (
             <div style={{ padding: 24 }}>
               <div className="empty-state">
                 <div className="empty-state__title">No hosts yet</div>
@@ -431,13 +557,22 @@ export default function Hosts() {
               </div>
             </div>
           )}
-          {!loading && groupedHosts.map((g, i) => {
+          {hostsLoaded && groupedHosts.map((g, i) => {
             // "Ungrouped" is a synthetic group — don't offer rename/delete on it.
             const isReal = g.name !== 'Ungrouped';
+            const isCollapsed = !!collapsed[g.name];
             return (
               <div key={g.name} className="sidebar__group">
-                <div className="sidebar__group-title" style={{ justifyContent: 'space-between' }}>
+                <button
+                  type="button"
+                  className="sidebar__group-title"
+                  style={{ justifyContent: 'space-between', width: '100%', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                  onClick={() => toggleGroupCollapse(g.name)}
+                >
                   <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 10, color: 'var(--muted)', width: 12, display: 'inline-block' }}>
+                      {isCollapsed ? '▸' : '▾'}
+                    </span>
                     {g.name}
                     <span className="sidebar__group-count">·</span>
                     <span className="sidebar__group-count">{g.hosts.length}</span>
@@ -458,6 +593,7 @@ export default function Hosts() {
                             lineHeight: 1,
                             borderRadius: 'var(--radius-sm)',
                           }}
+                          onClick={(e) => e.stopPropagation()}
                         >
                           ⋯
                         </button>
@@ -465,9 +601,10 @@ export default function Hosts() {
                       items={groupMenuItems(g.name)}
                     />
                   )}
-                </div>
-                {g.hosts.map((h) => {
+                </button>
+                {!isCollapsed && g.hosts.map((h) => {
                   const status = health.healthMap.get(h.id)?.status ?? 'unknown';
+                  const isProbing = health.probing.has(h.id);
                   const dotClass =
                     status === 'online' ? 'status-dot--online'
                     : status === 'offline' || status === 'error' ? 'status-dot--offline'
@@ -491,13 +628,12 @@ export default function Hosts() {
                         e.preventDefault();
                         const file = e.dataTransfer.files[0];
                         if (file) {
-                          // Electron's File extends the browser File with a non-standard `path`.
                           const electronFile = file as File & { path?: string };
                           handleDropFile(h, electronFile.path ?? file.name);
                         }
                       }}
                     >
-                      <span className={`status-dot ${dotClass}`} />
+                      <span className={`status-dot ${dotClass}${isProbing ? ' status-dot--probing' : ''}`} />
                       <span className="host-row__label">{h.label.trim() || h.hostname}</span>
                     </button>
                   );
@@ -506,10 +642,18 @@ export default function Hosts() {
               </div>
             );
           })}
+          {hostsLoaded && (
+            <button
+              type="button"
+              className="sidebar__add"
+              style={{ marginTop: 4 }}
+              onClick={() => setCreateGroupOpen(true)}
+            >
+              <PlusIcon /> New group
+            </button>
+          )}
         </div>
-        <button type="button" className="sidebar__add" onClick={handleAddGroup}>
-          <PlusIcon /> Add group
-        </button>
+        {/* Add group button moved inside sidebar__scroll */}
       </aside>
 
       {/* ── Detail / terminal pane ── */}
@@ -683,6 +827,65 @@ export default function Hosts() {
         confirmVariant="danger"
         onConfirm={() => void handleDeleteGroup()}
         loading={deleteGroupLoading}
+      />
+
+      {/* Create group modal */}
+      <Modal
+        open={createGroupOpen}
+        onClose={() => { setCreateGroupOpen(false); setCreateGroupValue(''); }}
+        title="New group"
+        maxWidth={360}
+        footer={
+          <div className="modal__actions">
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => { setCreateGroupOpen(false); setCreateGroupValue(''); }}
+              disabled={createGroupLoading}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => void handleAddGroup()}
+              disabled={createGroupLoading || !createGroupValue.trim()}
+            >
+              {createGroupLoading ? <span className="spinner" /> : 'Create'}
+            </button>
+          </div>
+        }
+      >
+        <div className="field">
+          <label className="field__label">Group name</label>
+          <input
+            className="field__input"
+            type="text"
+            autoFocus
+            value={createGroupValue}
+            onChange={(e) => setCreateGroupValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !createGroupLoading && createGroupValue.trim()) {
+                void handleAddGroup();
+              }
+              if (e.key === 'Escape') {
+                setCreateGroupOpen(false);
+              }
+            }}
+          />
+        </div>
+      </Modal>
+
+      {/* Host delete confirm */}
+      <Dialog
+        open={!!deleteHostTarget}
+        onClose={() => setDeleteHostTarget(null)}
+        title="Delete host"
+        message={`Delete host "${deleteHostTarget?.label || deleteHostTarget?.hostname || ''}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        onConfirm={() => void handleDeleteHost()}
+        loading={deleteHostLoading}
       />
     </div>
   );

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Vansh-Raja/SSHThing/internal/ssh"
 	"github.com/Vansh-Raja/SSHThing/internal/teams"
@@ -22,7 +23,8 @@ type TeamsService struct {
 	Vault  *Vault // optional — needed for ImportPersonalHost
 }
 
-func (ts *TeamsService) accessToken(ctx context.Context) (string, error) {
+// accessToken returns the current Convex access token, refreshing it if expired.
+func accessToken(ctx context.Context, client *teamsclient.Client) (string, error) {
 	sess, err := teamssession.Load()
 	if err != nil {
 		return "", fmt.Errorf("load session: %w", err)
@@ -30,7 +32,28 @@ func (ts *TeamsService) accessToken(ctx context.Context) (string, error) {
 	if sess.AccessToken == "" {
 		return "", ErrNotSignedIn
 	}
+	// Refresh expired tokens automatically, mirroring the TUI behaviour.
+	if sess.Expired(time.Now()) {
+		if sess.RefreshToken == "" || client == nil || !client.Enabled() {
+			_ = teamssession.Clear()
+			return "", ErrNotSignedIn
+		}
+		refreshed, err := client.Refresh(ctx, sess.RefreshToken)
+		if err != nil {
+			_ = teamssession.Clear()
+			return "", fmt.Errorf("session expired and refresh failed: %w", err)
+		}
+		sess.AccessToken = refreshed.AccessToken
+		sess.ExpiresAt = refreshed.ExpiresAt
+		if err := teamssession.Save(sess); err != nil {
+			return "", fmt.Errorf("save refreshed session: %w", err)
+		}
+	}
 	return sess.AccessToken, nil
+}
+
+func (ts *TeamsService) accessToken(ctx context.Context) (string, error) {
+	return accessToken(ctx, ts.Client)
 }
 
 // ── Team-level ────────────────────────────────────────────────────────────────

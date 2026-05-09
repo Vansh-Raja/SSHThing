@@ -4,18 +4,21 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Vansh-Raja/SSHThing/internal/config"
 	"github.com/Vansh-Raja/SSHThing/internal/db"
 	"github.com/Vansh-Raja/SSHThing/internal/health"
 	"github.com/Vansh-Raja/SSHThing/internal/ssh"
+	"github.com/Vansh-Raja/SSHThing/internal/teamsclient"
 )
 
 // HealthService provides host health probe operations.
 type HealthService struct {
-	Vault    *Vault
-	CfgStore *CfgStore
+	Vault       *Vault
+	CfgStore    *CfgStore
+	TeamsClient *teamsclient.Client
 }
 
 // HealthResult is the wire-safe health result.
@@ -37,15 +40,22 @@ type HealthResult struct {
 }
 
 // Probe runs a health probe against a single host.
-// Mirrors: internal/app/backend.go beginPersonalHealthRefreshWithOptions.
+// Supports both personal hosts (integer IDs from local DB) and team hosts
+// (string IDs — fetches connect config from cloud API).
 func (hs *HealthService) Probe(ctx context.Context, hostID string) (*HealthResult, error) {
+	// Try to parse as int — personal host.
+	intID, err := strconv.Atoi(hostID)
+	if err == nil {
+		return hs.probePersonal(ctx, intID, hostID)
+	}
+	// String ID — team host.
+	return hs.probeTeam(ctx, hostID)
+}
+
+func (hs *HealthService) probePersonal(ctx context.Context, intID int, hostID string) (*HealthResult, error) {
 	store := hs.Vault.Store()
 	if store == nil {
 		return nil, ErrVaultLocked
-	}
-	intID, err := strconv.Atoi(hostID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid host id %q: %w", hostID, err)
 	}
 	model, err := store.GetHostByID(intID)
 	if err != nil {
@@ -78,7 +88,70 @@ func (hs *HealthService) Probe(ctx context.Context, hostID string) (*HealthResul
 	}
 
 	result := health.Probe(ctx, conn, health.ProbeOptions{})
-	hr := &HealthResult{
+	hr := resultToHealthResult(hostID, result)
+
+	// Persist to DB — best effort.
+	_ = store.UpsertHostHealth(dbhealthFromResult(intID, result))
+
+	return hr, nil
+}
+
+func (hs *HealthService) probeTeam(ctx context.Context, hostID string) (*HealthResult, error) {
+	if hs.TeamsClient == nil || !hs.TeamsClient.Enabled() {
+		return nil, fmt.Errorf("teams client not configured")
+	}
+
+	accessToken, err := accessToken(ctx, hs.TeamsClient)
+	if err != nil {
+		return nil, fmt.Errorf("team auth: %w", err)
+	}
+
+	connectConfig, err := hs.TeamsClient.GetTeamHostConnectConfig(ctx, accessToken, hostID)
+	if err != nil {
+		return nil, normalizeTeamHealthError(err, hostID)
+	}
+
+	hostKeyPolicy := string(config.HostKeyAcceptNew)
+	keepAlive := 60
+	if hs.CfgStore != nil {
+		cfg := hs.CfgStore.Get()
+		hostKeyPolicy = string(cfg.SSH.HostKeyPolicy)
+		keepAlive = cfg.SSH.KeepAliveSeconds
+	}
+
+	conn := ssh.Connection{
+		Hostname:         connectConfig.Hostname,
+		Username:         connectConfig.Username,
+		Port:             connectConfig.Port,
+		HostKeyPolicy:    hostKeyPolicy,
+		KeepAliveSeconds: keepAlive,
+	}
+
+	var authMode health.AuthMode
+	switch connectConfig.CredentialType {
+	case "private_key":
+		if strings.TrimSpace(connectConfig.Secret) == "" {
+			return nil, fmt.Errorf("private key not configured for %s", connectConfig.Label)
+		}
+		if err := ssh.ValidatePrivateKey(connectConfig.Secret); err != nil {
+			return nil, fmt.Errorf("team private key is invalid format: %v", err)
+		}
+		conn.PrivateKey = connectConfig.Secret
+		authMode = health.AuthModeKey
+	case "password":
+		if connectConfig.Secret == "" {
+			return nil, fmt.Errorf("password not configured for %s", connectConfig.Label)
+		}
+		conn.Password = connectConfig.Secret
+		authMode = health.AuthModePassword
+	}
+
+	result := health.Probe(ctx, conn, health.ProbeOptions{AuthMode: authMode})
+	return resultToHealthResult(hostID, result), nil
+}
+
+func resultToHealthResult(hostID string, result health.Result) *HealthResult {
+	return &HealthResult{
 		HostID:         hostID,
 		Status:         string(result.Status),
 		CheckedAt:      result.CheckedAt,
@@ -93,11 +166,17 @@ func (hs *HealthService) Probe(ctx context.Context, hostID string) (*HealthResul
 		GPUPresent:     result.GPUPresent,
 		GPUName:        result.GPUName,
 	}
+}
 
-	// Persist to DB — best effort.
-	_ = store.UpsertHostHealth(dbhealthFromResult(intID, result))
-
-	return hr, nil
+func normalizeTeamHealthError(err error, label string) error {
+	switch err.Error() {
+	case "personal_credential_not_configured":
+		return fmt.Errorf("personal credential not configured for %s", strings.TrimSpace(label))
+	case "shared_credential_not_configured":
+		return fmt.Errorf("shared credential not configured for %s", strings.TrimSpace(label))
+	default:
+		return err
+	}
 }
 
 func dbhealthFromResult(hostID int, r health.Result) db.HostHealth {

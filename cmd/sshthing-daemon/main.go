@@ -109,11 +109,6 @@ func main() {
 	groups := &service.Groups{Vault: vault}
 	settings := &service.Settings{Store: cfgStore}
 
-	healthSvc := &service.HealthService{
-		Vault:    vault,
-		CfgStore: cfgStore,
-	}
-
 	mountMgr := mountpkg.NewManager()
 	mountSvc := &service.MountService{
 		Vault:    vault,
@@ -150,6 +145,16 @@ func main() {
 	teamsClient := teamsclient.New(teamsBaseURL)
 	teamsSvc := &service.TeamsService{Client: teamsClient, Vault: vault}
 
+	teamTokensSvc := &service.TeamTokensService{
+		Client: teamsClient,
+	}
+
+	healthSvc := &service.HealthService{
+		Vault:       vault,
+		CfgStore:    cfgStore,
+		TeamsClient: teamsClient,
+	}
+
 	authSvc := &service.AuthService{
 		Client: teamsClient,
 		Notify: func(method string, params any) {
@@ -176,8 +181,9 @@ func main() {
 
 	// Sessions needs a Notify callback that routes through the server.
 	sessions := &service.Sessions{
-		Vault:    vault,
-		CfgStore: cfgStore,
+		Vault:       vault,
+		CfgStore:    cfgStore,
+		TeamsClient: teamsClient,
 		Notify: func(method string, params any) {
 			srv.Notify(method, params)
 		},
@@ -200,6 +206,7 @@ func main() {
 	rpc.RegisterMount(srv, mountSvc)
 	rpc.RegisterTransfer(srv, transferSvc)
 	rpc.RegisterTokens(srv, tokensSvc)
+	rpc.RegisterTeamTokens(srv, teamTokensSvc)
 	rpc.RegisterTeams(srv, teamsSvc)
 	rpc.RegisterAuth(srv, authSvc)
 	rpc.RegisterSync(srv, syncSvc)

@@ -1,5 +1,5 @@
 /**
- * Account — profile + cloud-account info for the signed-in user.
+ * Profile — profile + cloud-account info for the signed-in user.
  *
  * - Pre-sign-in: prompt to sign in (deep-links to /sign-in).
  * - Post-sign-in: avatar, name, email, expiry, current team, sync state,
@@ -38,7 +38,7 @@ function initialsFor(name: string, email: string): string {
     .join('');
 }
 
-export default function Account() {
+export default function Profile() {
   const navigate = useNavigate();
   const { session, loading, refresh } = useAuth();
   const sync = useSyncStatus();
@@ -127,7 +127,7 @@ export default function Account() {
             gap: 14,
           }}
         >
-          <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.01em' }}>Account</h1>
+          <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.01em' }}>Profile</h1>
           <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>
             Sign in to enable cloud sync, share hosts with teams, and manage automation tokens.
           </p>
@@ -156,7 +156,7 @@ export default function Account() {
         }}
       >
         {/* Header */}
-        <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.01em', margin: 0 }}>Account</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.01em', margin: 0 }}>Profile</h1>
 
         {/* Profile card */}
         <section
