@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import Unlock from './pages/Unlock';
-import Welcome from './pages/Welcome';
 import Hosts from './pages/Hosts';
-import Settings from './pages/Settings';
-import Teams from './pages/Teams';
-import SignIn from './pages/SignIn';
-import Profile from './pages/Profile';
-import Keys from './pages/Keys';
-import Tokens from './pages/Tokens';
+
+// ── Code-split the heavier, less-frequently-visited routes. The main
+// bundle drops by ~300 KB so cold-start parses faster; users pay the
+// per-route fetch only when they actually navigate to that page.
+const Welcome  = lazy(() => import('./pages/Welcome'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Teams    = lazy(() => import('./pages/Teams'));
+const SignIn   = lazy(() => import('./pages/SignIn'));
+const Profile  = lazy(() => import('./pages/Profile'));
+const Keys     = lazy(() => import('./pages/Keys'));
+const Tokens   = lazy(() => import('./pages/Tokens'));
 import Toaster from './ui/Toaster';
 import AppShell from './components/AppShell';
 import CommandPalette, { recordRecentHost } from './components/CommandPalette';
@@ -18,6 +22,9 @@ import Spotlight from './components/Spotlight';
 import { openTerminalSession } from './components/TerminalTab';
 import { useTheme } from './hooks/useTheme';
 import { useTeams } from './hooks/useTeams';
+import { useHostsCache, clearAllHostCaches } from './hooks/useHostsCache';
+import { clearAuthCache } from './hooks/useAuth';
+import { clearTeamsCache } from './hooks/useTeams';
 import { TeamProvider, useTeamContext } from './contexts/TeamContext';
 import { AppModeProvider, useAppMode } from './contexts/AppModeContext';
 import { toast } from './ui/toast';
@@ -95,21 +102,11 @@ function AppLayout() {
   const { teams, reload: reloadTeams } = useTeams();
   const sortedTeams = [...teams].sort((a, b) => a.displayOrder - b.displayOrder);
 
-  // Refresh palette host list whenever location changes (cheap and avoids stale data).
-  useEffect(() => {
-    let cancelled = false;
-    window.sshthing
-      .listHosts()
-      .then((res) => {
-        if (!cancelled) setHosts(res.hosts);
-      })
-      .catch(() => {
-        // ignore — palette will just be empty
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [location.pathname]);
+  // Single source of truth for hosts, shared with Hosts.tsx via the
+  // pub/sub inside useHostsCache. This eliminates the second daemon RPC
+  // that used to fire on every route change.
+  const { hosts: cachedHosts } = useHostsCache();
+  useEffect(() => { setHosts(cachedHosts); }, [cachedHosts]);
 
   const onPaletteOpen = useCallback((query?: string) => {
     setPaletteInitialQuery(query ?? '');
@@ -130,11 +127,20 @@ function AppLayout() {
           break;
         case 'lock-vault':
           window.sshthing.lockVault().catch(() => {/* ignore */}).finally(() => {
+            clearAllHostCaches();
+            // Don't clear auth/teams here — locking the vault doesn't sign
+            // the user out of the cloud, and we want their team list to be
+            // ready immediately after re-unlock.
             navigateRef.current('/unlock');
           });
           break;
         case 'sign-out':
-          window.sshthing.authSignOut().catch(() => {/* ignore */});
+          window.sshthing.authSignOut()
+            .catch(() => {/* ignore */})
+            .finally(() => {
+              clearAuthCache();
+              clearTeamsCache();
+            });
           break;
         case 'open-help':
           setHelpOpen(true);
@@ -148,6 +154,20 @@ function AppLayout() {
           break;
         case 'open-about':
           setAboutOpen(true);
+          break;
+        case 'install-cli':
+          (async () => {
+            try {
+              const res = await window.sshthing.installCli();
+              if (res.ok) {
+                toast.success(`Installed: ${res.path}`);
+              } else {
+                toast.error(res.error ?? 'Install failed');
+              }
+            } catch (err) {
+              toast.error((err as Error).message ?? 'Install failed');
+            }
+          })();
           break;
         default:
           break;
@@ -262,6 +282,7 @@ export default function App() {
       <ThemeInit />
       <AppModeProvider>
         <TeamProvider>
+          <Suspense fallback={null}>
           <Routes>
             <Route path="/unlock" element={<Unlock />} />
             <Route path="/sign-in" element={<SignIn />} />
@@ -283,6 +304,7 @@ export default function App() {
             <Route path="/" element={<ModeRedirect />} />
             <Route path="*" element={<Navigate to="/hosts" replace />} />
           </Routes>
+          </Suspense>
         </TeamProvider>
       </AppModeProvider>
       <Toaster />

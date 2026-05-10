@@ -32,12 +32,28 @@ function readHealthScheduler(): { enabled: boolean; intervalMinutes: number } {
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   fontSize: 13,
-  termType: 'xterm-256color',
-  keepAliveSeconds: 30,
-  hostKeyPolicy: 'strict',
-  passwordBackend: 'keychain',
+  termMode: 'auto',
+  termCustom: '',
+  keepAliveSeconds: 60,
+  hostKeyPolicy: 'accept-new',
+  passwordAutoLogin: false,
+  passwordBackend: 'sshpass_first',
+  mountEnabled: true,
+  mountDefaultRemotePath: '',
+  mountLocalMountPath: '',
+  mountQuitBehavior: 'prompt',
   syncProvider: 'off',
+  syncRepoUrl: '',
+  syncBranch: 'main',
+  syncSshKeyPath: '',
+  syncLocalPath: '',
   autoSyncAfterCRUD: false,
+  syncScopeHosts: true,
+  syncScopeGroups: true,
+  syncScopeCredentials: true,
+  syncScopeTokenDefs: true,
+  syncScopeHealth: false,
+  syncScopeMountState: false,
 };
 
 export default function Settings() {
@@ -98,9 +114,8 @@ export default function Settings() {
   const [gitTestResult, setGitTestResult] = useState<{ ok: boolean; message?: string } | null>(null);
   const [gitSaveLoading, setGitSaveLoading] = useState(false);
 
-  // Updates
+  // Updates: only the running version. Apply / check happen in CLI.
   const [daemonVersion, setDaemonVersion] = useState('');
-  const [checkUpdateLoading, setCheckUpdateLoading] = useState(false);
 
   // Category navigation
   const [selectedCategory, setSelectedCategory] = useState<string>('vault');
@@ -111,6 +126,7 @@ export default function Settings() {
     { id: 'vault',      label: 'Vault',       shortcut: 'V' },
     { id: 'appearance', label: 'Appearance',  shortcut: 'A' },
     { id: 'ssh',        label: 'SSH Defaults',shortcut: 'S' },
+    { id: 'mount',      label: 'Mount',       shortcut: 'M' },
     { id: 'sync',       label: 'Sync',        shortcut: 'Y' },
     { id: 'updates',    label: 'Updates',     shortcut: 'U' },
     { id: 'health',     label: 'Health',      shortcut: 'H' },
@@ -339,6 +355,7 @@ export default function Settings() {
           <Button variant="primary" onClick={handleChangePassword} loading={pwLoading}>Change password</Button>
         </div>
         <hr style={{ border: 0, borderTop: '1px solid var(--line)', margin: '4px 0' }} />
+        <BiometricRow />
         <div className="settings-row">
           <div>
             <div className="settings-row__label">Lock vault</div>
@@ -388,20 +405,102 @@ export default function Settings() {
     <section className="settings-section">
       <div className="settings-section__title">SSH Defaults</div>
       <div className="settings-section__body">
-        <Select label="Terminal type" options={[{ value: 'xterm-256color', label: 'xterm-256color' }, { value: 'xterm', label: 'xterm' }, { value: 'vt100', label: 'vt100' }]} value={settings.termType} onChange={(e) => void patchSettings({ termType: e.target.value })} />
+        <Select
+          label="Terminal type (TERM)"
+          options={[
+            { value: 'auto', label: 'Auto (inherit from environment)' },
+            { value: 'xterm-256color', label: 'xterm-256color' },
+            { value: 'custom', label: 'Custom…' },
+          ]}
+          value={settings.termMode}
+          onChange={(e) => void patchSettings({ termMode: e.target.value as AppSettings['termMode'] })}
+        />
+        {settings.termMode === 'custom' && (
+          <TextField
+            label="Custom TERM value"
+            placeholder="xterm-ghostty"
+            value={settings.termCustom}
+            onChange={(e) => void patchSettings({ termCustom: e.target.value })}
+          />
+        )}
         <div className="settings-row">
           <div>
             <div className="settings-row__label">Keep-alive (seconds)</div>
             <div className="settings-row__hint">Send SSH keep-alive every N seconds. 0 = disabled.</div>
           </div>
           <div className="field" style={{ margin: 0 }}>
-            <input type="number" min="0" max="3600" className="field__input" value={settings.keepAliveSeconds} onChange={(e) => void patchSettings({ keepAliveSeconds: parseInt(e.target.value, 10) || 0 })} style={{ width: 80 }} />
+            <input
+              type="number" min="0" max="3600"
+              className="field__input"
+              value={settings.keepAliveSeconds}
+              onChange={(e) => void patchSettings({ keepAliveSeconds: parseInt(e.target.value, 10) || 0 })}
+              style={{ width: 80 }}
+            />
           </div>
         </div>
-        <Select label="Host key policy" options={[{ value: 'strict', label: 'Strict (verify known_hosts)' }, { value: 'auto_add', label: 'Auto-add (trust on first use)' }, { value: 'insecure', label: 'Insecure (skip verification)' }]} value={settings.hostKeyPolicy} onChange={(e) => void patchSettings({ hostKeyPolicy: e.target.value })} />
-        {navigator.platform.includes('Mac') && (
-          <Select label="Password backend (macOS)" options={[{ value: 'keychain', label: 'macOS Keychain' }, { value: 'vault', label: 'SSHThing vault' }]} value={settings.passwordBackend} onChange={(e) => void patchSettings({ passwordBackend: e.target.value })} />
+        <Select
+          label="Host key policy"
+          options={[
+            { value: 'accept-new', label: 'Accept new hosts (trust on first use)' },
+            { value: 'strict', label: 'Strict (verify known_hosts)' },
+            { value: 'off', label: 'Off (do not verify)' },
+          ]}
+          value={settings.hostKeyPolicy}
+          onChange={(e) => void patchSettings({ hostKeyPolicy: e.target.value })}
+        />
+        <Toggle
+          label="Auto-login with stored password"
+          hint="When off, the password is decrypted on demand and entered interactively."
+          checked={settings.passwordAutoLogin}
+          onChange={(v) => void patchSettings({ passwordAutoLogin: v })}
+        />
+        {navigator.platform.includes('Mac') && settings.passwordAutoLogin && (
+          <Select
+            label="Password backend (Unix)"
+            options={[
+              { value: 'sshpass_first', label: 'sshpass first (faster)' },
+              { value: 'askpass_first', label: 'askpass first (more compatible)' },
+            ]}
+            value={settings.passwordBackend}
+            onChange={(e) => void patchSettings({ passwordBackend: e.target.value })}
+          />
         )}
+      </div>
+    </section>
+  );
+
+  const MountSection = () => (
+    <section className="settings-section">
+      <div className="settings-section__title">Mount</div>
+      <div className="settings-section__body">
+        <Toggle
+          label="Enable mounts"
+          hint="Allow mounting hosts as local folders via SSHFS."
+          checked={settings.mountEnabled}
+          onChange={(v) => void patchSettings({ mountEnabled: v })}
+        />
+        <TextField
+          label="Default remote path"
+          placeholder="/ (empty means remote home)"
+          value={settings.mountDefaultRemotePath}
+          onChange={(e) => void patchSettings({ mountDefaultRemotePath: e.target.value })}
+        />
+        <TextField
+          label="Local mount path"
+          placeholder="(default ~/Library/Application Support/sshthing/mounts/)"
+          value={settings.mountLocalMountPath}
+          onChange={(e) => void patchSettings({ mountLocalMountPath: e.target.value })}
+        />
+        <Select
+          label="When quitting with active mounts"
+          options={[
+            { value: 'prompt', label: 'Ask me' },
+            { value: 'always_unmount', label: 'Always unmount' },
+            { value: 'leave_mounted', label: 'Leave mounted' },
+          ]}
+          value={settings.mountQuitBehavior}
+          onChange={(e) => void patchSettings({ mountQuitBehavior: e.target.value as AppSettings['mountQuitBehavior'] })}
+        />
       </div>
     </section>
   );
@@ -414,19 +513,30 @@ export default function Settings() {
           <div className="settings-row__label">Provider</div>
           <div className="segmented">
             {(['off', 'git', 'cloud'] as const).map((p) => (
-              <button key={p} type="button" className="segmented__item" aria-selected={settings.syncProvider === p} onClick={() => void patchSettings({ syncProvider: p })} style={{ textTransform: 'capitalize' }} disabled={p === 'cloud'}>{p}</button>
+              <button key={p} type="button" className="segmented__item" aria-selected={settings.syncProvider === p} onClick={() => void patchSettings({ syncProvider: p })} style={{ textTransform: 'capitalize' }}>{p}</button>
             ))}
           </div>
         </div>
-        <div className="settings-row">
-          <div>
-            <div className="settings-row__label">Auto-sync after changes</div>
-            <div className="settings-row__hint">Automatically sync after adding, updating, or removing hosts.</div>
+        <Toggle
+          label="Auto-sync after changes"
+          hint="Automatically sync after adding, updating, or removing hosts."
+          checked={settings.autoSyncAfterCRUD}
+          onChange={(v) => void patchSettings({ autoSyncAfterCRUD: v })}
+          disabled={settings.syncProvider === 'off'}
+        />
+
+        {/* Scope toggles — what to include in sync. Disabled when sync is off. */}
+        {settings.syncProvider !== 'off' && (
+          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div className="settings-row__label" style={{ marginBottom: 4 }}>What to sync</div>
+            <Toggle label="Hosts"           checked={settings.syncScopeHosts}        onChange={(v) => void patchSettings({ syncScopeHosts: v })} />
+            <Toggle label="Groups"          checked={settings.syncScopeGroups}       onChange={(v) => void patchSettings({ syncScopeGroups: v })} disabled={!settings.syncScopeHosts} />
+            <Toggle label="Credentials"     hint="Encrypted with your master password before sync." checked={settings.syncScopeCredentials} onChange={(v) => void patchSettings({ syncScopeCredentials: v })} disabled={!settings.syncScopeHosts} />
+            <Toggle label="Token defs"      checked={settings.syncScopeTokenDefs}    onChange={(v) => void patchSettings({ syncScopeTokenDefs: v })} />
+            <Toggle label="Health snapshots" checked={settings.syncScopeHealth}      onChange={(v) => void patchSettings({ syncScopeHealth: v })} />
+            <Toggle label="Mount state"     checked={settings.syncScopeMountState}   onChange={(v) => void patchSettings({ syncScopeMountState: v })} />
           </div>
-          <button type="button" role="switch" aria-checked={settings.autoSyncAfterCRUD ?? false} onClick={() => void patchSettings({ autoSyncAfterCRUD: !(settings.autoSyncAfterCRUD ?? false) })} style={{ width: 40, height: 22, borderRadius: 11, background: (settings.autoSyncAfterCRUD ?? false) ? 'var(--accent)' : 'var(--line)', border: 'none', cursor: 'pointer', position: 'relative', flexShrink: 0, transition: 'background 0.2s' }}>
-            <span style={{ position: 'absolute', top: 2, left: (settings.autoSyncAfterCRUD ?? false) ? 20 : 2, width: 18, height: 18, borderRadius: '50%', background: 'white', transition: 'left 0.2s' }} />
-          </button>
-        </div>
+        )}
         {settings.syncProvider === 'git' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
             <TextField label="Repository URL" placeholder="git@github.com:user/repo.git" value={gitRepoUrl} onChange={(e) => setGitRepoUrl(e.target.value)} />
@@ -476,33 +586,27 @@ export default function Settings() {
     </section>
   );
 
+  // Updates section is intentionally minimal: just the running version.
+  // The full check / apply flow lives in the `sshthing update` CLI now,
+  // and the once-a-week banner (UpdateBanner.tsx) surfaces availability.
   const UpdatesSection = () => (
     <section className="settings-section">
       <div className="settings-section__title">Updates</div>
       <div className="settings-section__body">
         <div className="settings-row">
-          <div className="settings-row__label">Release channel</div>
-          <div className="segmented">
-            {(['stable', 'beta'] as const).map((ch) => (
-              <button key={ch} type="button" className="segmented__item" aria-selected={settings.releaseChannel === ch} onClick={() => void patchSettings({ releaseChannel: ch })} style={{ textTransform: 'capitalize' }}>{ch}</button>
-            ))}
-          </div>
-        </div>
-        <div className="settings-row">
-          <div>
-            <div className="settings-row__label">Auto-apply updates</div>
-            <div className="settings-row__hint">Restart and install automatically when an update is downloaded.</div>
-          </div>
-          <button type="button" role="switch" aria-checked={settings.autoApplyUpdates ?? false} onClick={() => void patchSettings({ autoApplyUpdates: !(settings.autoApplyUpdates ?? false) })} style={{ width: 40, height: 22, borderRadius: 11, background: (settings.autoApplyUpdates ?? false) ? 'var(--accent)' : 'var(--line)', border: 'none', cursor: 'pointer', position: 'relative', flexShrink: 0, transition: 'background 0.2s' }}>
-            <span style={{ position: 'absolute', top: 2, left: (settings.autoApplyUpdates ?? false) ? 20 : 2, width: 18, height: 18, borderRadius: '50%', background: 'white', transition: 'left 0.2s' }} />
-          </button>
-        </div>
-        <div className="settings-row">
           <div>
             <div className="settings-row__label">Current version</div>
             <div className="settings-row__hint">{daemonVersion || '—'}</div>
           </div>
-          <Button variant="ghost" onClick={() => { setCheckUpdateLoading(true); window.sshthing.checkForUpdates().then(() => toast.success('Checking for updates…')).catch((err: unknown) => { const e = err as Error; toast.error(e.message ?? 'Check failed'); }).finally(() => setCheckUpdateLoading(false)); }} loading={checkUpdateLoading}>Check now</Button>
+        </div>
+        <div className="settings-row">
+          <div>
+            <div className="settings-row__label">How to update</div>
+            <div className="settings-row__hint">
+              Quit SSHThing, then run <code style={{ fontFamily: 'var(--font-mono)' }}>sshthing update</code> in
+              your terminal. The CLI updates both this app and the standalone <code>sshthing</code> binary.
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -540,6 +644,7 @@ export default function Settings() {
     vault: <VaultSection />,
     appearance: <AppearanceSection />,
     ssh: <SSHSection />,
+    mount: <MountSection />,
     sync: <SyncSection />,
     updates: <UpdatesSection />,
     health: <HealthSection />,
@@ -596,6 +701,201 @@ export default function Settings() {
       <Dialog open={lockOpen} onClose={() => setLockOpen(false)} title="Lock vault" message="Lock the vault now? You will need to enter your password to use SSHThing again." confirmLabel="Lock" confirmVariant="danger" onConfirm={() => void handleLock()} loading={lockLoading} />
       <Dialog open={vacuumOpen} onClose={() => setVacuumOpen(false)} title="Vacuum vault" message="Reclaim unused space from the encrypted database. The vault must be unlocked. This may take a few seconds." confirmLabel="Vacuum" onConfirm={() => void handleVacuum()} loading={vacuumLoading} />
       <Dialog open={forgetDeviceId !== null} onClose={() => setForgetDeviceId(null)} title="Remove device" message="Remove this device from the sync registry? It can re-register on its next sync." confirmLabel="Remove" confirmVariant="danger" onConfirm={() => void handleForgetDevice()} loading={forgetLoading} />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// BiometricRow — Touch ID toggle inside the Vault section.
+// macOS only. When unavailable (other platforms / no enrolled fingerprints)
+// renders a disabled row with an explanatory hint.
+// ─────────────────────────────────────────────────────────────────────
+function BiometricRow() {
+  const [status, setStatus] = useState<{
+    available: boolean;
+    enabled: boolean;
+    expiresAt: number;
+    expired: boolean;
+  } | null>(null);
+  const [pwForEnable, setPwForEnable] = useState('');
+  const [enableOpen, setEnableOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const reload = async () => {
+    try {
+      const s = await window.sshthing.biometricStatus();
+      setStatus(s);
+    } catch {
+      setStatus({ available: false, enabled: false, expiresAt: 0, expired: false });
+    }
+  };
+  useEffect(() => { void reload(); }, []);
+
+  const handleEnable = async () => {
+    if (!pwForEnable) {
+      toast.error('Enter your vault password first.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await window.sshthing.enableBiometric(pwForEnable);
+      toast.success(`Touch ID enabled until ${new Date(r.expiresAt * 1000).toLocaleDateString()}`);
+      setPwForEnable('');
+      setEnableOpen(false);
+      await reload();
+    } catch (err: unknown) {
+      const e = err as Error & { code?: number };
+      if (e.code === -32010) {
+        toast.error('Invalid password.');
+      } else {
+        toast.error(e.message ?? 'Could not enable Touch ID.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDisable = async () => {
+    setBusy(true);
+    try {
+      await window.sshthing.disableBiometric();
+      toast.success('Touch ID disabled.');
+      await reload();
+    } catch (err: unknown) {
+      const e = err as Error;
+      toast.error(e.message ?? 'Could not disable Touch ID.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!status) return null;
+
+  const expiresLabel = status.enabled && status.expiresAt > 0
+    ? `Active until ${new Date(status.expiresAt * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
+    : '';
+
+  return (
+    <>
+      <div className="settings-row">
+        <div>
+          <div className="settings-row__label">
+            Use Touch ID to unlock
+            {!status.available && (
+              <span style={{ marginLeft: 8, color: 'var(--muted-2)', fontSize: 11, fontWeight: 400 }}>
+                (unavailable on this device)
+              </span>
+            )}
+          </div>
+          <div className="settings-row__hint">
+            {status.enabled
+              ? expiresLabel + ' · After 7 days you must re-enter your password.'
+              : 'Skip the password prompt for the next 7 days using your fingerprint.'}
+          </div>
+        </div>
+        {status.enabled ? (
+          <Button variant="ghost" onClick={handleDisable} loading={busy}>Disable</Button>
+        ) : (
+          <Button
+            variant="primary"
+            disabled={!status.available}
+            onClick={() => setEnableOpen(true)}
+          >
+            Enable
+          </Button>
+        )}
+      </div>
+
+      {enableOpen && (
+        <div
+          style={{
+            border: '1px solid var(--line-2)',
+            borderRadius: 'var(--radius)',
+            padding: 14,
+            background: 'var(--paper-2)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10,
+          }}
+        >
+          <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
+            Confirm your vault password to enable Touch ID.
+          </p>
+          <PasswordField
+            label="Vault password"
+            value={pwForEnable}
+            onChange={(e) => setPwForEnable(e.target.value)}
+            autoFocus
+          />
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <Button variant="ghost" onClick={() => { setEnableOpen(false); setPwForEnable(''); }} disabled={busy}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleEnable} loading={busy}>
+              Enable Touch ID
+            </Button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Toggle — small inline switch for boolean settings rows. Same visual
+// language as the existing Background-probes toggle in HealthSection.
+// ─────────────────────────────────────────────────────────────────────
+function Toggle({
+  label,
+  hint,
+  checked,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="settings-row">
+      <div>
+        <div className="settings-row__label">{label}</div>
+        {hint && <div className="settings-row__hint">{hint}</div>}
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
+        style={{
+          width: 40,
+          height: 22,
+          borderRadius: 11,
+          background: checked ? 'var(--accent)' : 'var(--line-2)',
+          border: 'none',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          opacity: disabled ? 0.5 : 1,
+          position: 'relative',
+          flexShrink: 0,
+          transition: 'background 0.2s',
+        }}
+      >
+        <span
+          style={{
+            position: 'absolute',
+            top: 2,
+            left: checked ? 20 : 2,
+            width: 18,
+            height: 18,
+            borderRadius: '50%',
+            background: 'white',
+            transition: 'left 0.2s',
+          }}
+        />
+      </button>
     </div>
   );
 }

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Stable keychain access group so the modern Keychain accepts items
+         protected by SecAccessControl. Without this, SecItemAdd returns
+         errSecMissingEntitlement (-34018) on macOS 11+. The group name
+         is mirrored on the Security framework calls (kSecAttrAccessGroup). -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>com.sshthing.desktop.vault</string>
+    </array>
+</dict>
+</plist>

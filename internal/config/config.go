@@ -121,15 +121,16 @@ type Config struct {
 		AutoSyncAfterCRUD  bool           `json:"auto_sync_after_crud,omitempty"`
 	} `json:"sync"`
 
+	// Updates tracks state for the once-a-week nudge that surfaces in the
+	// TUI/GUI when a new release is available. The actual apply path is
+	// always the `sshthing update` CLI command — nothing in this struct
+	// triggers an auto-apply, and there is no persistent release-channel
+	// preference (use `sshthing update --beta` per-invocation instead).
 	Updates struct {
-		LastCheckedAt    string `json:"last_checked_at,omitempty"`
-		LastSeenVersion  string `json:"last_seen_version,omitempty"`
-		LastSeenTag      string `json:"last_seen_tag,omitempty"`
-		ETagLatest       string `json:"etag_latest,omitempty"`
-		ReleaseChannel   string `json:"release_channel,omitempty"`
-		AutoApplyUpdates bool   `json:"auto_apply_updates,omitempty"`
-		ETagStable       string `json:"etag_stable,omitempty"`
-		ETagBeta         string `json:"etag_beta,omitempty"`
+		LastCheckedAt    string `json:"last_checked_at,omitempty"`    // RFC3339 timestamp of last successful release-feed poll
+		LastSeenVersion  string `json:"last_seen_version,omitempty"`  // most recent version observed by the nudge check
+		LastSeenTag      string `json:"last_seen_tag,omitempty"`      // matching release tag
+		DismissedVersion string `json:"dismissed_version,omitempty"`  // version the user dismissed in the banner; sticky per-version
 	} `json:"updates"`
 
 	Automation struct {
@@ -144,11 +145,22 @@ type Config struct {
 		SessionCacheEnabled bool   `json:"session_cache_enabled"`
 		LastTeamID          string `json:"last_team_id,omitempty"`
 	} `json:"teams"`
+
+	Vault struct {
+		// BiometricEnabled is true when the user has set up Touch ID unlock.
+		// The corresponding password is stored in the macOS keychain protected
+		// by a biometric ACL (see internal/securestore/biometric.go).
+		BiometricEnabled bool `json:"biometric_enabled,omitempty"`
+		// BiometricExpiry is the unix timestamp at which the cached
+		// biometric unlock expires. After this point the user must enter
+		// their password again. Fixed 7 days from first password unlock.
+		BiometricExpiry int64 `json:"biometric_expiry,omitempty"`
+	} `json:"vault,omitempty"`
 }
 
 func Default() Config {
 	var c Config
-	c.Version = 9
+	c.Version = 10
 	c.UI.VimMode = true
 	c.UI.ShowIcons = true
 	c.UI.WrapLabels = false
@@ -193,10 +205,8 @@ func Default() Config {
 	c.Teams.APIBaseURL = ""
 	c.Teams.BrowserBaseURL = ""
 	c.Teams.SessionCacheEnabled = true
-	c.Updates.ReleaseChannel = "stable"
-	c.Updates.AutoApplyUpdates = false
-	c.Updates.ETagStable = ""
-	c.Updates.ETagBeta = ""
+	// Updates: nothing to seed — all fields are observation state populated
+	// by the daemon's once-a-week nudge poll.
 	return c
 }
 
@@ -294,13 +304,8 @@ func withDefaults(c Config) Config {
 		c.Version = 5
 	}
 	if c.Version < 6 {
-		if strings.TrimSpace(c.Updates.ReleaseChannel) == "" {
-			c.Updates.ReleaseChannel = "stable"
-		}
-		c.Updates.AutoApplyUpdates = false
-		if c.Updates.ETagStable == "" {
-			c.Updates.ETagStable = c.Updates.ETagLatest
-		}
+		// (Historical migration: seeded ReleaseChannel/AutoApplyUpdates/ETag*
+		// — all dropped in v10. Bump version forward without doing anything.)
 		c.Version = 6
 	}
 	if c.Version < 7 {
@@ -324,6 +329,15 @@ func withDefaults(c Config) Config {
 		c.Sync.Scope = def.Sync.Scope
 		c.Sync.Scope.TokenDefinitions = c.Automation.SyncTokenDefinitions
 		c.Version = 9
+	}
+	// v10: drop ReleaseChannel / AutoApplyUpdates / ETagLatest / ETagStable /
+	// ETagBeta from the Updates struct. Update is now a CLI-driven action;
+	// the config retains only the once-a-week-nudge observation state. We
+	// don't need to touch in-memory fields — the JSON unmarshal already
+	// silently ignored unknown keys, and the dropped struct fields are simply
+	// no longer populated. Bumping the version stops re-running v6's seed.
+	if c.Version < 10 {
+		c.Version = 10
 	}
 
 	// Enums / ints: normalize invalid values.
@@ -386,17 +400,6 @@ func withDefaults(c Config) Config {
 
 	if c.Automation.SessionTTLSeconds <= 0 || c.Automation.SessionTTLSeconds > 86400 {
 		c.Automation.SessionTTLSeconds = def.Automation.SessionTTLSeconds
-	}
-	switch strings.ToLower(strings.TrimSpace(c.Updates.ReleaseChannel)) {
-	case "", "stable":
-		c.Updates.ReleaseChannel = "stable"
-	case "beta":
-		c.Updates.ReleaseChannel = "beta"
-	default:
-		c.Updates.ReleaseChannel = def.Updates.ReleaseChannel
-	}
-	if c.Updates.ETagStable == "" && c.Updates.ETagLatest != "" {
-		c.Updates.ETagStable = c.Updates.ETagLatest
 	}
 	switch c.UI.HealthDisplayMode {
 	case HealthDisplayMinimal, HealthDisplayValues, HealthDisplayGraphValues:

@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -17,7 +16,6 @@ import (
 	"github.com/Vansh-Raja/SSHThing/internal/teamsclient"
 	"github.com/Vansh-Raja/SSHThing/internal/teamssession"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
-	"github.com/Vansh-Raja/SSHThing/internal/update"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -159,12 +157,10 @@ type Model struct {
 	syncAnimFrame  int
 	syncProgress   float64
 
-	// Update
+	// Update — only the running version is tracked here. The actual update
+	// flow is handled by `sshthing update` (CLI) and the daemon's nudge
+	// service; the TUI just shows the version and proceeds.
 	currentVersion string
-	updateChecking bool
-	updateApplying bool
-	updateRunID    int
-	updateLast     *update.CheckResult
 
 	// Health
 	healthChecking           bool
@@ -358,97 +354,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.err = fmt.Errorf("\u26A0 %s", msg.result.Message)
 		}
-		return m, m.errorAutoClearCmd(prevErr)
-
-	case updateCheckedMsg:
-		if msg.runID != m.updateRunID {
-			return m, nil
-		}
-		m.updateChecking = false
-		if msg.err != nil {
-			m.err = fmt.Errorf("\u26A0 update check failed: %v", msg.err)
-			return m, m.errorAutoClearCmd(prevErr)
-		}
-		if msg.result == nil {
-			m.err = fmt.Errorf("\u26A0 update check failed: empty result")
-			return m, m.errorAutoClearCmd(prevErr)
-		}
-		m.updateLast = msg.result
-		m.cfg.Updates.LastCheckedAt = msg.result.CheckedAt.Format(time.RFC3339)
-		m.cfg.Updates.LastSeenVersion = msg.result.LatestVersion
-		m.cfg.Updates.LastSeenTag = msg.result.LatestTag
-		if msg.result.ReleaseChannel == update.ReleaseChannelBeta {
-			m.cfg.Updates.ETagBeta = msg.result.ETag
-		} else {
-			m.cfg.Updates.ETagStable = msg.result.ETag
-			m.cfg.Updates.ETagLatest = msg.result.ETag
-		}
-		m.settingsItems = m.buildSettingsItems()
-		if msg.result.UpdateAvailable {
-			if m.cfg.Updates.AutoApplyUpdates && (msg.result.ApplyMode == update.ApplyModeInstaller || msg.result.ApplyMode == update.ApplyModeReplaceBin) {
-				m.updateRunID++
-				m.updateApplying = true
-				if msg.result.ReleaseChannel == update.ReleaseChannelBeta {
-					m.err = fmt.Errorf("\u2139 Applying beta update...")
-				} else {
-					m.err = fmt.Errorf("\u2139 Applying update...")
-				}
-				m.settingsItems = m.buildSettingsItems()
-				return m, runUpdateApplyCmd(m.updateRunID, *msg.result)
-			}
-			if m.cfg.Updates.AutoApplyUpdates && msg.result.ReleaseChannel == update.ReleaseChannelBeta && msg.result.ApplyMode == update.ApplyModeGuidance {
-				m.err = fmt.Errorf("\u2139 Beta update found; manual apply required for this install type")
-				return m, m.errorAutoClearCmd(prevErr)
-			}
-			m.err = fmt.Errorf("\u2713 Update available: %s", msg.result.LatestTag)
-		} else {
-			if msg.result.ReleaseChannel == update.ReleaseChannelBeta {
-				m.err = fmt.Errorf("\u2713 Already on latest beta feed release")
-			} else {
-				m.err = fmt.Errorf("\u2713 Already on latest stable release")
-			}
-		}
-		return m, m.errorAutoClearCmd(prevErr)
-
-	case updateAppliedMsg:
-		if msg.runID != m.updateRunID {
-			return m, nil
-		}
-		m.updateApplying = false
-		if msg.err != nil {
-			m.err = fmt.Errorf("\u26A0 update failed: %v", msg.err)
-			return m, m.errorAutoClearCmd(prevErr)
-		}
-		if msg.result == nil || !msg.result.Success {
-			m.err = fmt.Errorf("\u26A0 update failed")
-			return m, m.errorAutoClearCmd(prevErr)
-		}
-		m.settingsItems = m.buildSettingsItems()
-		if msg.handoffStarted {
-			return m, tea.Quit
-		}
-		if msg.result.NeedsRelaunch && msg.result.RelaunchPath != "" {
-			cmd := exec.Command(msg.result.RelaunchPath, msg.result.RelaunchArgs...)
-			_ = cmd.Start()
-			return m, tea.Quit
-		}
-		m.err = fmt.Errorf("\u2713 Update applied")
-		return m, m.errorAutoClearCmd(prevErr)
-
-	case updatePathFixedMsg:
-		if msg.runID != m.updateRunID {
-			return m, nil
-		}
-		m.updateApplying = false
-		if msg.err != nil {
-			m.err = fmt.Errorf("\u26A0 path fix failed: %v", msg.err)
-			return m, m.errorAutoClearCmd(prevErr)
-		}
-		if m.updateLast != nil {
-			m.updateLast.PathHealth = msg.pathHealth
-		}
-		m.settingsItems = m.buildSettingsItems()
-		m.err = fmt.Errorf("\u2713 PATH updated. Open a new terminal for changes.")
 		return m, m.errorAutoClearCmd(prevErr)
 
 	case hostHealthResultMsg:

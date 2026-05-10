@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useSyncStatus } from '../hooks/useSyncStatus';
+import { useTeams } from '../hooks/useTeams';
 import { toast } from '../ui/toast';
 import Button from '../ui/Button';
 import Dialog from '../ui/Dialog';
@@ -42,24 +43,14 @@ export default function Profile() {
   const navigate = useNavigate();
   const { session, loading, refresh } = useAuth();
   const sync = useSyncStatus();
+  // Use the shared teams hook (with localStorage cache) instead of a
+  // page-local fetch. This eliminates the brief "you're not part of any
+  // team" flash on cold loads.
+  const { teams, loading: teamsLoading } = useTeams();
 
   const [signOutOpen, setSignOutOpen] = useState(false);
   const [signOutLoading, setSignOutLoading] = useState(false);
   const [syncNowLoading, setSyncNowLoading] = useState(false);
-  const [teams, setTeams] = useState<TeamSummary[]>([]);
-
-  // Pull teams to find the active team's name.
-  const loadTeams = useCallback(async () => {
-    try {
-      const r = await window.sshthing.teamsList();
-      setTeams(r.teams);
-    } catch {
-      // not signed in or RPC error — fine
-    }
-  }, []);
-  useEffect(() => {
-    if (session) void loadTeams();
-  }, [session, loadTeams]);
 
   const handleSignOut = useCallback(async () => {
     setSignOutLoading(true);
@@ -215,6 +206,10 @@ export default function Profile() {
                   Manage
                 </Button>
               </div>
+            ) : teamsLoading && teams.length === 0 ? (
+              <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>
+                Loading your teams…
+              </p>
             ) : teams.length === 0 ? (
               <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>
                 You're not part of any team yet. Create one or accept an invite from the Teams page.

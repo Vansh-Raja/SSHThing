@@ -7,6 +7,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for rele
 
 ## [Unreleased]
 
+## [v3.0.0-beta.2] — 2026-05-10
+
+### Added
+- **SSHThing Desktop**, an Electron + Go-daemon GUI client that ships alongside the existing TUI. The Electron app spawns a `sshthing-daemon` sidecar over a 0600-mode Unix socket / Windows named pipe and exposes the full personal + teams + tokens + sync surface through a typed JSON-RPC bridge. macOS app bundle, Windows NSIS installer, and Linux AppImage all built from the same release.
+- **Touch ID biometric unlock** on macOS: the vault password is stored in the Keychain behind a biometric ACL with a fixed 7-day expiry. Enroll from Settings → Vault; unlock from the lock screen with the fingerprint button.
+- **`sshthing update` CLI command** — the new single entry point for self-updating both the standalone CLI and the desktop app. Detects how each install got there (brew, winget, choco, standalone zip, DMG, NSIS installer, AppImage) and applies the right mechanism per artefact:
+  - Brew/winget/choco-managed CLI → delegates to the package manager.
+  - Standalone CLI binary → downloads the platform tarball, verifies SHA256, swaps via the existing handoff trick.
+  - macOS GUI → downloads the DMG, verifies SHA256, runs `codesign --verify` + `spctl --assess`, mounts, copies via `ditto`, atomically renames into `/Applications/SSHThing.app` (with a `.bak` rollback), unmounts.
+  - Linux AppImage → downloads + verifies + replaces.
+  - Windows GUI → silent NSIS installer.
+  - Flags: `--check` (dry-run, exits 0/1/2), `--beta` (per-invocation channel override), `--cli` / `--gui` (limit scope), `--yes` (skip prompt), `--doctor` (print detected installs).
+- **Once-a-week update nudge** in the daemon: polls the GitHub release feed every 7 days, emits an `update.available` notification when a new version is out, and shows a single dismissible banner in the GUI / a one-line startup hint in the TUI. Dismissal is sticky per-version (next release re-banners). No auto-apply — the user always runs `sshthing update` explicitly.
+- New `internal/installdetect/` package with per-platform detectors (macOS uses `mdfind` as a fallback for non-standard `.app` locations).
+- `update.dismissBanner` daemon RPC for the GUI banner's "Got it" action.
+
+### Changed
+- **Removed in-app update UI** from both the TUI and the GUI Settings pages. Both now show only the running version + a hint to run `sshthing update`. The previous `check now / apply update / fix PATH / auto-apply` controls are gone — use the CLI command instead.
+- **Removed `electron-updater`** entirely from the desktop app (dependency, IPC handlers, Squirrel wiring). All update flow goes through the new CLI + daemon nudge.
+- **Daemon `CfgStore` now serialises read-modify-write** through a new `Mutate(fn func(*Config) error)` method so concurrent biometric-enable + `settings.set` calls can't clobber each other (and so two parallel `config.Save` calls can't race the shared `.tmp` file). All callers (`SyncService.Configure`, `EnableBiometric`, `DisableBiometric`, the expired-cleanup branch of `UnlockWithBiometric`, the `settings.set` RPC handler) migrated.
+- **Daemon RPC handlers now dispatch in goroutines**, so a slow network-bound call (e.g. `teams.list`) no longer blocks a local call (e.g. `hosts.list`) on the same connection. Writes are still serialised through a per-connection mutex.
+- **Unix daemon socket is now created with mode 0600** via an explicit `umask(0o077)` + `chmod 0600` at listen time (defence in depth on top of the per-request auth token).
+- **Config schema bumped to v10**: dropped `Updates.AutoApplyUpdates`, `Updates.ReleaseChannel`, `Updates.ETagLatest`, `Updates.ETagStable`, `Updates.ETagBeta` (no more auto-apply, channel is per-CLI-invocation, ETag cache no longer needed at the lower poll rate). Added `Updates.DismissedVersion` for the banner sticky-dismiss.
+- `update.Check()` is now stateless with respect to the config (no ETag round-trip) and exposes the full asset list via `CheckResult.AllAssets` so callers can pick a CLI or GUI artefact without re-fetching.
+
+### Fixed
+- **TerminalTab session leak**: navigating away from `/hosts` (e.g. to Settings) unmounted the terminal but never told the daemon to close the session, so SSH processes accumulated. The unmount cleanup now calls `sessionClose` (with a `sessionIdRef` to avoid double-close after a clean `session.exit`).
+- **`useHealth.probe` broken dedupe**: the in-flight check inside `setProbing(prev => prev.has(...) ? prev : ...)` short-circuited only the React state update, not the function — so duplicate probe RPCs fired. Now gated on a synchronous `inFlightRef`.
+- **`DaemonClient` redundant error listener**: `sock.once('error')` and `sock.on('error')` both fired on every error, and the persistent `on` handler emitted on the DaemonClient before the main process had attached an error listener — Node's EventEmitter would crash the main process via uncaughtException on a slow daemon start. Refactored so the persistent listener is installed only after `connect` succeeds.
+- **`ExecModal` history accuracy**: history records read `cmd` / `host` from live React state when the result arrived, so typing in the box during a run made history show the wrong command. Now snapshots `(hostId, hostLabel, cmd)` into a ref at run-time.
+- **Settings.set partial-decode regression**: a malformed `settings.set` JSON body would have persisted a half-decoded config under the new `Mutate` flow. The handler now returns the unmarshal error from the closure so `Mutate` aborts before Save.
+
 ## [v3.0.0-beta.1] — 2026-05-05
 
 ### Added

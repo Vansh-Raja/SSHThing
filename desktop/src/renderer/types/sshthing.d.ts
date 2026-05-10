@@ -55,16 +55,40 @@ declare global {
   }
 
   interface AppSettings {
+    // Appearance
     theme: 'light' | 'dark' | 'system';
     fontSize: number;
-    termType: string;
+
+    // SSH defaults
+    termMode: 'auto' | 'xterm-256color' | 'custom';
+    termCustom: string;
     keepAliveSeconds: number;
     hostKeyPolicy: string;
+    passwordAutoLogin: boolean;
     passwordBackend: string;
+
+    // Mount
+    mountEnabled: boolean;
+    mountDefaultRemotePath: string;
+    mountLocalMountPath: string;
+    mountQuitBehavior: 'prompt' | 'always_unmount' | 'leave_mounted';
+
+    // Sync
     syncProvider: 'off' | 'git' | 'cloud';
-    autoSyncAfterCRUD?: boolean;
-    releaseChannel?: 'stable' | 'beta';
-    autoApplyUpdates?: boolean;
+    syncRepoUrl: string;
+    syncBranch: string;
+    syncSshKeyPath: string;
+    syncLocalPath: string;
+    autoSyncAfterCRUD: boolean;
+    syncScopeHosts: boolean;
+    syncScopeGroups: boolean;
+    syncScopeCredentials: boolean;
+    syncScopeTokenDefs: boolean;
+    syncScopeHealth: boolean;
+    syncScopeMountState: boolean;
+
+    /** @deprecated alias for termMode kept for back-compat */
+    termType?: string;
   }
 
   interface SessionInfo {
@@ -249,6 +273,9 @@ declare global {
     revokedAt?: number | null;
     lastUsedAt?: number | null;
     useCount?: number;
+    hostCount?: number;
+    expiresAt?: number | null;
+    maxUses?: number | null;
   }
 
   // ---- Phase 6: health, mount, transfer, exec types ----
@@ -359,6 +386,10 @@ declare global {
     changeVaultPassword: (oldPassword: string, newPassword: string) => Promise<{ ok: boolean }>;
     lockVault: () => Promise<{ ok: boolean }>;
     vacuumVault: () => Promise<{ ok: boolean }>;
+    biometricStatus: () => Promise<{ available: boolean; enabled: boolean; expiresAt: number; expired: boolean }>;
+    enableBiometric: (password: string) => Promise<{ ok: boolean; expiresAt: number }>;
+    disableBiometric: () => Promise<{ ok: boolean }>;
+    unlockWithBiometric: () => Promise<UnlockResult>;
 
     // Hosts
     listHosts: (query?: string) => Promise<{ hosts: HostSummary[] }>;
@@ -466,12 +497,17 @@ declare global {
     syncTestGit: (repoUrl: string, sshKeyPath: string) => Promise<{ ok: boolean; message?: string }>;
     keyringHealthCheck: () => Promise<{ ok: boolean; error?: string }>;
 
-    // Updates
-    installUpdate: () => Promise<void>;
-    checkForUpdates: () => Promise<void>;
+    // Updates: only the dismiss-banner RPC remains. Apply / check moved
+    // to the `sshthing update` CLI command; the renderer surfaces an
+    // `update.available` notification (via onNotification) when the
+    // daemon's once-a-week poll finds a new release.
+    dismissUpdateBanner: (version: string) => Promise<{ ok: boolean }>;
 
     // System
     openPath: (filePath: string) => Promise<string>;
+    openTuiInTerminal: () => Promise<{ ok: boolean }>;
+    installCli: () => Promise<{ ok: boolean; path: string; error?: string }>;
+    cliInstalled: () => Promise<{ installed: boolean; target?: string; expected?: string }>;
 
     // Dialog
     chooseDirectory: () => Promise<{ canceled: boolean; path: string | null }>;
@@ -484,12 +520,6 @@ declare global {
 
     // Fired when the daemon process exits unexpectedly
     onDaemonExited: (cb: () => void) => () => void;
-
-    // Fired when an app update is available
-    onUpdateAvailable: (cb: (info: { version: string; releaseDate: string; releaseNotes?: string }) => void) => () => void;
-
-    // Fired when an app update has been downloaded
-    onUpdateDownloaded: (cb: (info: { version: string; releaseDate: string; releaseNotes?: string }) => void) => () => void;
   }
 
   interface Window {

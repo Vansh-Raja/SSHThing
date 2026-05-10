@@ -170,22 +170,30 @@ func (s *Server) handleConn(ctx context.Context, cs *connState) {
 			continue
 		}
 
-		result, rpcErr := h(ctx, cs.id, req.Params)
-		var resp Response
-		if rpcErr != nil {
-			resp = errResp(req.ID, rpcErr.Code, rpcErr.Message, rpcErr.Data)
-		} else {
-			resp = Response{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Result:  result,
+		// Dispatch the handler in a goroutine so a slow request (e.g. a
+		// network-heavy teams.list call) can't block other in-flight RPCs
+		// on the same connection. Writes are still serialised via
+		// cs.writeJSON's mutex so responses interleave safely. Most
+		// handlers either don't share state or have their own locking
+		// (Vault.mu, db.Store, etc.), so parallel dispatch is safe.
+		reqCopy := req
+		go func() {
+			result, rpcErr := h(ctx, cs.id, reqCopy.Params)
+			var resp Response
+			if rpcErr != nil {
+				resp = errResp(reqCopy.ID, rpcErr.Code, rpcErr.Message, rpcErr.Data)
+			} else {
+				resp = Response{
+					JSONRPC: "2.0",
+					ID:      reqCopy.ID,
+					Result:  result,
+				}
 			}
-		}
-		if err := cs.writeJSON(resp); err != nil {
-			if err != io.EOF {
-				log.Printf("write response to conn %d: %v", cs.id, err)
+			if err := cs.writeJSON(resp); err != nil {
+				if err != io.EOF {
+					log.Printf("write response to conn %d: %v", cs.id, err)
+				}
 			}
-			return
-		}
+		}()
 	}
 }

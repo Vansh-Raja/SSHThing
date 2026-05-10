@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,56 @@ type PreparedMount struct {
 	keyPath   string
 	cmd       *exec.Cmd
 	stderrBuf bytes.Buffer
+
+	// passwordClean is set when WrapForPasswordAuth allocated an askpass
+	// server / sshpass pipe. It must be called when the prepared cmd exits
+	// (success or failure) to release fds and shut the askpass listener.
+	passwordClean func()
+}
+
+// runPasswordCleanup invokes passwordClean once if set, then nils it out.
+func (p *PreparedMount) runPasswordCleanup() {
+	if p.passwordClean != nil {
+		p.passwordClean()
+		p.passwordClean = nil
+	}
+}
+
+// fuseFilesystemAvailable reports whether at least one of the known macOS FUSE
+// backends is installed. fuse-t (NFS-based, no kext) lives under
+// /Library/Application Support/fuse-t/. macFUSE (kext-based) lives at
+// /Library/Filesystems/macfuse.fs.
+func fuseFilesystemAvailable() bool {
+	candidates := []string{
+		"/Library/Application Support/fuse-t/lib/libfuse3.dylib",
+		"/Library/Application Support/fuse-t/lib/libfuse-t-1.2.1.dylib",
+		"/Library/Filesystems/fuse-t.fs",
+		"/Library/Filesystems/macfuse.fs",
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// detectFuseBackend returns "fuse-t", "macfuse", or "" depending on which
+// dynamic libraries the sshfs binary links against. Best-effort; ignores
+// errors so it never blocks a mount attempt.
+func detectFuseBackend(sshfsPath string) string {
+	out, err := exec.Command("otool", "-L", sshfsPath).Output()
+	if err != nil {
+		return ""
+	}
+	s := string(out)
+	if strings.Contains(s, "fuse-t/lib/libfuse") || strings.Contains(s, "libfuse3") {
+		return "fuse-t"
+	}
+	if strings.Contains(s, "/usr/local/lib/libfuse.2") || strings.Contains(s, "libosxfuse") || strings.Contains(s, "macfuse") {
+		return "macfuse"
+	}
+	return ""
 }
 
 func (p *PreparedMount) Cmd() *exec.Cmd     { return p.cmd }
@@ -78,10 +129,22 @@ func (m *Manager) CheckPrereqs() error {
 }
 
 func (m *Manager) checkPrereqsDarwin() error {
-	for _, name := range []string{"sshfs", "sshfs-fuse-t"} {
+	// On macOS, both the legacy macFUSE sshfs and the fuse-t cask install
+	// a binary called `sshfs` at /usr/local/bin/sshfs. They overwrite one
+	// another. We just take whatever's on PATH and rely on the user having
+	// the working variant installed.
+	for _, name := range []string{"sshfs"} {
 		if p, err := exec.LookPath(name); err == nil {
 			m.sshfsBin = p
 			break
+		}
+	}
+	if m.sshfsBin != "" {
+		// Note which FUSE backend the binary links against for diagnostics.
+		// fuse-t links libfuse3 (in /Library/Application Support/fuse-t/lib);
+		// macFUSE links its own kext-based libfuse 2.x.
+		if backend := detectFuseBackend(m.sshfsBin); backend != "" {
+			log.Printf("mount: detected FUSE backend: %s (sshfs=%s)", backend, m.sshfsBin)
 		}
 	}
 	if m.sshfsBin == "" {
@@ -137,11 +200,30 @@ func mountRoot() (string, error) {
 }
 
 func mountKeyDir() (string, error) {
-	configDir, err := os.UserConfigDir()
+	// We deliberately do NOT use os.UserConfigDir() on macOS. That returns
+	// `~/Library/Application Support` which contains a space, and sshfs
+	// passes the IdentityFile path verbatim to ssh's `-o IdentityFile=`
+	// parser. The OpenSSH config-line tokenizer splits on whitespace and
+	// rejects the path with "keyword identityfile extra arguments at end
+	// of line", which sshfs reports back as the cryptic "remote host has
+	// disconnected".
+	//
+	// The cache dir on macOS is `~/Library/Caches`, which has no spaces.
+	// On Linux it's $XDG_CACHE_HOME or `~/.cache` (also no spaces). On
+	// Windows it's %LocalAppData% which can have spaces, but we don't
+	// reach this path on Windows (mount is unsupported there).
+	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(configDir, "sshthing", "mount-keys"), nil
+	dir := filepath.Join(cacheDir, "sshthing", "mount-keys")
+	if strings.ContainsAny(dir, " \t") {
+		// Last-resort fallback. /tmp is world-writable but each file is
+		// chmod 0600 so the secret is still user-private; the directory
+		// itself is the user's own subdir.
+		dir = filepath.Join(os.TempDir(), "sshthing-mount-keys")
+	}
+	return dir, nil
 }
 
 func mountKeyPathFor(hostID int) (string, error) {
@@ -281,20 +363,78 @@ func (m *Manager) PrepareMount(hostID int, conn ssh.Connection, remotePath strin
 		args = append(args, "-o", fmt.Sprintf("IdentityFile=%s", keyPath))
 	}
 
-	cmd := exec.Command(m.sshfsBin, args...)
-	cmd.Env = os.Environ()
-	cmd.Stdin = os.Stdin
+	// Opt-in extra debug output via env var — set MOUNT_DEBUG=1 to get
+	// sshfs internal trace + ssh protocol verbosity. Useful when "remote
+	// host has disconnected" is the only error visible.
+	if os.Getenv("MOUNT_DEBUG") == "1" {
+		args = append(args, "-o", "sshfs_debug")
+		args = append(args, "-o", "LogLevel=DEBUG3")
+	}
+
+	// For password-auth hosts we wrap sshfs with the same sshpass / askpass
+	// plumbing ssh.Connect uses. Without this, sshfs tries to prompt for a
+	// password and the daemon-spawned process has no terminal, so ssh drops
+	// the connection ("remote host has disconnected").
+	cmd, pwCleanup, err := ssh.WrapForPasswordAuth(m.sshfsBin, args, conn)
+	if err != nil {
+		return nil, fmt.Errorf("configure sshfs auth: %w", err)
+	}
 	cmd.Stdout = os.Stdout
+	// IMPORTANT: do NOT inherit os.Stdin. In the TUI's tea.ExecProcess flow
+	// the Bubble Tea runtime attaches a terminal anyway; in the daemon's
+	// background spawn, inheriting stdin gives ssh an empty pipe to read
+	// password prompts from, which then fails with "remote host has
+	// disconnected". Leaving Stdin nil routes prompts through askpass.
+	cmd.Stdin = nil
+
+	// For key-auth mounts, disable any user-side ssh-agent on the way in.
+	// macOS's system ssh-agent may contain other keys; mixing them with our
+	// explicit IdentityFile can confuse ssh's auth ordering. For password
+	// mounts the WrapForPasswordAuth path already set the askpass env, so
+	// we leave it alone there.
+	if conn.Password == "" && cmd.Env != nil {
+		// Replace SSH_AUTH_SOCK with empty in the existing env slice rather
+		// than rebuilding from os.Environ() (which would clobber any
+		// askpass / sshpass plumbing the wrap helper installed).
+		newEnv := make([]string, 0, len(cmd.Env)+1)
+		seen := false
+		for _, e := range cmd.Env {
+			if strings.HasPrefix(e, "SSH_AUTH_SOCK=") {
+				newEnv = append(newEnv, "SSH_AUTH_SOCK=")
+				seen = true
+				continue
+			}
+			newEnv = append(newEnv, e)
+		}
+		if !seen {
+			newEnv = append(newEnv, "SSH_AUTH_SOCK=")
+		}
+		cmd.Env = newEnv
+	}
+
+	// Diagnostic logging — sshfs failures are notoriously opaque so we log
+	// the binary, the resolved args (key file path / port / StrictHostKeyChecking
+	// / sshfs options) and the auth mode. The actual command's argv lives on
+	// cmd.Args (which differs from `args` when sshpass wraps the call).
+	authMode := "key"
+	if conn.Password != "" && conn.PrivateKey == "" {
+		authMode = "password"
+	} else if conn.Password == "" && conn.PrivateKey == "" {
+		authMode = "agent"
+	}
+	log.Printf("mount: sshfs bin=%s authMode=%s remote=%s local=%s args=%v cmdArgs=%v",
+		m.sshfsBin, authMode, remoteSpec, localPath, args, cmd.Args)
 
 	p := &PreparedMount{
-		HostID:     hostID,
-		Hostname:   conn.Hostname,
-		LocalPath:  localPath,
-		remoteSpec: remoteSpec,
-		remotePath: strings.TrimSpace(remotePath),
-		display:    strings.TrimSpace(displayName),
-		keyPath:    keyPath,
-		cmd:        cmd,
+		HostID:        hostID,
+		Hostname:      conn.Hostname,
+		LocalPath:     localPath,
+		remoteSpec:    remoteSpec,
+		remotePath:    strings.TrimSpace(remotePath),
+		display:       strings.TrimSpace(displayName),
+		keyPath:       keyPath,
+		cmd:           cmd,
+		passwordClean: pwCleanup,
 	}
 	cmd.Stderr = &p.stderrBuf
 
@@ -305,7 +445,53 @@ func (m *Manager) AbortMount(p *PreparedMount) {
 	if p == nil {
 		return
 	}
-	cleanupKeyFile(p.keyPath)
+	// Kill the sshfs cmd if it's still running. fuse-t spawns a userspace
+	// NFS daemon (go-nfsv4) as a child of sshfs; if sshfs dies cleanly the
+	// daemon usually goes with it. But on failure paths sshfs may have
+	// exited while go-nfsv4 lingered, so we also force-kill any go-nfsv4
+	// holding our specific mount point.
+	if p.cmd != nil && p.cmd.Process != nil {
+		_ = p.cmd.Process.Kill()
+		_, _ = p.cmd.Process.Wait()
+	}
+	killStaleNFSDaemonForPath(p.LocalPath)
+	// MOUNT_DEBUG=1 keeps the temp key around so we can reproduce the
+	// failing sshfs invocation manually with the same args.
+	if os.Getenv("MOUNT_DEBUG") != "1" {
+		cleanupKeyFile(p.keyPath)
+	} else if p.keyPath != "" {
+		log.Printf("mount: MOUNT_DEBUG=1 keeping key file at %s for manual reproduction", p.keyPath)
+	}
+	p.runPasswordCleanup()
+}
+
+// killStaleNFSDaemonForPath finds any go-nfsv4 process holding the given
+// mount path and force-kills it. fuse-t doesn't always tear its NFS
+// userspace daemon down when sshfs dies on a failed mount, leaving a
+// zombie that blocks future mounts at the same path.
+func killStaleNFSDaemonForPath(localPath string) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	out, err := exec.Command("ps", "-Ao", "pid,command").Output()
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, "go-nfsv4") {
+			continue
+		}
+		if !strings.Contains(line, localPath) {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		pid := fields[0]
+		log.Printf("mount: cleanup killing stale go-nfsv4 pid=%s for %s", pid, localPath)
+		_ = exec.Command("kill", "-9", pid).Run()
+	}
 }
 
 func (m *Manager) FinalizeMount(p *PreparedMount) error {
@@ -313,16 +499,35 @@ func (m *Manager) FinalizeMount(p *PreparedMount) error {
 		return fmt.Errorf("internal error: missing prepared mount")
 	}
 
-	ok, err := waitMounted(p.LocalPath, 2*time.Second)
+	// fuse-t spawns a userspace NFS daemon then runs through SSH auth before
+	// the mount appears in the kernel mount table. 2 s was too tight for
+	// some networks (the connection negotiates SSH + NFSv4 + handshakes).
+	// Bump to 8 s; if mount still hasn't appeared, sshfs has either died
+	// or is stuck and the error message is more useful than a quick retry.
+	ok, err := waitMounted(p.LocalPath, 8*time.Second)
 	if err != nil {
+		log.Printf("mount: waitMounted error for %s: %v (stderr=%q)", p.LocalPath, err, p.Stderr())
 		m.AbortMount(p)
 		return err
 	}
 	if !ok {
+		stderr := p.Stderr()
+		hint := ""
+		if !fuseFilesystemAvailable() {
+			hint = "\n→ FUSE filesystem extension is missing. Install or reinstall fuse-t:" +
+				"\n   brew tap macos-fuse-t/homebrew-cask" +
+				"\n   brew reinstall --cask fuse-t fuse-t-sshfs" +
+				"\n  (the cask may have downloaded the .pkg without running it; macOS will" +
+				"\n   prompt to allow the system extension on the next install)."
+		}
+		log.Printf("mount: did not appear at %s; stderr=%q hint=%s", p.LocalPath, stderr, hint)
 		m.AbortMount(p)
 		errMsg := fmt.Sprintf("⚠ mount did not appear at %s", p.LocalPath)
-		if stderr := p.Stderr(); stderr != "" {
+		if stderr != "" {
 			errMsg += "\n" + stderr
+		}
+		if hint != "" {
+			errMsg += hint
 		}
 		return fmt.Errorf("%s", errMsg)
 	}
@@ -342,6 +547,11 @@ func (m *Manager) FinalizeMount(p *PreparedMount) error {
 		PID:        pid,
 	}
 	m.mu.Unlock()
+
+	// Mount is up — askpass server / sshpass pipe no longer needed; the
+	// inner ssh transport has already negotiated its auth. Releasing now
+	// keeps fd / port count tight while sshfs keeps running.
+	p.runPasswordCleanup()
 
 	// Open in file manager. If this fails, treat as non-fatal.
 	switch runtime.GOOS {

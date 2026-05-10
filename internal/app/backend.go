@@ -21,7 +21,6 @@ import (
 	syncpkg "github.com/Vansh-Raja/SSHThing/internal/sync"
 	"github.com/Vansh-Raja/SSHThing/internal/teams"
 	"github.com/Vansh-Raja/SSHThing/internal/ui"
-	"github.com/Vansh-Raja/SSHThing/internal/update"
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -1173,22 +1172,23 @@ func (m *Model) buildSettingsItems() []ui.SettingsItem {
 		)
 	}
 	items = append(items,
-		// Updates
-		ui.SettingsItem{Category: "updates", Label: "beta releases", Value: boolVal(m.cfg.Updates.ReleaseChannel == "beta"), Kind: 0},
-		ui.SettingsItem{Category: "updates", Label: "auto apply updates", Value: boolVal(m.cfg.Updates.AutoApplyUpdates), Kind: 0},
-		ui.SettingsItem{Category: "updates", Label: "feed", Value: m.updateSettingsState().FeedLabel, Kind: 2},
-		ui.SettingsItem{Category: "updates", Label: "channel", Value: m.updateSettingsState().ChannelLabel, Kind: 2},
-		ui.SettingsItem{Category: "updates", Label: "version", Value: m.updateSettingsState().VersionLabel, Kind: 2},
-		ui.SettingsItem{Category: "updates", Label: "check now", Value: "", Kind: 2},
-		ui.SettingsItem{Category: "updates", Label: "apply update", Value: "", Kind: 2},
-		ui.SettingsItem{Category: "updates", Label: "PATH health", Value: m.updateSettingsState().PathHealth, Kind: 2},
-		ui.SettingsItem{Category: "updates", Label: "fix PATH", Value: "", Kind: 2},
-		ui.SettingsItem{Category: "updates", Label: updateSettingsNoteLabel(), Value: "", Kind: 2},
+		// Updates — read-only version line. The full check/apply/PATH-fix
+		// flow lives in `sshthing update` now; the TUI just shows what
+		// version is running and lets a passive nudge surface availability.
+		ui.SettingsItem{Category: "updates", Label: "version", Value: currentVersionLabel(m.currentVersion), Kind: 2},
 		// Tokens
 		ui.SettingsItem{Category: "tokens", Label: "manage tokens", Value: "", Kind: 2},
 		ui.SettingsItem{Category: "tokens", Label: "sync token definitions", Value: boolVal(m.cfg.Sync.Scope.TokenDefinitions), Kind: 0, Disabled: m.cfg.Sync.Provider == config.SyncProviderOff},
 	)
 	return items
+}
+
+func currentVersionLabel(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "(unknown)"
+	}
+	return v
 }
 
 func syncProviderLabels() []string {
@@ -1243,13 +1243,6 @@ func (m Model) personalCloudSyncStatus() string {
 	return "ready"
 }
 
-func updateSettingsNoteLabel() string {
-	if runtime.GOOS == "windows" {
-		return "if relaunch fails, open a new terminal"
-	}
-	return "if relaunch fails, start SSHThing again"
-}
-
 func (m *Model) filteredSettingsIdxs() []int {
 	items := m.settingsItems
 	if m.settingsFilter == "" {
@@ -1269,60 +1262,6 @@ func (m *Model) filteredSettingsIdxs() []int {
 		}
 	}
 	return idxs
-}
-
-type updateSettingsStateInfo struct {
-	FeedLabel    string
-	ChannelLabel string
-	VersionLabel string
-	PathHealth   string
-	CanApply     bool
-	CanFixPath   bool
-	Checking     bool
-	Applying     bool
-}
-
-func (m Model) updateSettingsState() updateSettingsStateInfo {
-	state := updateSettingsStateInfo{
-		Checking: m.updateChecking,
-		Applying: m.updateApplying,
-	}
-	if m.updateLast != nil {
-		state.FeedLabel = string(m.updateLast.ReleaseChannel)
-		state.ChannelLabel = update.ChannelLabel(m.updateLast.Channel, m.updateLast.ChannelDetail)
-		current := strings.TrimSpace(m.updateLast.CurrentVersion)
-		if current == "" {
-			current = "(unknown)"
-		}
-		latest := strings.TrimSpace(m.updateLast.LatestVersion)
-		if latest == "" {
-			latest = "(unknown)"
-		}
-		state.VersionLabel = current + " -> " + latest
-		state.PathHealth = update.PathHealthLabel(m.updateLast.PathHealth)
-		state.CanApply = m.updateLast.UpdateAvailable && m.updateLast.ApplyMode != update.ApplyModeGuidance && m.updateLast.ApplyMode != update.ApplyModeNone
-		state.CanFixPath = !m.updateLast.PathHealth.Healthy && strings.TrimSpace(m.updateLast.PathHealth.DesiredPath) != ""
-	}
-	if state.FeedLabel == "" {
-		state.FeedLabel = strings.TrimSpace(m.cfg.Updates.ReleaseChannel)
-		if state.FeedLabel == "" {
-			state.FeedLabel = "stable"
-		}
-	}
-	if state.VersionLabel == "" {
-		v := strings.TrimSpace(m.currentVersion)
-		if v == "" {
-			v = "(unknown)"
-		}
-		state.VersionLabel = v + " -> (not checked)"
-	}
-	if state.ChannelLabel == "" {
-		state.ChannelLabel = "(not checked)"
-	}
-	if state.PathHealth == "" {
-		state.PathHealth = "(not checked)"
-	}
-	return state
 }
 
 // ── Token CRUD helpers (used by handlers) ─────────────────────────────
@@ -1766,15 +1705,8 @@ func (m *Model) applySettingChange(idx int, action string) {
 			m.cfg.Sync.Scope.MountState = !m.cfg.Sync.Scope.MountState
 		}
 	case "repo url", "ssh key path", "branch", "local path":
-	case "beta releases":
-		if strings.EqualFold(m.cfg.Updates.ReleaseChannel, "beta") {
-			m.cfg.Updates.ReleaseChannel = "stable"
-		} else {
-			m.cfg.Updates.ReleaseChannel = "beta"
-		}
-	case "auto apply updates":
-		m.cfg.Updates.AutoApplyUpdates = !m.cfg.Updates.AutoApplyUpdates
-	case "manage tokens", "feed", "channel", "version", "check now", "apply update", "PATH health", "fix PATH", updateSettingsNoteLabel():
+	case "manage tokens", "version":
+		// Read-only / nav-only rows; nothing to toggle.
 	}
 }
 

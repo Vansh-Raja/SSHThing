@@ -50,11 +50,13 @@ func (ms *MountService) Start(ctx context.Context, hostID, remotePath string) (*
 
 	hostKeyPolicy := string(config.HostKeyAcceptNew)
 	keepAlive := 60
+	passwordBackend := string(config.PasswordBackendSSHPassFirst)
 	localMountBase := ""
 	if ms.CfgStore != nil {
 		cfg := ms.CfgStore.Get()
 		hostKeyPolicy = string(cfg.SSH.HostKeyPolicy)
 		keepAlive = cfg.SSH.KeepAliveSeconds
+		passwordBackend = string(cfg.SSH.PasswordBackendUnix)
 		localMountBase = cfg.Mount.LocalMountPath
 	}
 	if remotePath == "" && ms.CfgStore != nil {
@@ -62,13 +64,19 @@ func (ms *MountService) Start(ctx context.Context, hostID, remotePath string) (*
 	}
 
 	conn := ssh.Connection{
-		Hostname:         model.Hostname,
-		Username:         model.Username,
-		Port:             model.Port,
-		HostKeyPolicy:    hostKeyPolicy,
-		KeepAliveSeconds: keepAlive,
+		Hostname:            model.Hostname,
+		Username:            model.Username,
+		Port:                model.Port,
+		HostKeyPolicy:       hostKeyPolicy,
+		KeepAliveSeconds:    keepAlive,
+		PasswordBackendUnix: passwordBackend,
 	}
-	if model.KeyType != "password" && secret != "" {
+	// Mirror connectToHost: password hosts get conn.Password, key hosts get
+	// conn.PrivateKey. Without this, sshfs has no credentials and ssh drops
+	// the connection ("remote host has disconnected").
+	if model.KeyType == "password" {
+		conn.Password = secret
+	} else if secret != "" {
 		conn.PrivateKey = secret
 	}
 

@@ -69,6 +69,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "update" {
+		if err := runUpdate(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "update error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -85,6 +92,7 @@ func main() {
 			fmt.Println("  sshthing put        Upload stdin (or --in <file>) to a remote path")
 			fmt.Println("  sshthing get        Download a remote file to stdout (or --out <file>)")
 			fmt.Println("  sshthing session    Manage local unlock session cache")
+			fmt.Println("  sshthing update     Self-update CLI and/or GUI install")
 			fmt.Println("  sshthing --version  Print version")
 			fmt.Println("  sshthing --help     Show this help")
 			fmt.Println()

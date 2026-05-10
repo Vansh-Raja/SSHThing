@@ -3,10 +3,12 @@ package service
 import (
 	"crypto/rand"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Vansh-Raja/SSHThing/internal/config"
 	"github.com/Vansh-Raja/SSHThing/internal/db"
 	"github.com/Vansh-Raja/SSHThing/internal/securestore"
 	"github.com/Vansh-Raja/SSHThing/internal/unlock"
@@ -26,14 +28,18 @@ var ErrInvalidPassword = fmt.Errorf("invalid password")
 // Vault manages the unlocked db.Store and the session unlock cache.
 // It is safe for concurrent use.
 type Vault struct {
-	mu       sync.RWMutex
-	store    *db.Store
+	mu    sync.RWMutex
+	store *db.Store
 	// OnUnlock, if set, is called (in a new goroutine) immediately after a
 	// successful vault unlock. Useful for services that need to perform
 	// post-unlock initialization (e.g. mount restore, sync startup checks).
 	OnUnlock func()
 	// Notify emits a JSON-RPC notification to all connected clients.
 	Notify func(method string, params any)
+	// CfgStore is the shared atomic config holder. Vault writes to it when
+	// biometric enrolment changes (BiometricEnabled / BiometricExpiry).
+	// May be nil in tests.
+	CfgStore *CfgStore
 }
 
 // UnlockResult is returned on a successful unlock.
@@ -263,4 +269,149 @@ func KeyringHealthCheck() *KeyringHealthResult {
 		return &KeyringHealthResult{Error: "value mismatch"}
 	}
 	return &KeyringHealthResult{OK: true}
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Biometric (Touch ID) unlock
+// ────────────────────────────────────────────────────────────────────────
+
+// BiometricStatusResult tells the renderer what's possible: whether Touch ID
+// hardware is available, whether the user has enrolled SSHThing for it, and
+// when the cached secret expires.
+type BiometricStatusResult struct {
+	Available bool   `json:"available"` // Touch ID supported & user enrolled OS-side
+	Enabled   bool   `json:"enabled"`   // user has stored their vault password
+	ExpiresAt int64  `json:"expiresAt"` // 0 if not enabled; unix seconds otherwise
+	Expired   bool   `json:"expired"`   // true if Enabled && now > ExpiresAt
+}
+
+// BiometricEnableResult is returned from EnableBiometric on success.
+type BiometricEnableResult struct {
+	OK        bool  `json:"ok"`
+	ExpiresAt int64 `json:"expiresAt"`
+}
+
+// biometricCacheDuration matches the user's locked-in design choice:
+// 7 days from the first password unlock that turned the feature on.
+const biometricCacheDuration = 7 * 24 * time.Hour
+
+// BiometricStatus returns the combined hardware + user-config view.
+// Cheap; never triggers a Touch ID prompt.
+func (v *Vault) BiometricStatus() *BiometricStatusResult {
+	res := &BiometricStatusResult{
+		Available: securestore.BiometricAvailable(),
+	}
+	if v.CfgStore == nil {
+		return res
+	}
+	cfg := v.CfgStore.Get()
+	res.Enabled = cfg.Vault.BiometricEnabled
+	res.ExpiresAt = cfg.Vault.BiometricExpiry
+	if res.Enabled && res.ExpiresAt > 0 && time.Now().Unix() > res.ExpiresAt {
+		res.Expired = true
+	}
+	return res
+}
+
+// EnableBiometric verifies the password (by attempting a lightweight DB
+// open), then stores it in the macOS keychain protected by Touch ID.
+// Sets cfg.Vault.BiometricEnabled=true and BiometricExpiry=now+7d.
+//
+// We re-verify the password rather than trusting the renderer to only call
+// this when the vault is already unlocked — defence in depth.
+func (v *Vault) EnableBiometric(password string) (*BiometricEnableResult, error) {
+	if !securestore.BiometricAvailable() {
+		return nil, securestore.ErrBiometricUnavailable
+	}
+	if v.CfgStore == nil {
+		return nil, fmt.Errorf("biometric: config store not wired")
+	}
+	if strings.TrimSpace(password) == "" {
+		return nil, ErrInvalidPassword
+	}
+
+	// Verify the password actually opens the vault. The cheapest way is a
+	// read-only Init+Close round-trip.
+	exists, err := db.Exists()
+	if err != nil {
+		return nil, fmt.Errorf("check vault: %w", err)
+	}
+	if !exists {
+		return nil, ErrVaultMissing
+	}
+	verifyStore, err := db.Init(password)
+	if err != nil {
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "invalid password") {
+			return nil, ErrInvalidPassword
+		}
+		return nil, err
+	}
+	_ = verifyStore.Close()
+
+	if err := securestore.BiometricStore(password); err != nil {
+		return nil, fmt.Errorf("biometric store: %w", err)
+	}
+
+	expiresAt := time.Now().Add(biometricCacheDuration).Unix()
+	if _, err := v.CfgStore.Mutate(func(cfg *config.Config) error {
+		cfg.Vault.BiometricEnabled = true
+		cfg.Vault.BiometricExpiry = expiresAt
+		return nil
+	}); err != nil {
+		// Non-fatal — keychain is updated; the renderer can re-derive
+		// state from a future settings.get and the user can retry.
+		log.Printf("biometric: config save failed: %v", err)
+	}
+
+	return &BiometricEnableResult{OK: true, ExpiresAt: expiresAt}, nil
+}
+
+// DisableBiometric forgets the keychain item and clears the config flags.
+// Idempotent — succeeds even if Touch ID was never enabled.
+func (v *Vault) DisableBiometric() error {
+	if err := securestore.BiometricForget(); err != nil {
+		return err
+	}
+	if v.CfgStore != nil {
+		if _, err := v.CfgStore.Mutate(func(cfg *config.Config) error {
+			cfg.Vault.BiometricEnabled = false
+			cfg.Vault.BiometricExpiry = 0
+			return nil
+		}); err != nil {
+			log.Printf("biometric: config save failed: %v", err)
+		}
+	}
+	return nil
+}
+
+// UnlockWithBiometric prompts Touch ID, retrieves the cached password from
+// the keychain, and unlocks the vault as if the user had typed it. Returns
+// ErrBiometricExpired if the 7-day window has elapsed (caller should clear
+// the cache and demand the password). Returns the underlying biometric
+// errors verbatim for the renderer to map to UI states.
+func (v *Vault) UnlockWithBiometric() (*UnlockResult, error) {
+	if v.CfgStore == nil {
+		return nil, securestore.ErrBiometricUnavailable
+	}
+	cfg := v.CfgStore.Get()
+	if !cfg.Vault.BiometricEnabled {
+		return nil, securestore.ErrBiometricUnavailable
+	}
+	if cfg.Vault.BiometricExpiry > 0 && time.Now().Unix() > cfg.Vault.BiometricExpiry {
+		// Expired: forget the cached secret and force password.
+		_ = securestore.BiometricForget()
+		_, _ = v.CfgStore.Mutate(func(c *config.Config) error {
+			c.Vault.BiometricEnabled = false
+			c.Vault.BiometricExpiry = 0
+			return nil
+		})
+		return nil, securestore.ErrBiometricUnavailable
+	}
+
+	password, err := securestore.BiometricFetch()
+	if err != nil {
+		return nil, err
+	}
+	return v.Unlock(password)
 }

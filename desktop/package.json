@@ -1,6 +1,6 @@
 {
   "name": "sshthing-desktop",
-  "version": "0.0.1-spike",
+  "version": "3.0.0-beta.2",
   "description": "SSHThing desktop — Electron + Go daemon",
   "main": "dist/main/index.js",
   "scripts": {
@@ -16,7 +16,7 @@
     "dist:win": "electron-builder --win",
     "dist:linux": "electron-builder --linux",
     "dev": "pnpm run daemon:build && pnpm run build && electron .",
-    "daemon:build": "cd .. && go build -ldflags=\"-X github.com/Vansh-Raja/SSHThing/internal/cloud.DefaultBaseURL=https://testsshthing.vanshraja.me\" -o desktop/bin/sshthing-daemon ./cmd/sshthing-daemon"
+    "daemon:build": "cd .. && go build -ldflags=\"-X main.version=3.0.0-beta.2 -X github.com/Vansh-Raja/SSHThing/internal/cloud.DefaultBaseURL=https://testsshthing.vanshraja.me\" -o desktop/bin/sshthing-daemon ./cmd/sshthing-daemon && go build -ldflags=\"-X main.version=3.0.0-beta.2 -X github.com/Vansh-Raja/SSHThing/internal/app.defaultCloudBaseURL=https://testsshthing.vanshraja.me\" -o desktop/bin/sshthing ./cmd/sshthing && cd desktop && bash scripts/build-biometric.sh"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
@@ -40,7 +40,6 @@
     "@radix-ui/react-tooltip": "^1.1.0",
     "@xterm/addon-fit": "^0.10.0",
     "clsx": "^2.1.0",
-    "electron-updater": "^6.8.3",
     "electron-window-state": "^5.0.3",
     "fuse.js": "^7.0.0",
     "react": "^18.3.0",

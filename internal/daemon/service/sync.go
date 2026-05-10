@@ -231,29 +231,28 @@ func (s *SyncService) TestGit(ctx context.Context, repoURL, sshKeyPath string) T
 
 // Configure updates the sync configuration and persists it.
 func (s *SyncService) Configure(params ConfigureParams) error {
-	cfg := s.CfgStore.Get()
-
-	if params.Provider != "" {
-		cfg.Sync.Provider = config.SyncProvider(params.Provider)
-		// Enabling/disabling follows from provider selection.
-		cfg.Sync.Enabled = cfg.Sync.Provider != config.SyncProviderOff
-	}
-	if params.Enabled != nil {
-		cfg.Sync.Enabled = *params.Enabled
-	}
-	if params.RepoURL != "" {
-		cfg.Sync.RepoURL = params.RepoURL
-	}
-	if params.Branch != "" {
-		cfg.Sync.Branch = params.Branch
-	}
-	if params.SSHKeyPath != "" {
-		cfg.Sync.SSHKeyPath = params.SSHKeyPath
-	}
-
-	if err := config.Save(cfg); err != nil {
+	_, err := s.CfgStore.Mutate(func(cfg *config.Config) error {
+		if params.Provider != "" {
+			cfg.Sync.Provider = config.SyncProvider(params.Provider)
+			// Enabling/disabling follows from provider selection.
+			cfg.Sync.Enabled = cfg.Sync.Provider != config.SyncProviderOff
+		}
+		if params.Enabled != nil {
+			cfg.Sync.Enabled = *params.Enabled
+		}
+		if params.RepoURL != "" {
+			cfg.Sync.RepoURL = params.RepoURL
+		}
+		if params.Branch != "" {
+			cfg.Sync.Branch = params.Branch
+		}
+		if params.SSHKeyPath != "" {
+			cfg.Sync.SSHKeyPath = params.SSHKeyPath
+		}
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
-	s.CfgStore.Set(cfg)
 	return nil
 }

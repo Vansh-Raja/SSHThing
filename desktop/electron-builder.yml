@@ -29,3 +29,7 @@ publish:
 extraResources:
   - from: bin/sshthing-daemon
     to: bin/sshthing-daemon
+  - from: bin/sshthing
+    to: bin/sshthing
+  - from: bin/sshthing-biometric
+    to: bin/sshthing-biometric

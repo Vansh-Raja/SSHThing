@@ -25,6 +25,7 @@ import Modal from '../ui/Modal';
 import DropdownMenu, { type MenuItemDef } from '../ui/DropdownMenu';
 import { toast } from '../ui/toast';
 import { useNotifications } from '../hooks/useNotifications';
+import { useHostsCache } from '../hooks/useHostsCache';
 import { useHealth } from '../hooks/useHealth';
 import { useHealthScheduler } from '../hooks/useHealthScheduler';
 import { useMounts } from '../hooks/useMounts';
@@ -107,7 +108,7 @@ export default function Hosts() {
 
   // Phase 6 — health, mounts, transfers, exec
   const health = useHealth();
-  useHealthScheduler({ hosts, health });
+  useHealthScheduler({ hosts, health, scopeKey: 'personal' });
   const mounts = useMounts();
   const transfers = useTransfers();
 
@@ -122,46 +123,28 @@ export default function Hosts() {
   const [downloadHost, setDownloadHost] = useState<HostSummary | null>(null);
   const [welcomeOpen, setWelcomeOpen] = useState(false);
 
-  useEffect(() => { void health.loadAll(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { void mounts.loadMounts(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Welcome modal — show once on first vault unlock.
   useEffect(() => {
     if (localStorage.getItem('sshthing.showWelcome') === 'true' && !localStorage.getItem('sshthing.welcomeShown')) {
       setWelcomeOpen(true);
     }
   }, []);
 
-  // Restore mounts toast on first load (daemon may have revived mounts from DB).
-  useEffect(() => {
-    let cancelled = false;
-    window.sshthing
-      .mountList()
-      .then((res) => {
-        if (cancelled) return;
-        if (res.mounts.length > 0) {
-          toast.info(`Restored ${res.mounts.length} mount${res.mounts.length === 1 ? '' : 's'}`);
-        }
-      })
-      .catch(() => {
-        // ignore — mount list RPC may not be ready
-      });
-    return () => { cancelled = true; };
-  }, []);
-
   // ── Data load ───────────────────────────────────────────────────────────
-  const loadHosts = useCallback(async () => {
-    try {
-      const result = await window.sshthing.listHosts();
-      setHosts(result.hosts);
-      setSelectedHostId((current) => {
-        if (current && result.hosts.some((h) => h.id === current)) return current;
-        return result.hosts[0]?.id ?? null;
-      });
-    } catch (err) {
-      toast.error((err as Error).message ?? 'Failed to load hosts');
-    } finally {
-      setHostsLoaded(true);
-    }
-  }, []);
+  // Pull hosts via the shared cache hook — paints synchronously from cache
+  // (so the first paint can include the host list) then revalidates in the
+  // background. App.tsx subscribes to the same hook; only one daemon RPC.
+  const hostsCache = useHostsCache();
+  useEffect(() => {
+    setHosts(hostsCache.hosts);
+    setSelectedHostId((current) => {
+      if (current && hostsCache.hosts.some((h) => h.id === current)) return current;
+      return hostsCache.hosts[0]?.id ?? null;
+    });
+    if (!hostsCache.loading) setHostsLoaded(true);
+  }, [hostsCache.hosts, hostsCache.loading]);
+
+  const loadHosts = useCallback(async () => { await hostsCache.refresh(); }, [hostsCache]);
 
   const loadGroups = useCallback(async () => {
     try {
@@ -172,7 +155,33 @@ export default function Hosts() {
     }
   }, []);
 
-  useEffect(() => { void loadHosts(); void loadGroups(); }, [loadHosts, loadGroups]);
+  // Bootstrap: critical path first, then defer everything else to idle so
+  // it can't block the first paint of the host list.
+  useEffect(() => {
+    // Groups are needed for the sidebar group chips — fetch on mount.
+    void loadGroups();
+
+    // Defer the rest. requestIdleCallback is only available in Chromium
+    // builds with the Idle API enabled (Electron has it); use a setTimeout
+    // fallback for safety.
+    const idle: (cb: () => void) => void = (cb) => {
+      const ric = (window as unknown as { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback;
+      if (typeof ric === 'function') ric(cb);
+      else setTimeout(cb, 200);
+    };
+    idle(() => {
+      void health.loadAll();
+      void mounts.loadMounts().then(() => {
+        // Surface a toast if the daemon restored mounts at startup.
+        try {
+          if (mounts.mounts.length > 0) {
+            toast.info(`Restored ${mounts.mounts.length} mount${mounts.mounts.length === 1 ? '' : 's'}`);
+          }
+        } catch { /* ignore */ }
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Vault locked / notifications ────────────────────────────────────────
   // NOTE: We keep a hard redirect here rather than showing an inline banner.
@@ -182,6 +191,9 @@ export default function Hosts() {
   // forces the user to reconnect their sessions after unlocking.
   const handleNotification = useCallback((method: string) => {
     if (method === 'vault.locked') {
+      // Clear the host cache too so a different vault opening this app
+      // doesn't see a stale list before its first listHosts response.
+      void import('../hooks/useHostsCache').then((m) => m.clearAllHostCaches());
       window.location.hash = '/unlock';
     }
   }, []);
@@ -691,7 +703,21 @@ export default function Hosts() {
             mount={mounts.mounts.find((m) => m.hostId === selectedHost.id) ?? null}
             onConnect={() => void connectHost(selectedHost)}
             onSFTP={() => toast.info('SFTP browser coming in v1.1')}
-            onMount={() => { setMountTarget(selectedHost); setMountDrawerOpen(true); }}
+            onMount={async () => {
+              const existing = mounts.mounts.find((m) => m.hostId === selectedHost.id);
+              if (existing) {
+                // Already mounted — unmount instead of opening the drawer.
+                try {
+                  await mounts.mountStop(selectedHost.id);
+                  toast.success(`Unmounted ${existing.localPath}`);
+                } catch (err) {
+                  toast.error((err as Error).message ?? 'Unmount failed');
+                }
+                return;
+              }
+              setMountTarget(selectedHost);
+              setMountDrawerOpen(true);
+            }}
             onEdit={() => { setEditingHost(selectedHost); setDrawerOpen(true); }}
             onReveal={() => {
               setRevealHostId(selectedHost.id);

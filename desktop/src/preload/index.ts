@@ -62,8 +62,6 @@ export interface AppSettings {
   passwordBackend: string;
   syncProvider: 'off' | 'git' | 'cloud';
   autoSyncAfterCRUD?: boolean;
-  releaseChannel?: 'stable' | 'beta';
-  autoApplyUpdates?: boolean;
 }
 
 export interface SessionInfo {
@@ -373,6 +371,16 @@ const sshthing = {
   vacuumVault: (): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('vault:vacuum'),
 
+  // ---- Biometric (Touch ID, macOS) ----
+  biometricStatus: (): Promise<{ available: boolean; enabled: boolean; expiresAt: number; expired: boolean }> =>
+    ipcRenderer.invoke('vault:biometricStatus'),
+  enableBiometric: (password: string): Promise<{ ok: boolean; expiresAt: number }> =>
+    ipcRenderer.invoke('vault:enableBiometric', password),
+  disableBiometric: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('vault:disableBiometric'),
+  unlockWithBiometric: (): Promise<UnlockResult> =>
+    ipcRenderer.invoke('vault:unlockWithBiometric'),
+
   // ---- Hosts ----
   listHosts: (query?: string): Promise<{ hosts: HostSummary[] }> =>
     ipcRenderer.invoke('hosts:list', query),
@@ -627,16 +635,28 @@ const sshthing = {
     ipcRenderer.invoke('keyring:healthCheck'),
 
   // ---- Updates ----
-  installUpdate: (): Promise<void> =>
-    ipcRenderer.invoke('update:install'),
-
-  checkForUpdates: (): Promise<void> =>
-    ipcRenderer.invoke('update:check'),
+  // Updates are managed by the `sshthing update` CLI command. The renderer
+  // only needs to dismiss the once-a-week banner when the user clicks ✕;
+  // the actual "check / apply" surface no longer lives in the GUI.
+  dismissUpdateBanner: (version: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('update:dismiss', version),
 
   // ---- System ----
   /** Opens a path in the system file manager (Finder on macOS). Returns empty string on success. */
   openPath: (filePath: string): Promise<string> =>
     ipcRenderer.invoke('system:openPath', filePath),
+
+  /** Launch the bundled TUI in a new Terminal.app window (macOS only). */
+  openTuiInTerminal: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('system:openTuiInTerminal'),
+
+  /** Install /usr/local/bin/sshthing → bundled TUI binary. Prompts for admin password. */
+  installCli: (): Promise<{ ok: boolean; path: string; error?: string }> =>
+    ipcRenderer.invoke('system:installCli'),
+
+  /** Returns whether /usr/local/bin/sshthing is currently a symlink to our bundled TUI. */
+  cliInstalled: (): Promise<{ installed: boolean; target?: string; expected?: string }> =>
+    ipcRenderer.invoke('system:cliInstalled'),
 
   /**
    * Subscribe to daemon notifications (session.data, session.exit, vault.locked, etc.).
@@ -680,33 +700,6 @@ const sshthing = {
     };
   },
 
-  /**
-   * Subscribe to update-available notifications from electron-updater.
-   * Returns an unsubscribe function.
-   */
-  onUpdateAvailable: (cb: (info: { version: string; releaseDate: string; releaseNotes?: string }) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, info: { version: string; releaseDate: string; releaseNotes?: string }) => {
-      cb(info);
-    };
-    ipcRenderer.on('app:update-available', handler);
-    return () => {
-      ipcRenderer.removeListener('app:update-available', handler);
-    };
-  },
-
-  /**
-   * Subscribe to update-downloaded notifications from electron-updater.
-   * Returns an unsubscribe function.
-   */
-  onUpdateDownloaded: (cb: (info: { version: string; releaseDate: string; releaseNotes?: string }) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, info: { version: string; releaseDate: string; releaseNotes?: string }) => {
-      cb(info);
-    };
-    ipcRenderer.on('app:update-downloaded', handler);
-    return () => {
-      ipcRenderer.removeListener('app:update-downloaded', handler);
-    };
-  },
 };
 
 contextBridge.exposeInMainWorld('sshthing', sshthing);

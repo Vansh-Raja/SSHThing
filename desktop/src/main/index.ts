@@ -9,7 +9,6 @@
  * 5. Kill the daemon when all windows are closed.
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from 'electron';
-import { autoUpdater, type UpdateInfo } from 'electron-updater';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as child_process from 'child_process';
@@ -19,26 +18,86 @@ import { DaemonClient, defaultSocketPath, defaultTokenPath, type HostCreate, typ
 let daemonProc: child_process.ChildProcess | null = null;
 let client: DaemonClient | null = null;
 
-function resolveDaemonBinary(): string {
+/**
+ * resolveBundledBinary — locate one of our bundled helper binaries
+ * (sshthing-daemon, sshthing, sshthing-biometric). Tries the packaged
+ * Resources/bin/ path first, then dev paths.
+ */
+function resolveBundledBinary(name: string): string {
   // In production: electron-builder extraResources places the binary at
-  // resources/bin/sshthing-daemon.
-  const prodBin = path.resolve(process.resourcesPath, 'bin', 'sshthing-daemon');
-  if (fs.existsSync(prodBin)) {
-    return prodBin;
+  // resources/bin/<name>.
+  const prodBin = path.resolve(process.resourcesPath, 'bin', name);
+  if (fs.existsSync(prodBin)) return prodBin;
+  // In development: look in ../bin/<name> relative to this file.
+  const devBin = path.resolve(__dirname, '..', '..', 'bin', name);
+  if (fs.existsSync(devBin)) return devBin;
+  // Last resort: project root.
+  const rootBin = path.resolve(__dirname, '..', '..', '..', '..', name);
+  if (fs.existsSync(rootBin)) return rootBin;
+  return name;
+}
+
+function resolveDaemonBinary(): string {
+  return resolveBundledBinary('sshthing-daemon');
+}
+
+function resolveTuiBinary(): string {
+  return resolveBundledBinary('sshthing');
+}
+
+function resolveBiometricBinary(): string {
+  return resolveBundledBinary('sshthing-biometric');
+}
+
+/**
+ * openTuiInTerminal — launches Terminal.app and runs the bundled `sshthing`
+ * TUI in a new window. macOS-only; on other platforms this is a no-op.
+ */
+function openTuiInTerminal(): void {
+  if (process.platform !== 'darwin') return;
+  const tui = resolveTuiBinary();
+  if (!fs.existsSync(tui)) {
+    console.warn('[main] tui binary not found at', tui);
+    return;
   }
-  // In development: look in ../bin/sshthing-daemon relative to this file,
-  // then fall back to a PATH lookup.
-  const devBin = path.resolve(__dirname, '..', '..', 'bin', 'sshthing-daemon');
-  if (fs.existsSync(devBin)) {
-    return devBin;
+  // Quote the path safely for AppleScript.
+  const escaped = tui.replace(/"/g, '\\"');
+  const script = `tell application "Terminal" to do script "exec \\"${escaped}\\""`;
+  child_process.execFile('osascript', ['-e', script], (err) => {
+    if (err) console.warn('[main] openTuiInTerminal failed:', err);
+  });
+}
+
+/**
+ * installCliSymlink — runs the equivalent of
+ *   sudo ln -sf <bundled sshthing> /usr/local/bin/sshthing
+ * via osascript-with-admin so macOS prompts for the password through
+ * the GUI Authorization dialog. Idempotent.
+ */
+async function installCliSymlink(): Promise<{ ok: boolean; path: string; error?: string }> {
+  if (process.platform !== 'darwin') {
+    return { ok: false, path: '', error: 'Only supported on macOS in v1' };
   }
-  // Also check the project root for a freshly-built binary.
-  const rootBin = path.resolve(__dirname, '..', '..', '..', '..', 'sshthing-daemon');
-  if (fs.existsSync(rootBin)) {
-    return rootBin;
+  const tui = resolveTuiBinary();
+  if (!fs.existsSync(tui)) {
+    return { ok: false, path: '', error: 'TUI binary not found in this build' };
   }
-  // Last resort: assume it's on PATH.
-  return 'sshthing-daemon';
+  const linkPath = '/usr/local/bin/sshthing';
+  const escapedTui = tui.replace(/"/g, '\\"');
+  // Ensure /usr/local/bin exists, then symlink.
+  const shellCmd = `mkdir -p /usr/local/bin && ln -sf "${escapedTui}" "${linkPath}"`;
+  const escapedShell = shellCmd.replace(/"/g, '\\"');
+  const ascript = `do shell script "${escapedShell}" with administrator privileges`;
+
+  return new Promise((resolve) => {
+    child_process.execFile('osascript', ['-e', ascript], (err) => {
+      if (err) {
+        resolve({ ok: false, path: linkPath, error: err.message });
+        return;
+      }
+      resolve({ ok: true, path: linkPath });
+    });
+  });
 }
 
 async function readTokenWithRetry(tokenPath: string, maxRetries = 80, intervalMs = 100): Promise<string> {
@@ -192,6 +251,10 @@ function registerIPC(c: DaemonClient): void {
   );
   ipcMain.handle('vault:lock', () => c.lockVault());
   ipcMain.handle('vault:vacuum', () => c.vacuumVault());
+  ipcMain.handle('vault:biometricStatus', () => c.biometricStatus());
+  ipcMain.handle('vault:enableBiometric', (_e, password: string) => c.enableBiometric(password));
+  ipcMain.handle('vault:disableBiometric', () => c.disableBiometric());
+  ipcMain.handle('vault:unlockWithBiometric', () => c.unlockWithBiometric());
   ipcMain.handle('hosts:list', (_e, query?: string) => c.listHosts(query));
   ipcMain.handle('hosts:get', (_e, id: string) => c.getHost(id));
   ipcMain.handle('hosts:create', (_e, host: HostCreate) => c.createHost(host));
@@ -310,6 +373,19 @@ function registerIPC(c: DaemonClient): void {
   // ---- System IPC ----
   // shell.openPath returns a string: empty on success, error message on failure.
   ipcMain.handle('system:openPath', (_e, filePath: string) => shell.openPath(filePath));
+  ipcMain.handle('system:openTuiInTerminal', () => { openTuiInTerminal(); return { ok: true }; });
+  ipcMain.handle('system:installCli', () => installCliSymlink());
+  ipcMain.handle('system:cliInstalled', () => {
+    try {
+      const linkPath = '/usr/local/bin/sshthing';
+      if (!fs.existsSync(linkPath)) return { installed: false };
+      const target = fs.realpathSync(linkPath);
+      const expected = fs.realpathSync(resolveTuiBinary());
+      return { installed: target === expected, target, expected };
+    } catch {
+      return { installed: false };
+    }
+  });
 
   // ---- Dialog IPC ----
   ipcMain.handle('dialog:open-directory', async () => {
@@ -319,14 +395,11 @@ function registerIPC(c: DaemonClient): void {
     return { canceled: result.canceled, path: result.filePaths[0] ?? null };
   });
 
-  // ---- Update IPC ----
-  ipcMain.handle('update:install', () => {
-    autoUpdater.quitAndInstall();
-  });
-
-  ipcMain.handle('update:check', () => {
-    void autoUpdater.checkForUpdatesAndNotify();
-  });
+  // (Self-update lives in `sshthing update` now — no electron-updater
+  //  IPC. The renderer's UpdateBanner subscribes to the daemon's
+  //  `update.available` notification instead, and uses this single
+  //  IPC method to sticky-dismiss a specific version.)
+  ipcMain.handle('update:dismiss', (_e, version: string) => c.updateDismissBanner(version));
 
   // Forward daemon notifications to renderer.
   c.on('notification', (method: string, params: unknown) => {
@@ -393,6 +466,15 @@ function buildAppMenu(): void {
       {
         label: 'New tab',
         click: () => sendMenuCommand('new-tab'),
+      },
+      { type: 'separator' as const },
+      {
+        label: 'Open TUI in Terminal',
+        click: () => openTuiInTerminal(),
+      },
+      {
+        label: 'Install command-line tool…',
+        click: () => sendMenuCommand('install-cli'),
       },
       ...(isMac
         ? []
@@ -497,29 +579,11 @@ app.whenReady().then(async () => {
   }
 
   buildAppMenu();
-  const win = createWindow();
+  createWindow();
 
-  // Auto-updater wiring
-  autoUpdater.on('update-available', (info: UpdateInfo) => {
-    BrowserWindow.getAllWindows().forEach((w) => {
-      if (!w.isDestroyed()) {
-        w.webContents.send('app:update-available', info);
-      }
-    });
-  });
-
-  autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
-    BrowserWindow.getAllWindows().forEach((w) => {
-      if (!w.isDestroyed()) {
-        w.webContents.send('app:update-downloaded', info);
-      }
-    });
-  });
-
-  // Check for updates on start (don't block window creation).
-  setTimeout(() => {
-    void autoUpdater.checkForUpdatesAndNotify();
-  }, 3000);
+  // (Update notifications now flow from the daemon's once-a-week nudge
+  //  via `update.available` — see internal/daemon/service/update_nudge.go.
+  //  The renderer's UpdateBanner subscribes through window.sshthing.onNotification.)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -564,13 +628,56 @@ app.on('before-quit', (event) => {
         return;
       }
 
-      const { response } = await dialog.showMessageBox({
+      // Honor the user's saved Mount.QuitBehavior preference (mirrors the
+      // TUI's requestQuit flow in internal/app/handlers.go).
+      // The daemon returns the full nested config; AppSettings doesn't
+      // model the mount section so we read the raw shape here.
+      let quitBehavior = 'prompt';
+      try {
+        const cfg = (await client.getSettings()) as unknown as {
+          mount?: { quit_behavior?: string };
+        };
+        if (cfg?.mount?.quit_behavior) quitBehavior = cfg.mount.quit_behavior;
+      } catch {
+        // fall back to prompt
+      }
+
+      const unmountAll = async () => {
+        for (const m of mounts) {
+          try {
+            await client!.mountStop(m.hostId);
+          } catch {
+            // ignore individual unmount failures
+          }
+        }
+      };
+
+      if (quitBehavior === 'always_unmount') {
+        await unmountAll();
+        isQuitting = true;
+        app.quit();
+        return;
+      }
+      if (quitBehavior === 'leave_mounted') {
+        isQuitting = true;
+        app.quit();
+        return;
+      }
+
+      // prompt — show the same three-choice dialog the TUI does.
+      const mountList = mounts
+        .map((m) => `• ${m.hostname}  →  ${m.localPath}`)
+        .join('\n');
+      const { response, checkboxChecked } = await dialog.showMessageBox({
         type: 'warning',
         title: 'Active mounts',
-        message: 'You have active SSHFS mounts. Quitting will unmount them.',
+        message: `You have ${mounts.length} active SSHFS mount${mounts.length === 1 ? '' : 's'}.`,
+        detail: mountList + '\n\nWhat should we do before quitting?',
         buttons: ['Unmount & Quit', 'Leave Mounted', 'Cancel'],
         defaultId: 0,
         cancelId: 2,
+        checkboxLabel: 'Remember this choice',
+        checkboxChecked: false,
       });
 
       if (response === 2) {
@@ -578,15 +685,21 @@ app.on('before-quit', (event) => {
         return;
       }
 
-      if (response === 0) {
-        // Unmount & Quit
-        for (const m of mounts) {
-          try {
-            await client.mountStop(m.hostId);
-          } catch {
-            // ignore individual unmount failures
-          }
+      // Persist preference if the user opted in.
+      if (checkboxChecked) {
+        const newBehavior = response === 0 ? 'always_unmount' : 'leave_mounted';
+        try {
+          // Send a nested patch matching the daemon's config schema.
+          await client.setSettings({
+            mount: { quit_behavior: newBehavior },
+          } as unknown as Partial<AppSettings>);
+        } catch {
+          // best-effort
         }
+      }
+
+      if (response === 0) {
+        await unmountAll();
       }
 
       // response === 1: Leave Mounted — just kill daemon and quit.

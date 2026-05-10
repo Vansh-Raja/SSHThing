@@ -60,16 +60,167 @@ export interface GenerateKeyResult {
   comment: string;
 }
 
+/**
+ * AppSettings — flat view of the daemon's nested config.Config that the
+ * renderer manipulates. The shape is intentionally flat for ergonomics;
+ * the daemon's settings RPC speaks the nested structure, and we translate
+ * in `flattenSettings` / `nestSettingsPatch` below.
+ *
+ * Keys here mirror the TUI's settings page so both clients have parity.
+ */
 export interface AppSettings {
+  // Appearance
   theme: 'light' | 'dark' | 'system';
-  fontSize: number;
-  termType: string;
+  fontSize: number; // local-only, persisted via the renderer
+
+  // SSH defaults
+  termMode: 'auto' | 'xterm-256color' | 'custom';
+  termCustom: string;
   keepAliveSeconds: number;
   hostKeyPolicy: string;
-  passwordBackend: string;
+  passwordAutoLogin: boolean;
+  passwordBackend: string; // password_backend_unix
+
+  // Mount
+  mountEnabled: boolean;
+  mountDefaultRemotePath: string;
+  mountLocalMountPath: string;
+  mountQuitBehavior: 'prompt' | 'always_unmount' | 'leave_mounted';
+
+  // Sync
   syncProvider: 'off' | 'git' | 'cloud';
-  releaseChannel?: 'stable' | 'beta';
-  autoApplyUpdates?: boolean;
+  syncRepoUrl: string;
+  syncBranch: string;
+  syncSshKeyPath: string;
+  syncLocalPath: string;
+  autoSyncAfterCRUD: boolean;
+  syncScopeHosts: boolean;
+  syncScopeGroups: boolean;
+  syncScopeCredentials: boolean;
+  syncScopeTokenDefs: boolean;
+  syncScopeHealth: boolean;
+  syncScopeMountState: boolean;
+
+  // Updates: there is no per-app update preference any more. Apply / check
+  // happen via the `sshthing update` CLI; the once-a-week banner uses the
+  // daemon's `update.available` notification, dismissed via the
+  // `update.dismissBanner` RPC. The release channel is per-invocation
+  // (`sshthing update --beta`) so we don't carry it in AppSettings either.
+
+  // Legacy aliases kept for backward-compat with existing call sites.
+  /** @deprecated use termMode */
+  termType?: string;
+}
+
+interface NestedConfig {
+  ui?: { theme?: string };
+  ssh?: {
+    term_mode?: string;
+    term_custom?: string;
+    keepalive_seconds?: number;
+    host_key_policy?: string;
+    password_auto_login?: boolean;
+    password_backend_unix?: string;
+  };
+  mount?: {
+    enabled?: boolean;
+    default_remote_path?: string;
+    local_mount_path?: string;
+    quit_behavior?: string;
+  };
+  sync?: {
+    provider?: string;
+    repo_url?: string;
+    branch?: string;
+    ssh_key_path?: string;
+    local_path?: string;
+    auto_sync_after_crud?: boolean;
+    scope?: {
+      hosts?: boolean;
+      groups?: boolean;
+      credentials?: boolean;
+      token_definitions?: boolean;
+      health?: boolean;
+      mount_state?: boolean;
+    };
+  };
+}
+
+/** Flatten the daemon's nested response into AppSettings. Missing fields fall back to sensible defaults. */
+function flattenSettings(nested: unknown): AppSettings {
+  const c = (nested ?? {}) as NestedConfig;
+  return {
+    theme: ((c.ui?.theme as AppSettings['theme']) ?? 'dark'),
+    fontSize: 13,
+    termMode: ((c.ssh?.term_mode as AppSettings['termMode']) ?? 'auto'),
+    termCustom: c.ssh?.term_custom ?? '',
+    keepAliveSeconds: c.ssh?.keepalive_seconds ?? 60,
+    hostKeyPolicy: c.ssh?.host_key_policy ?? 'accept-new',
+    passwordAutoLogin: c.ssh?.password_auto_login ?? false,
+    passwordBackend: c.ssh?.password_backend_unix ?? 'sshpass_first',
+    mountEnabled: c.mount?.enabled ?? true,
+    mountDefaultRemotePath: c.mount?.default_remote_path ?? '',
+    mountLocalMountPath: c.mount?.local_mount_path ?? '',
+    mountQuitBehavior: ((c.mount?.quit_behavior as AppSettings['mountQuitBehavior']) ?? 'prompt'),
+    syncProvider: ((c.sync?.provider as AppSettings['syncProvider']) ?? 'off'),
+    syncRepoUrl: c.sync?.repo_url ?? '',
+    syncBranch: c.sync?.branch ?? 'main',
+    syncSshKeyPath: c.sync?.ssh_key_path ?? '',
+    syncLocalPath: c.sync?.local_path ?? '',
+    autoSyncAfterCRUD: c.sync?.auto_sync_after_crud ?? false,
+    syncScopeHosts: c.sync?.scope?.hosts ?? true,
+    syncScopeGroups: c.sync?.scope?.groups ?? true,
+    syncScopeCredentials: c.sync?.scope?.credentials ?? true,
+    syncScopeTokenDefs: c.sync?.scope?.token_definitions ?? true,
+    syncScopeHealth: c.sync?.scope?.health ?? false,
+    syncScopeMountState: c.sync?.scope?.mount_state ?? false,
+  };
+}
+
+/** Translate a flat AppSettings patch into the nested config patch the daemon expects. */
+function nestSettingsPatch(patch: Partial<AppSettings>): NestedConfig {
+  const out: NestedConfig = {};
+  const ui: NonNullable<NestedConfig['ui']> = {};
+  const ssh: NonNullable<NestedConfig['ssh']> = {};
+  const mount: NonNullable<NestedConfig['mount']> = {};
+  const sync: NonNullable<NestedConfig['sync']> = {};
+  const scope: NonNullable<NonNullable<NestedConfig['sync']>['scope']> = {};
+
+  if (patch.theme !== undefined) ui.theme = patch.theme;
+
+  if (patch.termMode !== undefined) ssh.term_mode = patch.termMode;
+  if (patch.termType !== undefined) ssh.term_mode = patch.termType; // legacy alias
+  if (patch.termCustom !== undefined) ssh.term_custom = patch.termCustom;
+  if (patch.keepAliveSeconds !== undefined) ssh.keepalive_seconds = patch.keepAliveSeconds;
+  if (patch.hostKeyPolicy !== undefined) ssh.host_key_policy = patch.hostKeyPolicy;
+  if (patch.passwordAutoLogin !== undefined) ssh.password_auto_login = patch.passwordAutoLogin;
+  if (patch.passwordBackend !== undefined) ssh.password_backend_unix = patch.passwordBackend;
+
+  if (patch.mountEnabled !== undefined) mount.enabled = patch.mountEnabled;
+  if (patch.mountDefaultRemotePath !== undefined) mount.default_remote_path = patch.mountDefaultRemotePath;
+  if (patch.mountLocalMountPath !== undefined) mount.local_mount_path = patch.mountLocalMountPath;
+  if (patch.mountQuitBehavior !== undefined) mount.quit_behavior = patch.mountQuitBehavior;
+
+  if (patch.syncProvider !== undefined) sync.provider = patch.syncProvider;
+  if (patch.syncRepoUrl !== undefined) sync.repo_url = patch.syncRepoUrl;
+  if (patch.syncBranch !== undefined) sync.branch = patch.syncBranch;
+  if (patch.syncSshKeyPath !== undefined) sync.ssh_key_path = patch.syncSshKeyPath;
+  if (patch.syncLocalPath !== undefined) sync.local_path = patch.syncLocalPath;
+  if (patch.autoSyncAfterCRUD !== undefined) sync.auto_sync_after_crud = patch.autoSyncAfterCRUD;
+
+  if (patch.syncScopeHosts !== undefined) scope.hosts = patch.syncScopeHosts;
+  if (patch.syncScopeGroups !== undefined) scope.groups = patch.syncScopeGroups;
+  if (patch.syncScopeCredentials !== undefined) scope.credentials = patch.syncScopeCredentials;
+  if (patch.syncScopeTokenDefs !== undefined) scope.token_definitions = patch.syncScopeTokenDefs;
+  if (patch.syncScopeHealth !== undefined) scope.health = patch.syncScopeHealth;
+  if (patch.syncScopeMountState !== undefined) scope.mount_state = patch.syncScopeMountState;
+  if (Object.keys(scope).length > 0) sync.scope = scope;
+
+  if (Object.keys(ui).length > 0) out.ui = ui;
+  if (Object.keys(ssh).length > 0) out.ssh = ssh;
+  if (Object.keys(mount).length > 0) out.mount = mount;
+  if (Object.keys(sync).length > 0) out.sync = sync;
+  return out;
 }
 
 export interface SessionInfo {
@@ -361,30 +512,41 @@ export class DaemonClient extends EventEmitter {
   /** Connect to the daemon socket and set the auth token. */
   connect(sockPath: string, token: string): Promise<void> {
     this.token = token;
+    // Reset any partial line carried over from a previous (failed) connection
+    // attempt, otherwise stale bytes prepended to the first new message would
+    // break JSON parsing on reconnect.
+    this.lineBuffer = '';
     return new Promise((resolve, reject) => {
       const sock = net.createConnection(sockPath);
       sock.setEncoding('utf8');
 
-      sock.once('connect', () => {
+      // Pre-connect error: reject the connect promise. We deliberately do NOT
+      // also emit('error') on the DaemonClient here — there's no listener yet
+      // (main/index.ts attaches one only after connect resolves), so an emit
+      // would throw an uncaughtException via Node's EventEmitter contract.
+      const onPreError = (err: Error) => {
+        sock.removeListener('connect', onConnect);
+        reject(err);
+      };
+      const onConnect = () => {
+        sock.removeListener('error', onPreError);
         this.socket = sock;
+
+        // Now that the connection is live, install the post-connect error
+        // handler. Pending requests are rejected and the error is forwarded
+        // to whatever listener owns the DaemonClient.
+        sock.on('error', (err) => {
+          for (const [, pending] of this.pending) {
+            pending.reject(err);
+          }
+          this.pending.clear();
+          this.emit('error', err);
+        });
+
         resolve();
-      });
-
-      sock.once('error', (err) => {
-        if (!this.socket) {
-          reject(err);
-        }
-        // Post-connection errors are handled by the persistent 'error' listener below.
-      });
-
-      sock.on('error', (err) => {
-        // Reject all pending requests when the socket errors.
-        for (const [, pending] of this.pending) {
-          pending.reject(err);
-        }
-        this.pending.clear();
-        this.emit('error', err);
-      });
+      };
+      sock.once('error', onPreError);
+      sock.once('connect', onConnect);
 
       sock.on('data', (chunk: string) => {
         this.lineBuffer += chunk;
@@ -576,14 +738,38 @@ export class DaemonClient extends EventEmitter {
     return this.call('vault.vacuum', {});
   }
 
+  // ---- Biometric (Touch ID) ----
+
+  biometricStatus(): Promise<{ available: boolean; enabled: boolean; expiresAt: number; expired: boolean }> {
+    return this.call('vault.biometricStatus', {});
+  }
+
+  enableBiometric(password: string): Promise<{ ok: boolean; expiresAt: number }> {
+    return this.call('vault.enableBiometric', { password });
+  }
+
+  disableBiometric(): Promise<{ ok: boolean }> {
+    return this.call('vault.disableBiometric', {});
+  }
+
+  unlockWithBiometric(): Promise<UnlockResult> {
+    return this.call('vault.unlockWithBiometric', {});
+  }
+
   // ---- Settings ----
 
-  getSettings(): Promise<AppSettings> {
-    return this.call('settings.get', {});
+  async getSettings(): Promise<AppSettings> {
+    const raw = await this.call<unknown>('settings.get', {});
+    return flattenSettings(raw);
   }
 
   setSettings(patch: Partial<AppSettings>): Promise<{ ok: boolean }> {
-    return this.call('settings.set', patch);
+    // Translate flat AppSettings keys → nested config.Config patch the
+    // daemon's settings.set understands. Without this, flat keys like
+    // {theme: "dark"} silently no-op because they don't match any field
+    // on the nested config struct.
+    const nested = nestSettingsPatch(patch);
+    return this.call('settings.set', nested);
   }
 
   // ---- Teams ----
@@ -832,6 +1018,13 @@ export class DaemonClient extends EventEmitter {
 
   keyringHealthCheck(): Promise<{ ok: boolean; error?: string }> {
     return this.call('keyring.healthCheck', {});
+  }
+
+  // ---- Updates ----
+  // Apply / check live in the `sshthing update` CLI; the renderer only
+  // dismisses the once-a-week banner via this RPC.
+  updateDismissBanner(version: string): Promise<{ ok: boolean }> {
+    return this.call('update.dismissBanner', { version });
   }
 
   disconnect(): void {

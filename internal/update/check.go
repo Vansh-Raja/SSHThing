@@ -8,41 +8,38 @@ import (
 	"runtime"
 	"strings"
 	"time"
-
-	"github.com/Vansh-Raja/SSHThing/internal/config"
 )
 
-func Check(ctx context.Context, currentVersion string, cfg *config.Config) (CheckResult, error) {
-	releaseChannel := ReleaseChannelStable
-	etag := ""
-	if cfg != nil {
-		if strings.EqualFold(strings.TrimSpace(cfg.Updates.ReleaseChannel), string(ReleaseChannelBeta)) {
-			releaseChannel = ReleaseChannelBeta
-		}
-		if releaseChannel == ReleaseChannelBeta {
-			etag = strings.TrimSpace(cfg.Updates.ETagBeta)
-		} else {
-			etag = strings.TrimSpace(cfg.Updates.ETagStable)
-			if etag == "" {
-				etag = strings.TrimSpace(cfg.Updates.ETagLatest)
-			}
-		}
+// Check fetches the latest release for the given channel and returns a
+// CheckResult describing whether an update is available + how to apply it.
+//
+// As of the v10 config schema this function is *stateless* with respect to
+// `cfg` — it neither reads ETags from it nor writes them back. Callers (the
+// daemon's once-a-week nudge, the `sshthing update` CLI) decide separately
+// whether to persist `LastCheckedAt` / `LastSeenVersion` afterwards. The
+// previous ETag-cache optimisation existed to keep the auto-apply check
+// loop cheap; with auto-apply removed the overall call rate is far lower
+// (one CLI invocation, or one ping per week), so dropping the cache is fine
+// and removes a class of subtle bugs around per-channel cache desync.
+func Check(ctx context.Context, currentVersion string, channel ReleaseChannel) (CheckResult, error) {
+	if channel != ReleaseChannelBeta {
+		channel = ReleaseChannelStable
 	}
 
 	result := CheckResult{
 		CheckedAt:      time.Now(),
 		CurrentVersion: normalizeVersionString(currentVersion),
-		ReleaseChannel: releaseChannel,
+		ReleaseChannel: channel,
 		Channel:        ChannelUnknown,
 		ApplyMode:      ApplyModeNone,
 	}
 
-	channel, detail, installerExe, err := detectChannel(ctx)
+	chKind, detail, installerExe, err := detectChannel(ctx)
 	if err != nil {
 		result.Channel = ChannelUnknown
 		result.ChannelDetail = err.Error()
 	} else {
-		result.Channel = channel
+		result.Channel = chKind
 		result.ChannelDetail = detail
 		result.InstallerExe = installerExe
 	}
@@ -55,43 +52,19 @@ func Check(ctx context.Context, currentVersion string, cfg *config.Config) (Chec
 	}
 	result.PathHealth = pathHealth
 
-	rel, newETag, notModified, err := fetchReleaseForChannel(ctx, releaseChannel, etag)
+	rel, _, _, err := fetchReleaseForChannel(ctx, channel, "")
 	if err != nil {
 		return result, err
 	}
-	if strings.TrimSpace(newETag) != "" {
-		result.ETag = strings.TrimSpace(newETag)
-	} else {
-		result.ETag = etag
-	}
 
-	if notModified {
-		if cfg != nil {
-			result.LatestVersion = normalizeVersionString(cfg.Updates.LastSeenVersion)
-			result.LatestTag = cfg.Updates.LastSeenTag
-		}
-	} else {
-		result.LatestTag = rel.TagName
-		result.LatestVersion = normalizeVersionString(rel.TagName)
-		result.ReleaseURL = rel.HTMLURL
-		result.Checksums = findAsset(rel.Assets, "SHA256SUMS")
-		result.Asset = resolveReleaseAsset(rel.Assets)
-		if cfg != nil {
-			if releaseChannel == ReleaseChannelBeta {
-				cfg.Updates.ETagBeta = newETag
-			} else {
-				cfg.Updates.ETagStable = newETag
-				cfg.Updates.ETagLatest = newETag
-			}
-			cfg.Updates.LastSeenTag = result.LatestTag
-			cfg.Updates.LastSeenVersion = result.LatestVersion
-			cfg.Updates.LastCheckedAt = result.CheckedAt.Format(time.RFC3339)
-		}
-	}
-
-	if strings.TrimSpace(result.LatestVersion) == "" && cfg != nil {
-		result.LatestVersion = normalizeVersionString(cfg.Updates.LastSeenVersion)
-		result.LatestTag = cfg.Updates.LastSeenTag
+	result.LatestTag = rel.TagName
+	result.LatestVersion = normalizeVersionString(rel.TagName)
+	result.ReleaseURL = rel.HTMLURL
+	result.Checksums = findAsset(rel.Assets, "SHA256SUMS")
+	result.Asset = resolveReleaseAsset(rel.Assets)
+	result.AllAssets = make([]AssetInfo, 0, len(rel.Assets))
+	for _, a := range rel.Assets {
+		result.AllAssets = append(result.AllAssets, AssetInfo{Name: a.Name, URL: a.URL})
 	}
 
 	if strings.EqualFold(result.CurrentVersion, "dev") || result.CurrentVersion == "" {

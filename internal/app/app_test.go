@@ -26,20 +26,24 @@ func TestNewModelKeepsExpiredRefreshableTeamsSession(t *testing.T) {
 	}
 }
 
-func TestBuildSettingsItemsIncludesUpdateNote(t *testing.T) {
+func TestBuildSettingsItemsIncludesVersionRow(t *testing.T) {
 	m := NewModel()
 	items := m.buildSettingsItems()
 
-	found := false
+	// As of v10 the only row in the `updates` category is the read-only
+	// running-version display. Apply / check / PATH-fix all moved to the
+	// `sshthing update` CLI.
+	var versionRows int
 	for _, item := range items {
-		if item.Category == "updates" && item.Label == updateSettingsNoteLabel() {
-			found = true
-			break
+		if item.Category == "updates" {
+			if item.Label != "version" {
+				t.Fatalf("unexpected updates row %q (only the version row should remain)", item.Label)
+			}
+			versionRows++
 		}
 	}
-
-	if !found {
-		t.Fatalf("expected updates note row %q", updateSettingsNoteLabel())
+	if versionRows != 1 {
+		t.Fatalf("expected exactly one updates/version row, got %d", versionRows)
 	}
 }
 

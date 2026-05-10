@@ -137,7 +137,7 @@ export default function TeamHostsTab({ teamId, viewerRole }: TeamHostsTabProps) 
 
   // Phase 6 UI state (health, mounts, transfers, exec)
   const health = useHealth();
-  useHealthScheduler({ hosts: hosts.map((h) => ({ id: h.id, label: h.label || h.hostname, hostname: h.hostname, username: h.username, port: h.port, group: h.group, tags: h.tags ?? [], authMode: (h.authMode as 'key' | 'password' | 'none') ?? 'none' })), health });
+  useHealthScheduler({ hosts: hosts.map((h): HostSummary => ({ id: h.id, syncId: h.id, label: h.label || h.hostname, hostname: h.hostname, username: h.username, port: h.port, group: h.group ?? '', tags: h.tags ?? [], authMode: (h.authMode as 'key' | 'password' | 'none') ?? 'none', lastConnectedAt: h.lastConnectedAt != null ? new Date(h.lastConnectedAt * 1000).toISOString() : null })), health, scopeKey: `team:${teamId}` });
   const mounts = useMounts();
   const transfers = useTransfers();
 
@@ -783,13 +783,13 @@ export default function TeamHostsTab({ teamId, viewerRole }: TeamHostsTabProps) 
 
       <ExecModal
         open={execModalOpen}
-        host={execTarget ? { id: execTarget.id, label: execTarget.label || execTarget.hostname, hostname: execTarget.hostname, username: execTarget.username, port: execTarget.port, group: execTarget.group, tags: execTarget.tags ?? [], authMode: (execTarget.authMode as 'key' | 'password' | 'none') ?? 'none' } : null}
+        host={execTarget ? { id: execTarget.id, syncId: execTarget.id, label: execTarget.label || execTarget.hostname, hostname: execTarget.hostname, username: execTarget.username, port: execTarget.port, group: execTarget.group ?? '', tags: execTarget.tags ?? [], authMode: (execTarget.authMode as 'key' | 'password' | 'none') ?? 'none', lastConnectedAt: execTarget.lastConnectedAt != null ? new Date(execTarget.lastConnectedAt * 1000).toISOString() : null } : null}
         onClose={() => setExecModalOpen(false)}
       />
 
       <UploadModal
         open={uploadModalOpen}
-        host={uploadHost ? { id: uploadHost.id, label: uploadHost.label || uploadHost.hostname, hostname: uploadHost.hostname, username: uploadHost.username, port: uploadHost.port, group: uploadHost.group, tags: uploadHost.tags ?? [], authMode: (uploadHost.authMode as 'key' | 'password' | 'none') ?? 'none' } : null}
+        host={uploadHost ? { id: uploadHost.id, syncId: uploadHost.id, label: uploadHost.label || uploadHost.hostname, hostname: uploadHost.hostname, username: uploadHost.username, port: uploadHost.port, group: uploadHost.group ?? '', tags: uploadHost.tags ?? [], authMode: (uploadHost.authMode as 'key' | 'password' | 'none') ?? 'none', lastConnectedAt: uploadHost.lastConnectedAt != null ? new Date(uploadHost.lastConnectedAt * 1000).toISOString() : null } : null}
         localPath={uploadLocalPath}
         onClose={() => { setUploadModalOpen(false); setUploadLocalPath(''); setUploadHost(null); }}
         onConfirm={(local, remote, opts) => { void handleUploadConfirm(local, remote, opts); }}
@@ -797,7 +797,7 @@ export default function TeamHostsTab({ teamId, viewerRole }: TeamHostsTabProps) 
 
       <DownloadModal
         open={downloadModalOpen}
-        host={downloadHost ? { id: downloadHost.id, label: downloadHost.label || downloadHost.hostname, hostname: downloadHost.hostname, username: downloadHost.username, port: downloadHost.port, group: downloadHost.group, tags: downloadHost.tags ?? [], authMode: (downloadHost.authMode as 'key' | 'password' | 'none') ?? 'none' } : null}
+        host={downloadHost ? { id: downloadHost.id, syncId: downloadHost.id, label: downloadHost.label || downloadHost.hostname, hostname: downloadHost.hostname, username: downloadHost.username, port: downloadHost.port, group: downloadHost.group ?? '', tags: downloadHost.tags ?? [], authMode: (downloadHost.authMode as 'key' | 'password' | 'none') ?? 'none', lastConnectedAt: downloadHost.lastConnectedAt != null ? new Date(downloadHost.lastConnectedAt * 1000).toISOString() : null } : null}
         onClose={() => { setDownloadModalOpen(false); setDownloadHost(null); }}
         onConfirm={(hostId, remotePath, localPath, opts) => {
           const label = downloadHost ? (downloadHost.label.trim() || downloadHost.hostname) : hostId;

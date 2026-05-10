@@ -56,9 +56,14 @@ type CheckResult struct {
 	ApplyMode       ApplyMode
 	ApplyCommand    []string
 	Guidance        []string
-	Asset           AssetInfo
+	Asset           AssetInfo // CLI asset for the running platform
 	Checksums       AssetInfo
 	InstallerExe    string
+	// AllAssets is the full set of release assets (CLI + GUI + checksums
+	// + extras). The `sshthing update` command uses this to find the GUI
+	// artefact for the current platform via FindGUIAsset without making a
+	// second GitHub API request.
+	AllAssets []AssetInfo
 }
 
 type HandoffActionType string

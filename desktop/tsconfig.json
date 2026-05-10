@@ -5,6 +5,7 @@
     { "path": "./tsconfig.preload.json" }
   ],
   "include": ["src/renderer/**/*", "vite.config.ts"],
+  "exclude": ["src/renderer/**/*.test.ts", "src/renderer/**/*.test.tsx"],
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",

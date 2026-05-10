@@ -34,6 +34,12 @@ import (
 	"github.com/Vansh-Raja/SSHThing/internal/teamsclient"
 )
 
+// version is overridden at build time via -ldflags "-X main.version=...".
+// The update-nudge service uses this to decide whether the latest GitHub
+// release is newer than the running daemon. Empty / "dev" disables the
+// comparison (treats every release as available).
+var version = "dev"
+
 func main() {
 	// SSH may spawn this binary as an askpass helper (SSH_ASKPASS) when a
 	// host uses password auth and sshpass isn't available. Detect that case
@@ -104,7 +110,7 @@ func main() {
 	cfgStore := service.NewCfgStore(cfg)
 
 	// ── Build services ────────────────────────────────────────────────────────
-	vault := &service.Vault{}
+	vault := &service.Vault{CfgStore: cfgStore}
 	hosts := &service.Hosts{Vault: vault} // SyncSvc is wired below after syncSvc is constructed
 	groups := &service.Groups{Vault: vault}
 	settings := &service.Settings{Store: cfgStore}
@@ -174,6 +180,21 @@ func main() {
 	// Wire SyncSvc into hosts for auto-sync-after-CRUD support.
 	hosts.SyncSvc = syncSvc
 
+	// Update-nudge: weekly GitHub-release poll that emits an
+	// `update.available` notification to the renderer when a new version
+	// is out (and the user hasn't dismissed it). All actual updates are
+	// driven by `sshthing update` from the user's terminal — this service
+	// only surfaces awareness.
+	nudge := &service.UpdateNudge{
+		CfgStore:       cfgStore,
+		CurrentVersion: version,
+		Notify: func(method string, params any) {
+			srv.Notify(method, params)
+		},
+	}
+	nudge.Start()
+	defer nudge.Stop()
+
 	// After vault unlock: restore any mounts that were active in the previous session.
 	vault.OnUnlock = func() {
 		mountSvc.RestoreFromDB(context.Background())
@@ -210,6 +231,7 @@ func main() {
 	rpc.RegisterTeams(srv, teamsSvc)
 	rpc.RegisterAuth(srv, authSvc)
 	rpc.RegisterSync(srv, syncSvc)
+	rpc.RegisterUpdate(srv, settings)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

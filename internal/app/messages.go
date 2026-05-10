@@ -3,15 +3,12 @@ package app
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
-	"github.com/Vansh-Raja/SSHThing/internal/config"
 	"github.com/Vansh-Raja/SSHThing/internal/health"
 	syncpkg "github.com/Vansh-Raja/SSHThing/internal/sync"
 	"github.com/Vansh-Raja/SSHThing/internal/teams"
 	"github.com/Vansh-Raja/SSHThing/internal/teamsclient"
-	"github.com/Vansh-Raja/SSHThing/internal/update"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -39,25 +36,6 @@ type syncFinishedMsg struct {
 
 type syncAnimTickMsg struct {
 	runID int
-}
-
-type updateCheckedMsg struct {
-	runID  int
-	result *update.CheckResult
-	err    error
-}
-
-type updateAppliedMsg struct {
-	runID          int
-	result         *update.ApplyResult
-	handoffStarted bool
-	err            error
-}
-
-type updatePathFixedMsg struct {
-	runID      int
-	pathHealth update.PathHealth
-	err        error
 }
 
 type quitFinishedMsg struct{}
@@ -126,49 +104,3 @@ func syncAnimTickCmd(runID int) tea.Cmd {
 	})
 }
 
-func runUpdateCheckCmd(runID int, currentVersion string, cfg config.Config) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		result, err := update.Check(ctx, currentVersion, &cfg)
-		if err != nil {
-			return updateCheckedMsg{runID: runID, err: err}
-		}
-		return updateCheckedMsg{runID: runID, result: &result}
-	}
-}
-
-func runUpdateApplyCmd(runID int, check update.CheckResult) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		exe, err := os.Executable()
-		if err != nil {
-			return updateAppliedMsg{runID: runID, err: err}
-		}
-		result, err := update.Apply(ctx, check, exe)
-		if err != nil {
-			return updateAppliedMsg{runID: runID, err: err}
-		}
-		handoffStarted := false
-		if result.Handoff != nil {
-			if err := update.LaunchHandoff(result.Handoff); err != nil {
-				return updateAppliedMsg{runID: runID, err: err}
-			}
-			handoffStarted = true
-		}
-		return updateAppliedMsg{runID: runID, result: &result, handoffStarted: handoffStarted}
-	}
-}
-
-func runUpdatePathFixCmd(runID int, desiredExe string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		ph, err := update.FixPathConflicts(ctx, desiredExe)
-		if err != nil {
-			return updatePathFixedMsg{runID: runID, err: err}
-		}
-		return updatePathFixedMsg{runID: runID, pathHealth: ph}
-	}
-}

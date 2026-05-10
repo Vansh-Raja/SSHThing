@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1611,34 +1610,8 @@ func (m Model) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.settingsItems = m.buildSettingsItems()
 			return m, nil
-		case "cloud status", "feed", "channel", "version", "PATH health", updateSettingsNoteLabel():
-			return m, nil
-		case "check now":
-			if !m.updateChecking {
-				m.updateRunID++
-				m.updateChecking = true
-				m.err = fmt.Errorf("\u2139 Checking for updates...")
-				m.settingsItems = m.buildSettingsItems()
-				return m, runUpdateCheckCmd(m.updateRunID, m.currentVersion, m.cfg)
-			}
-			return m, nil
-		case "apply update":
-			if m.updateLast != nil && m.updateLast.UpdateAvailable && !m.updateApplying {
-				m.updateRunID++
-				m.updateApplying = true
-				m.err = fmt.Errorf("\u2139 Applying update...")
-				m.settingsItems = m.buildSettingsItems()
-				return m, runUpdateApplyCmd(m.updateRunID, *m.updateLast)
-			}
-			return m, nil
-		case "fix PATH":
-			if m.updateLast != nil && !m.updateApplying {
-				exe, _ := os.Executable()
-				m.updateRunID++
-				m.updateApplying = true
-				m.settingsItems = m.buildSettingsItems()
-				return m, runUpdatePathFixCmd(m.updateRunID, exe)
-			}
+		case "cloud status", "version":
+			// Read-only rows. Update controls live in `sshthing update` (CLI).
 			return m, nil
 		case "manage tokens":
 			m.enterPage(PageTokens)

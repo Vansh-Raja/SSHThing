@@ -1,33 +1,56 @@
 /**
- * UpdateBanner — a fixed banner below the topbar that appears when
- * electron-updater detects an available update. Shows version info and
- * allows installing once the download is complete.
+ * UpdateBanner — fixed banner below the topbar that appears when the
+ * daemon's once-a-week nudge finds a new release.
+ *
+ * The banner intentionally has no "install" button. Updates run via the
+ * `sshthing update` CLI now (so the user can read the plan + confirm
+ * outside of a busy app window), so the only actions here are "got it"
+ * (sticky-dismiss this version via the daemon's `update.dismissBanner`
+ * RPC) and "release notes" (open the GitHub release page).
  */
 import { useEffect, useState } from 'react';
 
+interface UpdateAvailable {
+  currentVersion: string;
+  latestVersion: string;
+  latestTag: string;
+  releaseUrl?: string;
+}
+
 export default function UpdateBanner() {
-  const [available, setAvailable] = useState(false);
-  const [downloaded, setDownloaded] = useState(false);
-  const [version, setVersion] = useState('');
-  const [dismissed, setDismissed] = useState(false);
+  const [info, setInfo] = useState<UpdateAvailable | null>(null);
 
   useEffect(() => {
-    const unsubAvailable = window.sshthing.onUpdateAvailable?.((info) => {
-      setAvailable(true);
-      setVersion(info.version);
+    const unsub = window.sshthing.onNotification?.((method, params) => {
+      if (method !== 'update.available') return;
+      const p = params as Partial<UpdateAvailable> | null | undefined;
+      if (!p || !p.latestVersion) return;
+      setInfo({
+        currentVersion: p.currentVersion ?? '',
+        latestVersion: p.latestVersion,
+        latestTag: p.latestTag ?? '',
+        releaseUrl: p.releaseUrl,
+      });
     });
-    const unsubDownloaded = window.sshthing.onUpdateDownloaded?.((info) => {
-      setAvailable(true);
-      setDownloaded(true);
-      setVersion(info.version);
-    });
-    return () => {
-      unsubAvailable?.();
-      unsubDownloaded?.();
-    };
+    return () => unsub?.();
   }, []);
 
-  if (!available || dismissed) return null;
+  if (!info) return null;
+
+  const handleDismiss = () => {
+    // Sticky-dismiss in the daemon so this version doesn't re-banner on
+    // the next 6h tick. The next *new* release will banner again.
+    void window.sshthing.dismissUpdateBanner(info.latestVersion).catch(() => {
+      /* fail silently — UI dismisses regardless */
+    });
+    setInfo(null);
+  };
+
+  const handleReleaseNotes = () => {
+    if (info.releaseUrl) {
+      void window.sshthing.openPath(info.releaseUrl);
+    }
+  };
 
   return (
     <div
@@ -51,25 +74,38 @@ export default function UpdateBanner() {
     >
       <span>
         <span style={{ color: 'var(--accent)', fontWeight: 600 }}>Update available:</span>
-        {' '}v{version}
+        {' '}v{info.latestVersion} — run{' '}
+        <code
+          style={{
+            padding: '1px 6px',
+            background: 'var(--paper-2)',
+            border: '1px solid var(--line)',
+            borderRadius: 3,
+            fontFamily: 'var(--font-mono)',
+          }}
+        >
+          sshthing update
+        </code>
+        {' '}from your terminal to install.
       </span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        {info.releaseUrl && (
+          <button
+            type="button"
+            className="btn btn--ghost"
+            style={{ height: 28, padding: '0 12px', fontSize: 12 }}
+            onClick={handleReleaseNotes}
+          >
+            Release notes
+          </button>
+        )}
         <button
           type="button"
           className="btn btn--ghost"
           style={{ height: 28, padding: '0 12px', fontSize: 12 }}
-          onClick={() => setDismissed(true)}
+          onClick={handleDismiss}
         >
-          Later
-        </button>
-        <button
-          type="button"
-          className="btn btn--primary"
-          style={{ height: 28, padding: '0 12px', fontSize: 12 }}
-          disabled={!downloaded}
-          onClick={() => window.sshthing.installUpdate()}
-        >
-          {downloaded ? 'Install & Restart' : 'Downloading…'}
+          Got it
         </button>
       </div>
     </div>

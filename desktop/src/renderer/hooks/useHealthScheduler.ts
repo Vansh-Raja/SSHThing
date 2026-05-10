@@ -33,6 +33,15 @@ interface UseHealthSchedulerOptions {
   hosts: HostSummary[];
   health: UseHealthReturn;
   intervalMs?: number;
+  /**
+   * Stable identifier for the host set being scheduled. Used to dedupe the
+   * "auto-probe on mount" so we don't re-probe every time the user navigates
+   * back to this page. Pass "personal" for the personal host list and
+   * `team:<teamId>` for each team's host list. The auto-probe runs once per
+   * (key, app-launch); the periodic background scheduler still runs every
+   * mount when enabled in Settings.
+   */
+  scopeKey?: string;
 }
 
 export interface UseHealthSchedulerReturn {
@@ -41,10 +50,20 @@ export interface UseHealthSchedulerReturn {
   intervalMs: number;
 }
 
+// Module-scope memory of which scope keys have already had their initial
+// auto-probe this app launch. A page remount within the same app session
+// won't trigger another full sweep — matches the user's preference of
+// "probe once per app launch (per scope)".
+const autoProbedScopes = new Set<string>();
+
+/** Reset the auto-probe memory. Useful for a manual "Refresh all" action. */
+export function resetAutoProbedScopes(): void { autoProbedScopes.clear(); }
+
 export function useHealthScheduler({
   hosts,
   health,
   intervalMs = DEFAULT_INTERVAL_MS,
+  scopeKey,
 }: UseHealthSchedulerOptions): UseHealthSchedulerReturn {
   const [enabled, setEnabledState] = useState<boolean>(readEnabled);
   // Stable ref to avoid recreating the interval callback on every render.
@@ -76,21 +95,30 @@ export function useHealthScheduler({
       }
     };
 
-    // Always auto-probe on mount / hosts change (TUI parity: auto-refresh on page enter).
-    // Small delay so the UI renders cached health first, then probes update live.
-    const immediateTimer = setTimeout(runCycle, 800);
+    // Auto-probe ONCE per (scope, app-launch). If the caller supplied a
+    // scopeKey we check the module-level set first; without a key we keep
+    // the legacy probe-on-every-mount behaviour (callers opting in to the
+    // dedupe should always pass a key).
+    let immediateTimer: ReturnType<typeof setTimeout> | undefined;
+    if (!scopeKey || !autoProbedScopes.has(scopeKey)) {
+      // Small delay so the UI renders cached health first, then probes update live.
+      immediateTimer = setTimeout(() => {
+        runCycle();
+        if (scopeKey) autoProbedScopes.add(scopeKey);
+      }, 800);
+    }
 
-    // Background interval only when scheduler is explicitly enabled.
+    // Background interval only when scheduler is explicitly enabled in Settings.
     let intervalId: ReturnType<typeof setInterval> | undefined;
     if (enabled) {
       intervalId = setInterval(runCycle, intervalMs);
     }
 
     return () => {
-      clearTimeout(immediateTimer);
+      if (immediateTimer) clearTimeout(immediateTimer);
       if (intervalId) clearInterval(intervalId);
     };
-  }, [enabled, intervalMs]);
+  }, [enabled, intervalMs, scopeKey]);
 
   return { enabled, setEnabled, intervalMs };
 }

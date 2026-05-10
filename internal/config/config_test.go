@@ -4,8 +4,8 @@ import "testing"
 
 func TestDefaultTeamsSettings(t *testing.T) {
 	cfg := Default()
-	if cfg.Version != 9 {
-		t.Fatalf("expected version 9, got %d", cfg.Version)
+	if cfg.Version != 10 {
+		t.Fatalf("expected version 10, got %d", cfg.Version)
 	}
 	if cfg.Teams.Enabled {
 		t.Fatalf("expected teams disabled by default")
@@ -28,11 +28,10 @@ func TestDefaultTeamsSettings(t *testing.T) {
 	if cfg.UI.HealthDisplayMode != HealthDisplayGraphValues {
 		t.Fatalf("expected graph+values health display by default, got %q", cfg.UI.HealthDisplayMode)
 	}
-	if cfg.Updates.ReleaseChannel != "stable" {
-		t.Fatalf("expected stable release channel by default, got %q", cfg.Updates.ReleaseChannel)
-	}
-	if cfg.Updates.AutoApplyUpdates {
-		t.Fatalf("expected auto apply updates off by default")
+	// Updates state is observation-only as of v10 (ReleaseChannel /
+	// AutoApplyUpdates / ETag* dropped); the defaults are zero values.
+	if cfg.Updates.LastCheckedAt != "" || cfg.Updates.LastSeenVersion != "" || cfg.Updates.DismissedVersion != "" {
+		t.Fatalf("expected blank update observation state by default, got %+v", cfg.Updates)
 	}
 	if cfg.Sync.Provider != SyncProviderOff {
 		t.Fatalf("expected sync provider off by default, got %q", cfg.Sync.Provider)
@@ -98,8 +97,8 @@ func TestWithDefaultsMigratesTeamsVersion(t *testing.T) {
 	cfg.Version = 2
 
 	got := withDefaults(cfg)
-	if got.Version != 9 {
-		t.Fatalf("expected migration to version 9, got %d", got.Version)
+	if got.Version != 10 {
+		t.Fatalf("expected migration to version 10, got %d", got.Version)
 	}
 	if !got.Teams.SessionCacheEnabled {
 		t.Fatalf("expected session cache enabled after migration")
@@ -107,31 +106,11 @@ func TestWithDefaultsMigratesTeamsVersion(t *testing.T) {
 	if got.TeamsUI.Theme == "" || got.TeamsUI.IconSet == "" {
 		t.Fatalf("expected teams ui defaults after migration")
 	}
-	if got.Updates.ReleaseChannel != "stable" {
-		t.Fatalf("expected stable release channel after migration, got %q", got.Updates.ReleaseChannel)
-	}
-	if got.Updates.AutoApplyUpdates {
-		t.Fatalf("expected auto apply updates off after migration")
-	}
 	if got.UI.HealthDisplayMode != HealthDisplayGraphValues {
 		t.Fatalf("expected graph+values health display after migration, got %q", got.UI.HealthDisplayMode)
 	}
 	if got.Sync.Provider != SyncProviderOff {
 		t.Fatalf("expected sync provider off after migration, got %q", got.Sync.Provider)
-	}
-}
-
-func TestWithDefaultsMigratesLegacyUpdateETag(t *testing.T) {
-	cfg := Config{}
-	cfg.Version = 5
-	cfg.Updates.ETagLatest = "legacy-etag"
-
-	got := withDefaults(cfg)
-	if got.Version != 9 {
-		t.Fatalf("expected migration to version 9, got %d", got.Version)
-	}
-	if got.Updates.ETagStable != "legacy-etag" {
-		t.Fatalf("expected legacy etag to migrate to stable slot, got %q", got.Updates.ETagStable)
 	}
 }
 

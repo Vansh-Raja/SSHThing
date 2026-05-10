@@ -43,6 +43,12 @@ export default function ExecModal({ open, host, onClose, allHosts }: ExecModalPr
   const { history, addEntry, clearHistory } = useExecHistory();
   const outputRef = useRef<HTMLPreElement | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Snapshot of (host, cmd, label) captured at handleRun time. The
+  // history-record effect reads from this rather than `cmd` / `host`
+  // so that typing into the input box (or the host changing) while a
+  // run is in flight doesn't end up saving a result against the wrong
+  // command. See effect on `[result]` below.
+  const lastRunRef = useRef<{ hostId: string; hostLabel: string; cmd: string } | null>(null);
 
   // Multi-host mode
   const [multiMode, setMultiMode] = useState(false);
@@ -60,6 +66,10 @@ export default function ExecModal({ open, host, onClose, allHosts }: ExecModalPr
       setMultiMode(false);
       setSelectedHostIds(new Set());
       setHistoryOpen(false);
+      // Drop any in-flight snapshot — if a previous run is still
+      // pending and lands after reopen, we don't want to attribute its
+      // output to whatever's in the box now.
+      lastRunRef.current = null;
     }
   }, [open, reset]);
 
@@ -70,17 +80,26 @@ export default function ExecModal({ open, host, onClose, allHosts }: ExecModalPr
     }
   }, [result]);
 
-  // When single-host run completes, save to history.
+  // When single-host run completes, save to history. Read host+cmd from
+  // the snapshot captured at run-time, NOT the live state — see lastRunRef.
   useEffect(() => {
-    if (result && host) {
-      addEntry(host.id, host.label.trim() || host.hostname, cmd, result);
-    }
+    if (!result) return;
+    const snap = lastRunRef.current;
+    if (!snap) return;
+    addEntry(snap.hostId, snap.hostLabel, snap.cmd, result);
+    lastRunRef.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result]);
 
   const handleRun = () => {
     if (!host || !cmd.trim()) return;
-    void run(host.id, cmd.trim());
+    const trimmed = cmd.trim();
+    lastRunRef.current = {
+      hostId: host.id,
+      hostLabel: host.label.trim() || host.hostname,
+      cmd: trimmed,
+    };
+    void run(host.id, trimmed);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

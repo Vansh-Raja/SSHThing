@@ -43,6 +43,10 @@ export default function TerminalTab({
   const fitRef = useRef<FitAddon | null>(null);
   const roRef = useRef<ResizeObserver | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
+  // Captured at mount so the unmount cleanup can close the daemon session
+  // even if `data.sessionId` has been blanked (e.g. by handleTabExit). Set
+  // to null after a clean exit so we don't fire a redundant sessionClose.
+  const sessionIdRef = useRef<string | null>(data.sessionId);
 
   // Initialize the terminal and open the SSH session.
   useEffect(() => {
@@ -97,6 +101,9 @@ export default function TerminalTab({
       } else if (method === 'session.exit' && p['sessionId'] === sessionId) {
         const code = p['exitCode'] as number;
         termRef.current?.write(`\r\n[session exited with code ${code}]\r\n`);
+        // Daemon already cleaned up — don't fire a redundant sessionClose
+        // from the unmount cleanup (it would just log "session not found").
+        sessionIdRef.current = null;
         onExit(data.id, code ?? 0);
       } else if (method === 'session.titleChanged' && p['sessionId'] === sessionId) {
         const title = p['title'] as string;
@@ -129,7 +136,13 @@ export default function TerminalTab({
     });
   }, [active]);
 
-  // Dispose everything when the component unmounts (triggered by tab close).
+  // Dispose everything when the component unmounts. This fires for both
+  // user-initiated tab close (handleCloseTab → setTabs filter → unmount) AND
+  // route navigation (Hosts → Settings unmounts the whole tab tree). Without
+  // a sessionClose here, the second case would orphan the daemon session —
+  // the SSH process keeps running with no UI listening to its output. The
+  // user-initiated path also calls sessionClose explicitly; the daemon's
+  // second close just returns "session not found" which is caught below.
   useEffect(() => {
     return () => {
       unsubRef.current?.();
@@ -137,6 +150,11 @@ export default function TerminalTab({
       try { termRef.current?.dispose(); } catch { /* ignore */ }
       termRef.current = null;
       fitRef.current = null;
+      const sid = sessionIdRef.current;
+      if (sid) {
+        sessionIdRef.current = null;
+        window.sshthing.sessionClose(sid).catch(() => { /* already gone */ });
+      }
     };
   }, []);
 
