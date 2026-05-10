@@ -118,3 +118,18 @@ func normalizeVersionString(v string) string {
 	}
 	return v
 }
+
+// CompareVersions returns -1 / 0 / +1 like strings.Compare but with
+// semver-aware ordering (so `3.0.0-beta.1` < `3.0.0-beta.2` < `3.0.0`).
+// Public wrapper around the package-private comparator so the
+// `sshthing update` command can use it to refuse downgrades.
+func CompareVersions(a, b string) int {
+	return compareVersions(normalizeVersionString(a), normalizeVersionString(b))
+}
+
+// NormalizeVersionString trims whitespace and strips a leading "v" so
+// callers can compare a release tag (`v3.0.0-beta.2`) against a binary
+// version string (`3.0.0-beta.2`) without surprises. Public wrapper.
+func NormalizeVersionString(v string) string {
+	return normalizeVersionString(v)
+}

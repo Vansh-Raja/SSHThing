@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for rele
 
 ## [Unreleased]
 
+## [v3.0.0-beta.3] — 2026-05-10
+
+### Fixed
+- `sshthing update` no longer proposes downgrades. The previous `cliNeedsUpdate` returned true whenever `installed != latest`, so e.g. a user on `sshthing-beta` (3.0.0-beta.1) running `sshthing update --check` against the default stable channel was told to "upgrade" to whatever the latest stable was (2.0.2). Now uses semver-aware comparison and refuses to plan unless the latest is *strictly greater* than what's installed. Same fix applied to the GUI plan branch.
+- `sshthing update` now infers the release channel from the detected install. A user on the `sshthing-beta` brew formula gets the beta channel without needing `--beta` on every invocation; the explicit `--beta` flag still wins when set, for users who want to flip channels per-run.
+
+### Added
+- `update.CompareVersions(a, b) int` and `update.NormalizeVersionString(v) string` are now exported from `internal/update/` so the CLI can do semver-aware comparisons against detected install versions without re-implementing the parser.
+
 ## [v3.0.0-beta.2] — 2026-05-10
 
 ### Added

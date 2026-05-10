@@ -72,10 +72,10 @@ func runUpdate(args []string) error {
 		return nil
 	}
 
-	channel := update.ReleaseChannelStable
-	if flags.beta {
-		channel = update.ReleaseChannelBeta
-	}
+	// Channel selection: explicit `--beta` always wins; otherwise infer
+	// from the detected install (a `sshthing-beta` brew install defaults
+	// to the beta channel, anything else to stable).
+	channel := inferChannel(installs, flags.beta)
 
 	currentVersion := strings.TrimSpace(version)
 	if currentVersion == "" {
@@ -209,6 +209,9 @@ func buildPlan(installs []installdetect.Install, check update.CheckResult, flags
 			if asset.URL == "" {
 				continue
 			}
+			if !guiNeedsUpdate(ins.Version, check.LatestVersion, check.UpdateAvailable) {
+				continue
+			}
 			out = append(out, planEntry{
 				install:   ins,
 				asset:     asset,
@@ -261,20 +264,52 @@ func packageManagerCanUpdate(c installdetect.Channel) bool {
 	return false
 }
 
-// cliNeedsUpdate is best-effort: when the install carries a parsed
-// version (brew --versions, dpkg-query, etc.), use that; otherwise fall
-// back on the release-feed comparison done by Check().
+// cliNeedsUpdate decides whether to add a CLI install to the plan. We
+// MUST never propose a downgrade — e.g. a user on `sshthing-beta`
+// (3.0.0-beta.1) running `--check` without `--beta` would otherwise be
+// told to "upgrade" to whatever the latest stable is (2.0.2). Compare
+// versions semver-aware and return true only when the latest is
+// strictly greater than what's installed.
+//
+// `latestNewer` is the broader Check() result against the *running
+// binary*'s version, used as a fallback when the install itself
+// doesn't expose a parsed version (e.g. a stripped Linux dpkg entry).
 func cliNeedsUpdate(installed, latest string, latestNewer bool) bool {
-	if strings.TrimSpace(installed) == "" {
-		return latestNewer
-	}
 	if strings.TrimSpace(latest) == "" {
 		return false
 	}
-	if installed == latest {
-		return false
+	if strings.TrimSpace(installed) == "" {
+		return latestNewer
 	}
-	return latestNewer || installed != latest
+	return update.CompareVersions(installed, latest) < 0
+}
+
+// guiNeedsUpdate is the same shape as cliNeedsUpdate but for a GUI
+// install. Same downgrade-refusal rule applies.
+func guiNeedsUpdate(installed, latest string, latestNewer bool) bool {
+	return cliNeedsUpdate(installed, latest, latestNewer)
+}
+
+// inferChannel guesses the right release channel from the detected
+// installs when the user didn't pass `--beta` explicitly. A user on the
+// `sshthing-beta` brew formula expects beta updates by default;
+// otherwise we default to stable.
+func inferChannel(installs []installdetect.Install, betaFlag bool) update.ReleaseChannel {
+	if betaFlag {
+		return update.ReleaseChannelBeta
+	}
+	for _, ins := range installs {
+		if ins.Kind != installdetect.KindCLI {
+			continue
+		}
+		// The brew detector encodes the formula name into Detail (e.g.
+		// "homebrew formula sshthing-beta"). Falling back to a substring
+		// match keeps this resilient to small phrasing tweaks.
+		if strings.Contains(ins.Detail, "sshthing-beta") {
+			return update.ReleaseChannelBeta
+		}
+	}
+	return update.ReleaseChannelStable
 }
 
 func onlyBundledCLI(installs []installdetect.Install) bool {
