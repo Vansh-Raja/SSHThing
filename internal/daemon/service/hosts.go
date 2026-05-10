@@ -219,26 +219,43 @@ func (h *Hosts) Delete(id string) error {
 	return nil
 }
 
-// RevealCredential decrypts and returns the stored credential for the given host ID.
-// Audit-logs the access (connID is the RPC connection that requested it).
+// RevealedCredential bundles the secret with its auth mode so the
+// renderer's reveal modal can render the right "Private key" /
+// "Password" header without making a second RPC.
+type RevealedCredential struct {
+	Credential string `json:"credential"`
+	AuthMode   string `json:"authMode"` // "key" | "password" | "none"
+}
+
+// RevealCredential decrypts and returns the stored credential for the given host ID,
+// along with the auth mode (key vs password) so callers don't have to look it up
+// separately. Audit-logs the access (connID is the RPC connection that requested it).
 // Mirrors: internal/app/backend.go connectToHost → store.GetHostSecret.
-func (h *Hosts) RevealCredential(id string, connID uint64) (string, error) {
+func (h *Hosts) RevealCredential(id string, connID uint64) (*RevealedCredential, error) {
 	store := h.Vault.Store()
 	if store == nil {
-		return "", ErrVaultLocked
+		return nil, ErrVaultLocked
 	}
 	intID, err := strconv.Atoi(id)
 	if err != nil {
-		return "", fmt.Errorf("invalid host id %q: %w", id, err)
+		return nil, fmt.Errorf("invalid host id %q: %w", id, err)
+	}
+	host, err := store.GetHostByID(intID)
+	if err != nil {
+		return nil, fmt.Errorf("get host: %w", err)
+	}
+	authMode := host.KeyType
+	if authMode == "" {
+		authMode = "none"
 	}
 	secret, err := store.GetHostSecret(intID)
 	if err != nil {
-		return "", fmt.Errorf("get secret: %w", err)
+		return nil, fmt.Errorf("get secret: %w", err)
 	}
 	// Audit log — never log the secret value itself.
 	// TODO: persist to audit log when audit table lands.
 	log.Printf("audit: hosts.revealCredential host=%d connID=%d", intID, connID)
-	return secret, nil
+	return &RevealedCredential{Credential: secret, AuthMode: authMode}, nil
 }
 
 // ImportParams holds the fields for importing a host from a key file / PEM blob.

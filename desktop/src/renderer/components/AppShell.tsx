@@ -14,8 +14,8 @@
  * sync status + avatar. The bottom bar is a slash-command input
  * (deep-linkable via :commands like ":connect nas").
  */
-import { useEffect } from 'react';
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useEffect, type ReactNode } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useSyncStatus } from '../hooks/useSyncStatus';
 import { useAppMode } from '../contexts/AppModeContext';
@@ -41,35 +41,36 @@ import {
 // Rail
 // ──────────────────────────────────────────────────────────
 function RailButton({
-  to,
   title,
+  active,
   children,
   onClick,
 }: {
-  to?: string;
   title: string;
-  children: React.ReactNode;
-  onClick?: () => void;
+  active?: boolean;
+  children: ReactNode;
+  onClick: () => void;
 }) {
-  if (onClick) {
-    return (
-      <button type="button" className="rail__btn" title={title} onClick={onClick}>
-        {children}
-      </button>
-    );
-  }
   return (
-    <NavLink
-      to={to ?? '#'}
+    <button
+      type="button"
+      className={active ? 'rail__btn rail__btn--active' : 'rail__btn'}
       title={title}
-      className={({ isActive }) => `rail__btn${isActive ? ' rail__btn--active' : ''}`}
+      onClick={onClick}
     >
       {children}
-    </NavLink>
+    </button>
   );
 }
 
-function Rail() {
+interface RailProps {
+  /** Which tab kind is currently active — drives the active highlight. */
+  activeKind: string;
+  /** Open or focus a tab of the given kind. */
+  onOpenKind: (kind: 'hosts' | 'profile' | 'settings' | 'tokens' | 'teams') => void;
+}
+
+function Rail({ activeKind, onOpenKind }: RailProps) {
   const navigate = useNavigate();
   const { session } = useAuth();
   const { mode } = useAppMode();
@@ -87,13 +88,13 @@ function Rail() {
   return (
     <nav className="rail" aria-label="Primary">
       {mode === 'personal' ? (
-        <RailButton to="/hosts" title="Hosts"><TerminalIcon /></RailButton>
+        <RailButton title="Hosts" active={activeKind === 'hosts'} onClick={() => onOpenKind('hosts')}><TerminalIcon /></RailButton>
       ) : (
-        <RailButton to="/teams" title="Teams"><TeamsIcon /></RailButton>
+        <RailButton title="Teams" active={activeKind === 'teams'} onClick={() => onOpenKind('teams')}><TeamsIcon /></RailButton>
       )}
-      <RailButton to="/profile" title="Profile"><UserIcon /></RailButton>
-      <RailButton to="/settings" title="Settings"><GearIcon /></RailButton>
-      <RailButton to="/tokens" title="Tokens"><TokenIcon /></RailButton>
+      <RailButton title="Profile" active={activeKind === 'profile'} onClick={() => onOpenKind('profile')}><UserIcon /></RailButton>
+      <RailButton title="Settings" active={activeKind === 'settings'} onClick={() => onOpenKind('settings')}><GearIcon /></RailButton>
+      <RailButton title="Tokens" active={activeKind === 'tokens'} onClick={() => onOpenKind('tokens')}><TokenIcon /></RailButton>
       <div className="rail__spacer" />
       {session ? (
         <RailButton title="Sign out" onClick={handleSignOut}><SignOutIcon /></RailButton>
@@ -275,9 +276,17 @@ interface AppShellProps {
   onHelpOpen: () => void;
   teams: TeamSummary[];
   onTeamsChange: () => void;
+  /** Which tab kind is active — drives rail highlight. */
+  activeTabKind: string;
+  /** Rail click handler — dispatches into the tab manager. */
+  onOpenKind: (kind: 'hosts' | 'profile' | 'settings' | 'tokens' | 'teams') => void;
+  /** Tab strip rendered between the topbar and main content. */
+  tabBar?: ReactNode;
+  /** Active tab content — rendered inside <main>. */
+  children?: ReactNode;
 }
 
-export default function AppShell({ search, onSearch, onPaletteOpen, onSpotlightOpen, onHelpOpen, teams, onTeamsChange }: AppShellProps) {
+export default function AppShell({ search, onSearch, onPaletteOpen, onSpotlightOpen, onHelpOpen, teams, onTeamsChange, activeTabKind, onOpenKind, tabBar, children }: AppShellProps) {
   // Global shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -316,12 +325,15 @@ export default function AppShell({ search, onSearch, onPaletteOpen, onSpotlightO
 
   return (
     <div className="app-shell">
-      <Rail />
+      <Rail activeKind={activeTabKind} onOpenKind={onOpenKind} />
       <Topbar search={search} onSearch={onSearch} onPaletteOpen={onPaletteOpen} teams={teams} onTeamsChange={onTeamsChange} />
       <UpdateBanner />
-      <main className="main">
+      <main className="main" style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        {tabBar}
         <ErrorBoundary>
-          <Outlet />
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            {children}
+          </div>
         </ErrorBoundary>
       </main>
       <DaemonHealthBanner />

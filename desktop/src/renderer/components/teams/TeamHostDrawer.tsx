@@ -45,6 +45,11 @@ export default function TeamHostDrawer({ open, onClose, teamId, host, onSaved }:
   const [sharedCredential, setSharedCredential] = useState('');
   const [clearSharedCredential, setClearSharedCredential] = useState(false);
   const [saving, setSaving] = useState(false);
+  // True after the user has clicked "View existing" on edit mode and the
+  // stored shared credential has been pulled into `sharedCredential`. Used
+  // to label the action button + skip a redundant fetch.
+  const [revealingShared, setRevealingShared] = useState(false);
+  const [sharedRevealed, setSharedRevealed] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -60,6 +65,7 @@ export default function TeamHostDrawer({ open, onClose, teamId, host, onSaved }:
         setSecretVisibility(host.secretVisibility ?? 'admin_only');
         setSharedCredential('');
         setClearSharedCredential(false);
+        setSharedRevealed(false);
       } else {
         setLabel('');
         setHostname('');
@@ -72,9 +78,33 @@ export default function TeamHostDrawer({ open, onClose, teamId, host, onSaved }:
         setSecretVisibility('admin_only');
         setSharedCredential('');
         setClearSharedCredential(false);
+        setSharedRevealed(false);
       }
     }
   }, [open, host]);
+
+  // Reveal the existing shared credential into the form. Audit-logged on
+  // the daemon side. Only meaningful on edit + shared mode + caller has
+  // canRevealSecrets (button is gated below).
+  const handleRevealShared = useCallback(async () => {
+    if (!host) return;
+    setRevealingShared(true);
+    try {
+      const res = await window.sshthing.teamsHostsRevealShared(host.id);
+      if (res.secret) {
+        setSharedCredential(res.secret);
+        setSharedRevealed(true);
+        if (res.credentialType) setCredentialType(res.credentialType);
+      } else {
+        toast.info('No shared credential is currently stored');
+      }
+    } catch (err) {
+      const e = err as Error;
+      toast.error(e.message ?? 'Could not reveal existing shared credential');
+    } finally {
+      setRevealingShared(false);
+    }
+  }, [host]);
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -235,9 +265,36 @@ export default function TeamHostDrawer({ open, onClose, teamId, host, onSaved }:
         </div>
         {credentialMode === 'shared' && credentialType !== 'none' && (
           <div className="field">
-            <label className="field__label">
-              Shared credential {isEdit ? '(leave blank to keep existing)' : ''}
-            </label>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+              <label className="field__label" style={{ margin: 0 }}>
+                Shared credential {isEdit && !sharedRevealed ? '(leave blank to keep existing)' : ''}
+              </label>
+              {/* PREVIOUS BUG: edit mode unconditionally blanked
+                  sharedCredential and offered no path to view what was
+                  stored. Admins had to clear and re-enter blind. The
+                  reveal button below pulls the current secret into the
+                  form so they can see it before changing. Audit-logged
+                  on the daemon side via teams.hosts.credentials.revealShared. */}
+              {isEdit && host?.canRevealSecrets && !sharedRevealed && (
+                <button
+                  type="button"
+                  onClick={handleRevealShared}
+                  disabled={revealingShared}
+                  title="Reveal the currently-stored shared credential"
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: revealingShared ? 'progress' : 'pointer',
+                    color: 'var(--muted)',
+                    fontSize: 11,
+                    fontFamily: 'var(--font-mono)',
+                    padding: '2px 4px',
+                  }}
+                >
+                  {revealingShared ? 'LOADING…' : 'VIEW EXISTING'}
+                </button>
+              )}
+            </div>
             <textarea
               className="field__input"
               rows={4}

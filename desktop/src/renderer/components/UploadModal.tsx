@@ -18,8 +18,10 @@ type UploadModalProps = {
   host: HostSummary | null;
   localPath: string;
   onClose: () => void;
-  /** Called with (localPath, remotePath, options) once confirmed. */
-  onConfirm: (localPath: string, remotePath: string, options: UploadOptions) => void;
+  /** Called with (localPath, remotePath, options) once confirmed. May be
+   *  async — the modal awaits before clearing its loading state and
+   *  closing, so users see progress until the parent's transfer fires. */
+  onConfirm: (localPath: string, remotePath: string, options: UploadOptions) => void | Promise<void>;
 };
 
 export default function UploadModal({ open, host, localPath, onClose, onConfirm }: UploadModalProps) {
@@ -40,12 +42,19 @@ export default function UploadModal({ open, host, localPath, onClose, onConfirm 
     }
   }, [open, localPath]);
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!remotePath.trim()) return;
     setLoading(true);
-    onConfirm(localPath, remotePath.trim(), { recursive, preserve });
-    setLoading(false);
-    onClose();
+    try {
+      // Await the parent's onConfirm so the modal stays in its loading
+      // state until the upload actually starts. Previously this fired
+      // and immediately closed (the loading state was dead UX), and
+      // any synchronous error the parent threw vanished into the void.
+      await onConfirm(localPath, remotePath.trim(), { recursive, preserve });
+    } finally {
+      setLoading(false);
+      onClose();
+    }
   };
 
   const displayName = host ? (host.label.trim() || host.hostname) : '';

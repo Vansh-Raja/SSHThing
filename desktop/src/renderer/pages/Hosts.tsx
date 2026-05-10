@@ -1,25 +1,22 @@
 /**
- * Hosts — main page. Three regions (the AppShell handles rail/topbar/
- * bottombar around us):
+ * Hosts — main page. Two regions (the AppShell handles rail/topbar/
+ * tab strip around us, and SSH terminals are now top-level workspace
+ * tabs in the global tab manager):
  *
  *   ┌──────────── sidebar ──────────┬──────── detail ───────┐
- *   │ [groups + host list]          │ host detail or        │
- *   │ + Add group                   │ multi-tab terminal    │
+ *   │ [groups + host list]          │ host detail           │
+ *   │ + Add group                   │                       │
  *   └───────────────────────────────┴───────────────────────┘
  *
  * - Selecting a host shows its detail (label, address, props, actions).
- * - Connecting opens a session that takes over the right pane in tabs.
- * - Closing all tabs returns to the detail view.
+ * - Connecting dispatches a `terminal` tab into the workspace tab manager
+ *   and the user is auto-switched to it.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import HostDrawer from '../components/HostDrawer';
 import HostDetail from '../components/HostDetail';
 import RevealCredentialModal from '../components/RevealCredentialModal';
-import TerminalTab, {
-  openTerminalSession,
-  type TerminalTabData,
-} from '../components/TerminalTab';
-import Tabs from '../ui/Tabs';
+import { openTerminalSession } from '../components/TerminalTab';
 import Dialog from '../ui/Dialog';
 import Modal from '../ui/Modal';
 import DropdownMenu, { type MenuItemDef } from '../ui/DropdownMenu';
@@ -38,17 +35,7 @@ import ExecModal from '../components/ExecModal';
 import { PlusIcon } from '../components/icons';
 import { SkeletonRows } from '../components/Skeleton';
 import WelcomeModal from '../components/WelcomeModal';
-
-let tabCounter = 0;
-function newTabId(): string {
-  return `tab-${++tabCounter}`;
-}
-
-interface AdoptSessionDetail {
-  hostId: string;
-  sessionId: string;
-  label: string;
-}
+import { useTabActions } from '../contexts/TabsContext';
 
 type SortOption = 'recent' | 'az';
 
@@ -58,8 +45,7 @@ export default function Hosts() {
   const [hostsLoaded, setHostsLoaded] = useState(false);
   const [sortBy, setSortBy] = useState<SortOption>('recent');
 
-  // Selected host (left side selection — shown in the detail pane when no
-  // terminal sessions are active for that host).
+  // Selected host (left side selection — shown in the detail pane).
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
 
   // Drawer state
@@ -70,9 +56,10 @@ export default function Hosts() {
   const [revealHostId, setRevealHostId] = useState<string | null>(null);
   const [revealHostLabel, setRevealHostLabel] = useState('');
 
-  // Tabs (multi-terminal)
-  const [tabs, setTabs] = useState<TerminalTabData[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string>('');
+  // Workspace tab manager — opening a host now creates a top-level
+  // `terminal` tab in the AppShell tab strip rather than a nested tab
+  // inside this page.
+  const { open: openTab } = useTabActions();
 
   // Group rename / delete state
   const [renameGroupTarget, setRenameGroupTarget] = useState<string | null>(null);
@@ -200,19 +187,10 @@ export default function Hosts() {
   useNotifications(handleNotification);
 
   // ── Connect a host ──────────────────────────────────────────────────────
-  const adoptSession = useCallback((hostId: string, sessionId: string, label: string) => {
-    const tabId = newTabId();
-    const newTab: TerminalTabData = {
-      id: tabId,
-      hostId,
-      hostLabel: label,
-      sessionId,
-      title: label,
-    };
-    setTabs((prev) => [...prev, newTab]);
-    setActiveTabId(tabId);
-  }, []);
-
+  // Opens an SSH session via the daemon, then dispatches a `terminal`
+  // tab into the workspace tab manager. The tab manager handles
+  // activation, lifecycle, and Cmd+W close at the app level — this
+  // page no longer tracks its own tabs.
   const connectHost = useCallback(async (host: HostSummary) => {
     let sessionId: string | null = null;
     try {
@@ -221,84 +199,13 @@ export default function Hosts() {
       return;
     }
     if (!sessionId) return;
-    adoptSession(host.id, sessionId, host.label.trim() || host.hostname);
-  }, [adoptSession]);
-
-  // External adopt-session (from command bar / shell-level palette).
-  useEffect(() => {
-    const onAdopt = (e: Event) => {
-      const ev = e as CustomEvent<AdoptSessionDetail>;
-      adoptSession(ev.detail.hostId, ev.detail.sessionId, ev.detail.label);
-    };
-    window.addEventListener('sshthing:adopt-session', onAdopt);
-    return () => window.removeEventListener('sshthing:adopt-session', onAdopt);
-  }, [adoptSession]);
-
-  // ── Tab management ──────────────────────────────────────────────────────
-  const handleCloseTab = useCallback(async (tabId: string, sessionId: string | null) => {
-    if (sessionId) {
-      try { await window.sshthing.sessionClose(sessionId); } catch { /* ignore */ }
-    }
-    setTabs((prev) => {
-      const idx = prev.findIndex((t) => t.id === tabId);
-      const next = prev.filter((t) => t.id !== tabId);
-      if (activeTabId === tabId && next.length > 0) {
-        const newActive = next[Math.min(idx, next.length - 1)]!;
-        setActiveTabId(newActive.id);
-      } else if (next.length === 0) {
-        setActiveTabId('');
-      }
-      return next;
-    });
-  }, [activeTabId]);
-
-  const handleTabTitleChange = useCallback((tabId: string, title: string) => {
-    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title } : t)));
-  }, []);
-
-  const handleTabExit = useCallback((tabId: string, exitCode: number) => {
-    // Mark the session closed so we don't attempt another sessionClose.
-    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, sessionId: null } : t)));
-    // Auto-close on a clean exit (typing `exit`, `logout`, ssh quit ~. , etc.).
-    // Non-zero codes usually mean the connection dropped or the remote shell
-    // crashed — leave the tab open so the user can read the error.
-    if (exitCode === 0) {
-      // Brief delay so the "Connection closed" line is visible before the tab disappears.
-      window.setTimeout(() => {
-        void handleCloseTab(tabId, null);
-      }, 600);
-    }
-  }, [handleCloseTab]);
-
-  // ── Keyboard shortcuts (only those scoped to the Hosts page) ────────────
-  const tabsRef = useRef(tabs);
-  tabsRef.current = tabs;
-  const activeTabIdRef = useRef(activeTabId);
-  activeTabIdRef.current = activeTabId;
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === 'w') {
-        const tab = tabsRef.current.find((t) => t.id === activeTabIdRef.current);
-        if (tab) {
-          e.preventDefault();
-          void handleCloseTab(tab.id, tab.sessionId);
-        }
-        return;
-      }
-      const num = parseInt(e.key, 10);
-      if (!isNaN(num) && num >= 1 && num <= 9) {
-        const target = tabsRef.current[num - 1];
-        if (target) {
-          e.preventDefault();
-          setActiveTabId(target.id);
-        }
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [handleCloseTab]);
+    const label = host.label.trim() || host.hostname;
+    openTab(
+      'terminal',
+      { kind: 'terminal', sessionId, hostId: host.id, hostLabel: label },
+      { title: label },
+    );
+  }, [openTab]);
 
   // ── Sidebar groups ──────────────────────────────────────────────────────
   const groupedHosts = useMemo(() => {
@@ -668,34 +575,9 @@ export default function Hosts() {
         {/* Add group button moved inside sidebar__scroll */}
       </aside>
 
-      {/* ── Detail / terminal pane ── */}
+      {/* ── Detail pane ── */}
       <section className="detail">
-        {tabs.length > 0 ? (
-          <Tabs
-            tabs={tabs.map((t) => ({
-              id: t.id,
-              label: t.title,
-              onClose: () => void handleCloseTab(t.id, t.sessionId),
-            }))}
-            active={activeTabId}
-            onTabChange={setActiveTabId}
-            onNewTab={() => {
-              if (selectedHost) void connectHost(selectedHost);
-            }}
-          >
-            <div style={{ position: 'absolute', inset: 0 }}>
-              {tabs.map((tab) => (
-                <TerminalTab
-                  key={tab.id}
-                  data={tab}
-                  active={tab.id === activeTabId}
-                  onTitleChange={handleTabTitleChange}
-                  onExit={handleTabExit}
-                />
-              ))}
-            </div>
-          </Tabs>
-        ) : selectedHost ? (
+        {selectedHost ? (
           <HostDetail
             host={selectedHost}
             health={health.healthMap.get(selectedHost.id) ?? null}

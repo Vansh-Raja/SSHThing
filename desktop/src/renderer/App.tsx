@@ -1,24 +1,21 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import Unlock from './pages/Unlock';
-import Hosts from './pages/Hosts';
 
-// ── Code-split the heavier, less-frequently-visited routes. The main
-// bundle drops by ~300 KB so cold-start parses faster; users pay the
-// per-route fetch only when they actually navigate to that page.
+// Pre-auth surfaces stay router-driven so they're standalone screens
+// (the tab system is post-auth only). Post-auth content lives in the
+// tab manager — see TabsProvider in AppLayout below.
 const Welcome  = lazy(() => import('./pages/Welcome'));
-const Settings = lazy(() => import('./pages/Settings'));
-const Teams    = lazy(() => import('./pages/Teams'));
 const SignIn   = lazy(() => import('./pages/SignIn'));
-const Profile  = lazy(() => import('./pages/Profile'));
-const Keys     = lazy(() => import('./pages/Keys'));
-const Tokens   = lazy(() => import('./pages/Tokens'));
+
 import Toaster from './ui/Toaster';
 import AppShell from './components/AppShell';
+import AppTabBar from './components/AppTabBar';
 import CommandPalette, { recordRecentHost } from './components/CommandPalette';
 import HelpOverlay from './components/HelpOverlay';
 import AboutModal from './components/AboutModal';
 import Spotlight from './components/Spotlight';
+import Dialog from './ui/Dialog';
 import { openTerminalSession } from './components/TerminalTab';
 import { useTheme } from './hooks/useTheme';
 import { useTeams } from './hooks/useTeams';
@@ -27,15 +24,10 @@ import { clearAuthCache } from './hooks/useAuth';
 import { clearTeamsCache } from './hooks/useTeams';
 import { TeamProvider, useTeamContext } from './contexts/TeamContext';
 import { AppModeProvider, useAppMode } from './contexts/AppModeContext';
+import { TabsProvider, useTabs, useTabActions } from './contexts/TabsContext';
+import { renderTabs } from './tabs/registry';
+import { type Tab, type TabKind, type TabState } from './tabs/types';
 import { toast } from './ui/toast';
-
-/**
- * Redirect root route based on current app mode.
- */
-function ModeRedirect() {
-  const { mode } = useAppMode();
-  return <Navigate to={mode === 'teams' ? '/teams' : '/hosts'} replace />;
-}
 
 /**
  * Auth gate: makes sure the vault is unlocked before letting the user
@@ -66,26 +58,48 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * AppLayout — wraps the routed pages in the persistent AppShell
- * (icon rail + topbar + bottombar). Owns the global search + command
- * palette + command-bar plumbing.
+ * AppLayout — root of the post-auth UI. Owns the tab manager + the
+ * persistent shell (rail + topbar + tab strip + content area). Routes
+ * still exist (HashRouter) for deep-linking and back-compat with menu
+ * commands that call `navigate('/settings')` etc., but they no longer
+ * mount different page components — every URL resolves to this layout
+ * and the URL is used only as a signal for "open the matching tab".
  */
 function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { activeTeamId, setActiveTeamId } = useTeamContext();
+  const { setActiveTeamId } = useTeamContext();
   const { mode, setMode } = useAppMode();
+  const { state: tabsState } = useTabs();
+  const { open: openTab, close: closeTab } = useTabActions();
+  const activeTab = tabsState.tabs.find((t) => t.id === tabsState.activeId);
 
-  // Keep mode in sync with the current route so the rail + toggle always match
-  // regardless of how navigation happened (mode toggle, palette, back button, etc.)
+  // URL → tab: a hash-route nav ('/settings', '/profile', …) opens or
+  // focuses the matching tab. Welcome stays a route; '/' falls through
+  // to the Hosts singleton (which is always already open).
   useEffect(() => {
-    const path = location.pathname;
-    if (path === '/teams' && mode !== 'teams') {
-      setMode('teams');
-    } else if (path === '/hosts' && mode !== 'personal') {
-      setMode('personal');
+    const kind = pathToSingletonKind(location.pathname);
+    if (kind) openTab(kind, blankStateFor(kind));
+  }, [location.pathname, openTab]);
+
+  // Tab → URL: keep the URL in sync with the active tab (using replace
+  // so we don't pollute the back stack). Helps menu commands that read
+  // location and helps deep-linking.
+  useEffect(() => {
+    if (!activeTab) return;
+    const target = kindToPath(activeTab.kind);
+    if (target && location.pathname !== target) {
+      navigate(target, { replace: true });
     }
-  }, [location.pathname, mode, setMode]);
+  }, [activeTab, location.pathname, navigate]);
+
+  // App mode follows the active tab's kind so the rail toggle reflects
+  // reality regardless of how the tab was opened.
+  useEffect(() => {
+    if (!activeTab) return;
+    if (activeTab.kind === 'teams' && mode !== 'teams') setMode('teams');
+    if (activeTab.kind === 'hosts' && mode !== 'personal') setMode('personal');
+  }, [activeTab, mode, setMode]);
 
   const [search, setSearch] = useState('');
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -94,17 +108,16 @@ function AppLayout() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [hosts, setHosts] = useState<HostSummary[]>([]);
-  // Stable ref so menu-command handler doesn't re-register on every render
+  // Pending dirty-close confirmation. Set when the user clicks ✕ on a
+  // tab that has `dirty=true`; clearing the dialog without confirming
+  // leaves the tab open.
+  const [pendingClose, setPendingClose] = useState<Tab | null>(null);
   const navigateRef = useRef(navigate);
   useEffect(() => { navigateRef.current = navigate; }, [navigate]);
 
-  // Load teams for topbar switcher and Cmd+1..9 quick-switch
   const { teams, reload: reloadTeams } = useTeams();
-  const sortedTeams = [...teams].sort((a, b) => a.displayOrder - b.displayOrder);
+  const sortedTeams = useMemo(() => [...teams].sort((a, b) => a.displayOrder - b.displayOrder), [teams]);
 
-  // Single source of truth for hosts, shared with Hosts.tsx via the
-  // pub/sub inside useHostsCache. This eliminates the second daemon RPC
-  // that used to fire on every route change.
   const { hosts: cachedHosts } = useHostsCache();
   useEffect(() => { setHosts(cachedHosts); }, [cachedHosts]);
 
@@ -112,25 +125,41 @@ function AppLayout() {
     setPaletteInitialQuery(query ?? '');
     setPaletteOpen(true);
   }, []);
-
   const onSpotlightOpen = useCallback(() => setSpotlightOpen(true), []);
-
   const onHelpOpen = useCallback(() => setHelpOpen(true), []);
 
-  // Listen for app-menu commands sent from the Electron main process.
+  const handleOpenKind = useCallback(
+    (kind: 'hosts' | 'profile' | 'settings' | 'tokens' | 'teams') => {
+      openTab(kind, blankStateFor(kind));
+    },
+    [openTab],
+  );
+
+  // Confirm-discard hook for the AppTabBar — returns true to allow close.
+  const onConfirmClose = useCallback((tab: Tab): Promise<boolean> => {
+    if (!tab.dirty) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      setPendingClose(tab);
+      // Stash the resolver on the dialog state via a ref-y trick; simplest
+      // approach is a single in-flight pending-close at a time, gated by
+      // setPendingClose. The Dialog's confirm/close handlers below call
+      // back into resolve through closure on this Promise.
+      pendingResolverRef.current = resolve;
+    });
+  }, []);
+  const pendingResolverRef = useRef<((ok: boolean) => void) | null>(null);
+
+  // App-menu commands forwarded from Electron main.
   useEffect(() => {
     if (!window.sshthing.onMenuCommand) return;
     return window.sshthing.onMenuCommand((cmd) => {
       switch (cmd) {
         case 'open-settings':
-          navigateRef.current('/settings');
+          openTab('settings', { kind: 'settings' });
           break;
         case 'lock-vault':
           window.sshthing.lockVault().catch(() => {/* ignore */}).finally(() => {
             clearAllHostCaches();
-            // Don't clear auth/teams here — locking the vault doesn't sign
-            // the user out of the cloud, and we want their team list to be
-            // ready immediately after re-unlock.
             navigateRef.current('/unlock');
           });
           break;
@@ -146,11 +175,10 @@ function AppLayout() {
           setHelpOpen(true);
           break;
         case 'new-tab':
-          // Forward to the Hosts page via a custom event so it can open a new tab.
           window.dispatchEvent(new CustomEvent('sshthing:new-tab'));
           break;
         case 'open-account':
-          navigateRef.current('/profile');
+          openTab('profile', { kind: 'profile' });
           break;
         case 'open-about':
           setAboutOpen(true);
@@ -159,11 +187,8 @@ function AppLayout() {
           (async () => {
             try {
               const res = await window.sshthing.installCli();
-              if (res.ok) {
-                toast.success(`Installed: ${res.path}`);
-              } else {
-                toast.error(res.error ?? 'Install failed');
-              }
+              if (res.ok) toast.success(`Installed: ${res.path}`);
+              else toast.error(res.error ?? 'Install failed');
             } catch (err) {
               toast.error((err as Error).message ?? 'Install failed');
             }
@@ -173,23 +198,48 @@ function AppLayout() {
           break;
       }
     });
-  }, []);
+  }, [openTab]);
 
-  // Listen for palette commands that need navigation
+  // Palette commands that need cross-component dispatch.
   useEffect(() => {
     const onAbout = () => setAboutOpen(true);
-    const onTokens = () => navigateRef.current('/tokens');
+    const onTokens = () => openTab('tokens', { kind: 'tokens' });
     window.addEventListener('sshthing:cmd-about', onAbout);
     window.addEventListener('sshthing:cmd-tokens', onTokens);
     return () => {
       window.removeEventListener('sshthing:cmd-about', onAbout);
       window.removeEventListener('sshthing:cmd-tokens', onTokens);
     };
-  }, []);
+  }, [openTab]);
 
-  // Cmd+1..9 → quick-switch to indexed team (1-based, sorted by displayOrder).
-  // Bail out if the focus is inside a terminal pane or any input/textarea to
-  // avoid colliding with terminal tab switching or text editing.
+  // Cmd+W → close the active tab (if it's closable). Mirrors browser /
+  // VSCode conventions. Falls back to no-op on the Hosts base tab.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key !== 'w') return;
+      const target = e.target;
+      if (target instanceof HTMLElement) {
+        // Inside a terminal pane, let the terminal handle Cmd+W (xterm
+        // doesn't actually bind it, but we should never steal in inputs).
+        if (target.matches('input, textarea, select, [contenteditable]')) return;
+      }
+      if (!activeTab || !activeTab.closable) return;
+      e.preventDefault();
+      if (activeTab.dirty) {
+        // Route through the dirty-close confirmation modal.
+        void onConfirmClose(activeTab).then((ok) => {
+          if (ok) closeTab(activeTab.id);
+        });
+      } else {
+        closeTab(activeTab.id);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [activeTab, closeTab, onConfirmClose]);
+
+  // Cmd+1..9 → quick-switch to indexed team.
   const sortedTeamsRef = useRef(sortedTeams);
   useEffect(() => { sortedTeamsRef.current = sortedTeams; }, [sortedTeams]);
 
@@ -198,44 +248,36 @@ function AppLayout() {
       if (!(e.metaKey || e.ctrlKey)) return;
       const n = parseInt(e.key, 10);
       if (isNaN(n) || n < 1 || n > 9) return;
-
-      // Don't intercept when focus is in a terminal, input, or contenteditable.
       const target = e.target;
       if (target instanceof HTMLElement) {
         if (target.matches('input, textarea, select, [contenteditable]')) return;
         if (target.closest('.xterm, .terminal, [data-terminal]')) return;
       }
-
       const team = sortedTeamsRef.current[n - 1];
-      if (!team) return; // out of range — no-op
-
+      if (!team) return;
       e.preventDefault();
       setActiveTeamId(team.id);
       toast.info(`Switched to ${team.name}`);
-      navigateRef.current('/teams');
+      openTab('teams', { kind: 'teams' });
     };
-
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [setActiveTeamId]);
+  }, [setActiveTeamId, openTab]);
 
+  // Connect-and-open: open an SSH session, dispatch a top-level
+  // terminal tab. Used by the command palette + recent host actions.
   const connectAndOpen = useCallback(async (host: HostSummary) => {
     recordRecentHost(host.id);
     let sessionId: string | null = null;
     try {
       sessionId = await openTerminalSession(host, 80, 24);
     } catch {
-      return; // toasted inside
+      return;
     }
     if (!sessionId) return;
-    // Surface to Hosts page via custom event so it can adopt the session as a tab.
-    window.dispatchEvent(
-      new CustomEvent('sshthing:adopt-session', {
-        detail: { hostId: host.id, sessionId, label: host.label.trim() || host.hostname },
-      }),
-    );
-    if (location.pathname !== '/hosts') navigate('/hosts');
-  }, [location.pathname, navigate]);
+    const label = host.label.trim() || host.hostname;
+    openTab('terminal', { kind: 'terminal', sessionId, hostId: host.id, hostLabel: label }, { title: label });
+  }, [openTab]);
 
   return (
     <>
@@ -247,7 +289,12 @@ function AppLayout() {
         onHelpOpen={onHelpOpen}
         teams={sortedTeams}
         onTeamsChange={reloadTeams}
-      />
+        activeTabKind={activeTab?.kind ?? 'hosts'}
+        onOpenKind={handleOpenKind}
+        tabBar={<AppTabBar onConfirmClose={onConfirmClose} />}
+      >
+        {renderTabs(tabsState.tabs, tabsState.activeId)}
+      </AppShell>
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
@@ -267,8 +314,66 @@ function AppLayout() {
       />
       <HelpOverlay open={helpOpen} onClose={() => setHelpOpen(false)} />
       <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
+      <Dialog
+        open={!!pendingClose}
+        onClose={() => {
+          pendingResolverRef.current?.(false);
+          pendingResolverRef.current = null;
+          setPendingClose(null);
+        }}
+        title="Discard changes?"
+        message={pendingClose ? `${pendingClose.title} has unsaved changes that will be lost if you close it.` : ''}
+        confirmLabel="Discard"
+        confirmVariant="danger"
+        onConfirm={() => {
+          pendingResolverRef.current?.(true);
+          pendingResolverRef.current = null;
+          if (pendingClose) closeTab(pendingClose.id);
+          setPendingClose(null);
+        }}
+      />
     </>
   );
+}
+
+/** SingletonKind — kinds that have a stable URL representation. */
+type SingletonKind = 'hosts' | 'settings' | 'profile' | 'tokens' | 'keys' | 'teams';
+
+/**
+ * pathToSingletonKind / kindToPath — translate between the URL hash
+ * routes that existed before the tab migration and the tab kinds.
+ * Keeps menu commands and deep-links working without renaming
+ * everything. Non-singleton kinds (terminal, host-editor, exec) don't
+ * have a URL representation; the URL just stays at whatever singleton
+ * was active before they opened.
+ */
+function pathToSingletonKind(path: string): SingletonKind | null {
+  switch (path) {
+    case '/hosts': return 'hosts';
+    case '/settings': return 'settings';
+    case '/profile': return 'profile';
+    case '/tokens': return 'tokens';
+    case '/keys': return 'keys';
+    case '/teams': return 'teams';
+    default: return null;
+  }
+}
+function kindToPath(kind: TabKind): string | null {
+  switch (kind) {
+    case 'hosts': return '/hosts';
+    case 'settings': return '/settings';
+    case 'profile': return '/profile';
+    case 'tokens': return '/tokens';
+    case 'keys': return '/keys';
+    case 'teams': return '/teams';
+    // Tabs without a stable URL representation (terminals, editors,
+    // exec runners) don't update the location; the URL stays at
+    // whatever singleton was active before.
+    default: return null;
+  }
+}
+function blankStateFor(kind: 'hosts' | 'profile' | 'settings' | 'tokens' | 'teams' | 'keys'): TabState {
+  return { kind } as TabState;
 }
 
 function ThemeInit() {
@@ -283,27 +388,29 @@ export default function App() {
       <AppModeProvider>
         <TeamProvider>
           <Suspense fallback={null}>
-          <Routes>
-            <Route path="/unlock" element={<Unlock />} />
-            <Route path="/sign-in" element={<SignIn />} />
-            <Route
-              element={
-                <AuthGuard>
-                  <AppLayout />
-                </AuthGuard>
-              }
-            >
-              <Route path="/welcome" element={<Welcome />} />
-              <Route path="/hosts" element={<Hosts />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="/teams" element={<Teams />} />
-              <Route path="/profile" element={<Profile />} />
-              <Route path="/keys" element={<Keys />} />
-              <Route path="/tokens" element={<Tokens />} />
-            </Route>
-            <Route path="/" element={<ModeRedirect />} />
-            <Route path="*" element={<Navigate to="/hosts" replace />} />
-          </Routes>
+            <Routes>
+              {/* Pre-auth surfaces — own full-screen, no rail/topbar. */}
+              <Route path="/unlock" element={<Unlock />} />
+              <Route path="/sign-in" element={<SignIn />} />
+              {/* /welcome is post-auth (needs vault unlocked) but renders
+                  full-screen without the tab system — it's onboarding. */}
+              <Route
+                path="/welcome"
+                element={<AuthGuard><Welcome /></AuthGuard>}
+              />
+              {/* Everything else is the tab-driven workspace. The tab
+                  manager interprets the URL on mount + when it changes. */}
+              <Route
+                path="*"
+                element={
+                  <AuthGuard>
+                    <TabsProvider>
+                      <AppLayout />
+                    </TabsProvider>
+                  </AuthGuard>
+                }
+              />
+            </Routes>
           </Suspense>
         </TeamProvider>
       </AppModeProvider>

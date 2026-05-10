@@ -451,7 +451,11 @@ textarea.field__input {
   padding: 3px;
   border-radius: var(--radius-pill);
   background: var(--paper-3);
-  align-self: flex-start;
+  /* Inherit the parent's align-items (typically `center`) instead of
+     forcing top-alignment. The previous `align-self: flex-start` made the
+     Personal/Teams toggle in the topbar visually float to the top edge of
+     the bar instead of centering vertically. */
+  align-self: center;
   -webkit-app-region: no-drag;
 }
 
@@ -965,7 +969,14 @@ textarea.field__input {
   flex: 1;
 }
 
-/* Top bar */
+/* Top bar.
+ *
+ * Left padding is bumped from 16px → 32px so the macOS traffic lights
+ * (positioned at x=14, y=14, cluster ends at ~x=74) don't visually sit
+ * on top of the wordmark/mode toggle. The rail is 56px wide and the
+ * traffic lights bleed ~18px into the topbar's column; 32px keeps the
+ * wordmark clearly past the cluster on darwin and reads as natural
+ * left-edge spacing on Linux/Windows. */
 .topbar {
   grid-area: topbar;
   background: var(--paper);
@@ -973,7 +984,7 @@ textarea.field__input {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 16px;
+  padding: 0 16px 0 32px;
   -webkit-app-region: drag;
 }
 

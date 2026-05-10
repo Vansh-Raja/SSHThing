@@ -206,6 +206,11 @@ export default function HostDrawer({
   const [dragOver, setDragOver] = useState(false);
   const [keyEditorOpen, setKeyEditorOpen] = useState(false);
   const [keyEditorValue, setKeyEditorValue] = useState('');
+  // Edit mode only: tracks whether the user has clicked "View existing" to
+  // fetch the stored credential into the form. Once revealed the field is
+  // pre-populated and the user can change-then-save (or leave-as-is and save
+  // → handleSave routes through updateHostWithKey).
+  const [viewLoading, setViewLoading] = useState(false);
 
   const tagsInputRef = useRef<HTMLInputElement>(null);
 
@@ -251,8 +256,27 @@ export default function HostDrawer({
     setLoading(true);
     try {
       const port = parseInt(form.port, 10);
+      // Pull the new credential out of the form once so both edit + create
+      // paths can reuse the same value (key paste OR generated-key OR
+      // password input — whichever matches authMode).
+      const newCredential =
+        form.authMode === 'key'
+          ? (generatedKey ? generatedKey.privateKey : form.keyPem).trim()
+          : form.authMode === 'password'
+            ? form.password
+            : '';
+
       if (isEdit && host) {
-        await window.sshthing.updateHost({
+        // PREVIOUS BUG: the edit branch called updateHost() WITHOUT a
+        // plainKey, so any credential the user typed/generated/dropped
+        // was silently discarded. Now we route through updateHostWithKey
+        // when the credential field is non-empty (treating that as
+        // "user wants to replace the existing secret"). An empty field
+        // means "leave existing credential alone" and we use plain
+        // updateHost. The daemon's UpdateHostWithKey covers both keys
+        // and passwords because the host model's KeyType field carries
+        // the auth mode and the secret is stored verbatim.
+        const baseUpdate = {
           id: host.id,
           label: form.label || undefined,
           hostname: form.hostname,
@@ -261,7 +285,15 @@ export default function HostDrawer({
           group: form.group || undefined,
           tags: form.tags,
           authMode: form.authMode,
-        });
+        };
+        if (newCredential) {
+          await window.sshthing.updateHostWithKey({
+            ...baseUpdate,
+            plainKey: newCredential,
+          });
+        } else {
+          await window.sshthing.updateHost(baseUpdate);
+        }
         toast.success('Host updated');
       } else {
         const payload: HostCreate = {
@@ -274,10 +306,9 @@ export default function HostDrawer({
           authMode: form.authMode,
         };
         if (form.authMode === 'key') {
-          const pem = generatedKey ? generatedKey.privateKey : form.keyPem;
-          if (pem.trim()) payload.plainKey = pem.trim();
+          if (newCredential) payload.plainKey = newCredential;
         } else if (form.authMode === 'password') {
-          if (form.password) payload.plainPassword = form.password;
+          if (newCredential) payload.plainPassword = newCredential;
         }
         await window.sshthing.createHost(payload);
         toast.success('Host created');
@@ -296,6 +327,29 @@ export default function HostDrawer({
       setLoading(false);
     }
   };
+
+  // Edit mode "View existing credential" — reveal the stored secret and
+  // drop it into the form so the user can see what's there, then either
+  // (a) leave it alone and save (no-op) or (b) edit and save (replaces
+  // via updateHostWithKey). Audit-logged on the daemon side.
+  const handleViewExisting = useCallback(async () => {
+    if (!host) return;
+    setViewLoading(true);
+    try {
+      const res = await window.sshthing.revealCredential(host.id);
+      if (res.authMode === 'key') {
+        set('keyPem', res.credential);
+        set('keyTab', 'paste');
+      } else if (res.authMode === 'password') {
+        set('password', res.credential);
+      }
+    } catch (err) {
+      const e = err as Error;
+      toast.error(e.message ?? 'Could not reveal existing credential');
+    } finally {
+      setViewLoading(false);
+    }
+  }, [host]);
 
   const handleGenerateKey = async () => {
     setGenLoading(true);
@@ -593,22 +647,43 @@ export default function HostDrawer({
                     rows={6}
                     style={{ resize: 'vertical' }}
                     extraAction={
-                      <button
-                        type="button"
-                        onClick={openKeyEditor}
-                        title="Open fullscreen editor (v)"
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          cursor: 'pointer',
-                          color: 'var(--muted)',
-                          fontSize: 11,
-                          fontFamily: 'var(--font-mono)',
-                          padding: '2px 4px',
-                        }}
-                      >
-                        EXPAND
-                      </button>
+                      <>
+                        {isEdit && (
+                          <button
+                            type="button"
+                            onClick={handleViewExisting}
+                            disabled={viewLoading}
+                            title="Load the currently-stored key into the form"
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              cursor: viewLoading ? 'progress' : 'pointer',
+                              color: 'var(--muted)',
+                              fontSize: 11,
+                              fontFamily: 'var(--font-mono)',
+                              padding: '2px 4px',
+                            }}
+                          >
+                            {viewLoading ? 'LOADING…' : 'VIEW EXISTING'}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={openKeyEditor}
+                          title="Open fullscreen editor (v)"
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: 'var(--muted)',
+                            fontSize: 11,
+                            fontFamily: 'var(--font-mono)',
+                            padding: '2px 4px',
+                          }}
+                        >
+                          EXPAND
+                        </button>
+                      </>
                     }
                   />
                   <span style={{ color: 'var(--muted)', fontSize: 11 }}>
@@ -693,6 +768,27 @@ export default function HostDrawer({
               placeholder="SSH password"
               value={form.password}
               onChange={(v) => set('password', v)}
+              extraAction={
+                isEdit ? (
+                  <button
+                    type="button"
+                    onClick={handleViewExisting}
+                    disabled={viewLoading}
+                    title="Load the currently-stored password into the form"
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      cursor: viewLoading ? 'progress' : 'pointer',
+                      color: 'var(--muted)',
+                      fontSize: 11,
+                      fontFamily: 'var(--font-mono)',
+                      padding: '2px 4px',
+                    }}
+                  >
+                    {viewLoading ? 'LOADING…' : 'VIEW EXISTING'}
+                  </button>
+                ) : null
+              }
             />
           )}
         </div>

@@ -17,8 +17,9 @@ type DownloadModalProps = {
   open: boolean;
   host: HostSummary | null;
   onClose: () => void;
-  /** Called with (hostId, remotePath, localPath, options) once confirmed. */
-  onConfirm: (hostId: string, remotePath: string, localPath: string, options: DownloadOptions) => void;
+  /** Called with (hostId, remotePath, localPath, options) once confirmed. May be
+   *  async — the modal awaits before clearing its loading state and closing. */
+  onConfirm: (hostId: string, remotePath: string, localPath: string, options: DownloadOptions) => void | Promise<void>;
 };
 
 export default function DownloadModal({ open, host, onClose, onConfirm }: DownloadModalProps) {
@@ -53,12 +54,18 @@ export default function DownloadModal({ open, host, onClose, onConfirm }: Downlo
     }
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!host || !remotePath.trim() || !localPath.trim()) return;
     setLoading(true);
-    onConfirm(host.id, remotePath.trim(), localPath.trim(), { recursive, preserve });
-    setLoading(false);
-    onClose();
+    try {
+      // Await the parent's onConfirm so the modal stays in its loading
+      // state until the download actually starts. See UploadModal for
+      // the same fix; identical UX bug.
+      await onConfirm(host.id, remotePath.trim(), localPath.trim(), { recursive, preserve });
+    } finally {
+      setLoading(false);
+      onClose();
+    }
   };
 
   const displayName = host ? (host.label.trim() || host.hostname) : '';

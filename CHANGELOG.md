@@ -7,6 +7,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for rele
 
 ## [Unreleased]
 
+## [v3.0.0-beta.4] — 2026-05-10
+
+### Added
+- **Single-strip tab system.** Settings, Profile, Tokens, Keys, and Teams now open as tabs in the same strip as terminal sessions instead of doing full-page route navigation. The Hosts tab is the always-open base tab (leftmost, non-closable, marked with a home icon). Closable tabs survive app restart for the singleton kinds (Settings/Profile/Tokens/Keys/Teams) via `localStorage`; terminal tabs do not persist because their underlying daemon sessions don't either.
+- **Dirty-close confirmation modal.** Tabs that carry unsaved state (currently a stub for future tab-converted forms; the infrastructure is in place) show a "Discard changes?" dialog when the user clicks ✕ on a dirty tab. Saved tabs close immediately.
+- **Cmd/Ctrl+W** closes the active workspace tab (no-op on the Hosts base tab). VSCode-style.
+- **HostDrawer "View existing"** button on edit mode pulls the stored credential into the form so admins can see what they're replacing before saving. Audit-logged on the daemon side.
+- **TeamHostDrawer "View existing"** equivalent — admins with `canRevealSecrets` can reveal the current shared credential into the edit form. Closes a usability gap where the field always opened blank.
+
+### Changed
+- The Hosts page no longer renders its own internal tab strip — terminal sessions are now top-level workspace tabs at the app level. Clicking a host in the sidebar still opens a terminal, but the tab lives alongside Settings et al rather than nested inside Hosts.
+- The icon rail's items dispatch into the tab manager instead of navigating to a route. URL still updates (via `replace`) so deep-links + menu commands keep working.
+- Topbar leftpadding bumped from 16px → 32px so the macOS traffic lights no longer overlap the wordmark.
+- The Personal/Teams toggle is now properly vertically centered in the topbar (removed an erroneous `align-self: flex-start` on `.segmented`).
+
+### Fixed
+- **Reveal credentials modal stayed permanently blank.** The daemon's `hosts.revealCredential` returned `{"secret": ...}` but the renderer was reading `result.credential` and `result.authMode` — neither field existed. Daemon now returns `{credential, authMode}` (auth mode comes from the host's `KeyType`) and the renderer renders the right header. This affected every personal host. (Renderer side was unchanged.)
+- **Edit host silently dropped new credentials.** The old `HostDrawer.handleSave` called `updateHost(...)` for edit-mode without including `plainKey` / `plainPassword`, so users typing a replacement key/password into the form saw "Host updated" but the actual secret was never updated. Now routes through `updateHostWithKey` whenever the user typed (or generated/dropped) a non-empty credential in edit mode.
+- **`UploadModal` / `DownloadModal` closed before the transfer actually started.** Both modals called the async `onConfirm` without `await`-ing, then immediately reset their loading state and called `onClose`. Now properly awaits — loading state stays until the parent's transfer has been queued.
+- **`TeamHostDrawer` always blanked the shared credential** on edit-mode open with no path to see what was stored. New "View existing" button reveals it (admin-only, audit-logged), and the "(leave blank to keep existing)" label is removed once the user has revealed and may be editing.
+- **`sshthing update --doctor`** now reports the channel that an actual update would use (via `inferChannel`), rather than blindly reading `flags.beta`. Previously a user on `sshthing-beta` running `--doctor` without `--beta` saw "Release channel: stable" even though the real update would correctly use beta.
+
 ## [v3.0.0-beta.3] — 2026-05-10
 
 ### Fixed

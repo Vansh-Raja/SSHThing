@@ -193,3 +193,23 @@ export const BellIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M13.73 21a2 2 0 0 1-3.46 0" />
   </Icon>
 );
+
+export const HomeIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M3 11l9-8 9 8" />
+    <path d="M5 10v10h14V10" />
+  </Icon>
+);
+
+export const EditIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+  </Icon>
+);
+
+export const PlayIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <polygon points="6 4 20 12 6 20 6 4" />
+  </Icon>
+);

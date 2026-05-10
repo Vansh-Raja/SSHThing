@@ -343,10 +343,12 @@ func printDoctor(installs []installdetect.Install, flags updateFlags) {
 		}
 		fmt.Println()
 	}
-	channel := "stable"
-	if flags.beta {
-		channel = "beta"
-	}
+	// Report the channel that an actual `sshthing update` invocation
+	// would use, including the inferred-from-install case. Previously
+	// this read flags.beta directly, so a user on `sshthing-beta`
+	// running `--doctor` without `--beta` was told "Release channel:
+	// stable" even though the real update would correctly use beta.
+	channel := inferChannel(installs, flags.beta)
 	fmt.Printf("Release channel: %s\n", channel)
 }
 

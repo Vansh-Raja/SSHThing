@@ -161,14 +161,18 @@ func makeHostsRevealCredential(h *service.Hosts) Handler {
 		if p.ID == "" {
 			return nil, &RPCError{Code: CodeInvalidParams, Message: "id is required"}
 		}
-		secret, err := h.RevealCredential(p.ID, connID)
+		// RevealCredential returns the secret + auth mode so the renderer
+		// can label the reveal as "Private key" or "Password" without a
+		// second roundtrip. The renderer (RevealCredentialModal) reads
+		// `result.credential` and `result.authMode`.
+		revealed, err := h.RevealCredential(p.ID, connID)
 		if err != nil {
 			if errors.Is(err, service.ErrVaultLocked) {
 				return nil, &RPCError{Code: CodeVaultLocked, Message: "vault is locked"}
 			}
 			return nil, &RPCError{Code: CodeInternalError, Message: "reveal credential failed: " + err.Error()}
 		}
-		return map[string]string{"secret": secret}, nil
+		return revealed, nil
 	}
 }
 
