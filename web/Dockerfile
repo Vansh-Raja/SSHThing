@@ -37,4 +37,4 @@ COPY --from=builder /app/web ./web
 
 EXPOSE 3000
 
-CMD ["pnpm", "--dir", "web", "start", "-H", "0.0.0.0", "-p", "3000"]
+CMD ["sh", "-lc", "cd web && ./node_modules/.bin/next start -H 0.0.0.0 -p 3000"]
