@@ -26,6 +26,14 @@ export function createPollSecret(): string {
   return randomBytes(24).toString("base64url");
 }
 
+// One-time code shown by the browser after a headless sign-in, copied
+// by the user into the TUI. Long enough to be a real secret (it grants
+// a session when paired with the pollSecret); base64url so it survives
+// copy/paste cleanly.
+export function createClaimCode(): string {
+  return randomBytes(18).toString("base64url");
+}
+
 export function hashToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
 }

@@ -148,6 +148,10 @@ type Model struct {
 	profileDisplayName      string
 	profileEmail            string
 	profileAuthRunID        int
+	// Headless sign-in: the paste-back code the user is typing and a
+	// flag while the claim request is in flight.
+	profileHeadlessCode     string
+	profileHeadlessClaiming bool
 
 	// Sync
 	syncManager    *syncpkg.Manager
@@ -273,7 +277,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			return m.requestQuit()
 		}
-		if m.overlay == OverlayNone && (msg.String() == "T" || msg.String() == "shift+t") {
+		// The headless sign-in screen owns every keystroke (claim codes
+		// can contain 'T'), so don't let the global mode-toggle eat it.
+		if m.overlay == OverlayNone && m.profileState != profileStateHeadless &&
+			(msg.String() == "T" || msg.String() == "shift+t") {
 			m.toggleAppMode()
 			return m, tea.Batch(m.toggleAppModeCmd(), m.errorAutoClearCmd(prevErr))
 		}
@@ -320,6 +327,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			return m, pollProfileAuthCmd(m.profileAuthRunID, m.teamsClient, m.profilePendingAuth.SessionID, m.profilePendingAuth.PollSecret, time.Duration(m.profilePendingAuth.PollIntervalSeconds)*time.Second)
 		}
+
+	case profileClaimFinishedMsg:
+		// Headless paste-back result. Stale results (the user cancelled
+		// or restarted) are dropped by the runID check.
+		if msg.runID != m.profileAuthRunID || m.profileState != profileStateHeadless {
+			return m, nil
+		}
+		m.profileHeadlessClaiming = false
+		if msg.err != nil {
+			m.err = fmt.Errorf("sign-in failed: %v", headlessClaimError(msg.err))
+			return m, m.errorAutoClearCmd(prevErr)
+		}
+		if msg.result.Status != "completed" || msg.result.User == nil {
+			m.err = fmt.Errorf("that code didn't complete sign-in — copy it again from the browser")
+			return m, m.errorAutoClearCmd(prevErr)
+		}
+		m.completeProfileSignIn(msg.result)
+		m.profileHeadlessCode = ""
+		m.err = fmt.Errorf("✓ Signed in")
+		return m, m.errorAutoClearCmd(prevErr)
+
+	case clipboardCopiedMsg:
+		if msg.ok {
+			m.err = fmt.Errorf("✓ Link copied to clipboard")
+		} else {
+			m.err = fmt.Errorf("could not copy — select the link manually")
+		}
+		return m, m.errorAutoClearCmd(prevErr)
 
 	case syncAnimTickMsg:
 		if !m.syncing || msg.runID != m.syncRunID {

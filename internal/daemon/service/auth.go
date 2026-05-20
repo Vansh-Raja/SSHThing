@@ -18,7 +18,7 @@ import (
 // Using an interface (not *teamsclient.Client directly) makes the service
 // testable without a live HTTP server.
 type CLIAuthClient interface {
-	StartCLIAuth(ctx context.Context, deviceName string) (teams.CliAuthStartResponse, error)
+	StartCLIAuth(ctx context.Context, deviceName string, headless bool) (teams.CliAuthStartResponse, error)
 	PollCLIAuth(ctx context.Context, sessionID, pollSecret string) (teams.CliAuthPollResponse, error)
 	Logout(ctx context.Context, refreshToken string) error
 	Enabled() bool
@@ -68,7 +68,7 @@ func (a *AuthService) StartSignIn(ctx context.Context) (*StartSignInResult, erro
 	if a.Client == nil || !a.Client.Enabled() {
 		return nil, fmt.Errorf("teams client not configured; set Teams.APIBaseURL in config")
 	}
-	resp, err := a.Client.StartCLIAuth(ctx, "SSHThing Desktop")
+	resp, err := a.Client.StartCLIAuth(ctx, "SSHThing Desktop", false)
 	if err != nil {
 		return nil, fmt.Errorf("start CLI auth: %w", err)
 	}

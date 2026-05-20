@@ -21,7 +21,7 @@ type mockCLIAuthClient struct {
 	enabled   bool
 }
 
-func (m *mockCLIAuthClient) StartCLIAuth(_ context.Context, _ string) (teams.CliAuthStartResponse, error) {
+func (m *mockCLIAuthClient) StartCLIAuth(_ context.Context, _ string, _ bool) (teams.CliAuthStartResponse, error) {
 	return m.startResp, m.startErr
 }
 

@@ -19,7 +19,7 @@ func TestStartCLIAuthParsesResponse(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL)
-	got, err := client.StartCLIAuth(context.Background(), "SSHThing TUI")
+	got, err := client.StartCLIAuth(context.Background(), "SSHThing TUI", false)
 	if err != nil {
 		t.Fatalf("start cli auth: %v", err)
 	}

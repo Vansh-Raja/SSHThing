@@ -65,11 +65,18 @@ func (c *Client) Enabled() bool {
 	return c.baseURL != ""
 }
 
-func (c *Client) StartCLIAuth(ctx context.Context, deviceName string) (teams.CliAuthStartResponse, error) {
+// StartCLIAuth begins a CLI sign-in. When headless is true the returned
+// authUrl renders a paste-back claim code instead of assuming the TUI is
+// polling locally — used for sign-in on remote/headless servers.
+func (c *Client) StartCLIAuth(ctx context.Context, deviceName string, headless bool) (teams.CliAuthStartResponse, error) {
 	var out teams.CliAuthStartResponse
-	err := c.doJSON(ctx, http.MethodPost, "/api/teams/cli-auth/start", "", map[string]string{
+	body := map[string]string{
 		"deviceName": strings.TrimSpace(deviceName),
-	}, &out)
+	}
+	if headless {
+		body["mode"] = "headless"
+	}
+	err := c.doJSON(ctx, http.MethodPost, "/api/teams/cli-auth/start", "", body, &out)
 	return out, err
 }
 
@@ -78,6 +85,20 @@ func (c *Client) PollCLIAuth(ctx context.Context, sessionID, pollSecret string) 
 	err := c.doJSON(ctx, http.MethodPost, "/api/teams/cli-auth/poll", "", map[string]string{
 		"sessionId":  sessionID,
 		"pollSecret": pollSecret,
+	}, &out)
+	return out, err
+}
+
+// ClaimCLIAuth exchanges a browser-displayed claim code (headless sign-in)
+// for an access/refresh token pair. The pollSecret proves this is the TUI
+// that started the session; the claimCode proves the user completed the
+// browser step. Returns the same shape as a completed PollCLIAuth.
+func (c *Client) ClaimCLIAuth(ctx context.Context, sessionID, pollSecret, claimCode string) (teams.CliAuthPollResponse, error) {
+	var out teams.CliAuthPollResponse
+	err := c.doJSON(ctx, http.MethodPost, "/api/teams/cli-auth/claim", "", map[string]string{
+		"sessionId":  sessionID,
+		"pollSecret": pollSecret,
+		"claimCode":  strings.TrimSpace(claimCode),
 	}, &out)
 	return out, err
 }

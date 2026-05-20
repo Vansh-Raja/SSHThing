@@ -9,6 +9,11 @@ import (
 type ProfileViewParams struct {
 	SignedIn         bool
 	SigningIn        bool
+	ChoosingMode     bool // "Browser or Headless?" prompt
+	Headless         bool // headless paste-back screen
+	HeadlessURL      string
+	HeadlessCode     string
+	HeadlessClaiming bool
 	DisplayName      string
 	Email            string
 	ShowOpenTeamsCTA bool
@@ -39,6 +44,19 @@ func (r *Renderer) RenderProfileView(p ProfileViewParams) string {
 	lines = append(lines, "")
 
 	switch {
+	case p.ChoosingMode:
+		lines = append(lines,
+			lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render("How do you want to sign in?"),
+			"",
+			lipgloss.NewStyle().Foreground(r.Theme.Accent).Render("  [B] Browser")+
+				lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("   Open a browser on this machine"),
+			lipgloss.NewStyle().Foreground(r.Theme.Accent).Render("  [H] Headless")+
+				lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("  Remote/SSH server — open the link on another device"),
+			"",
+			lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("Press B or H · Esc to go back"),
+		)
+	case p.Headless:
+		lines = append(lines, r.renderProfileHeadless(p, cw)...)
 	case p.SigningIn:
 		lines = append(lines,
 			lipgloss.NewStyle().Foreground(r.Theme.Text).Render("Signing in..."),
@@ -84,4 +102,50 @@ func (r *Renderer) RenderProfileView(p ProfileViewParams) string {
 		inner = lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Width(cw).Render(inner), sideGap, sidebar)
 	}
 	return r.PadContent(inner, pad)
+}
+
+// renderProfileHeadless renders the headless paste-back sign-in screen:
+// the auth URL to open elsewhere + the claim-code input box.
+func (r *Renderer) renderProfileHeadless(p ProfileViewParams, cw int) []string {
+	var lines []string
+
+	url := strings.TrimSpace(p.HeadlessURL)
+	if url == "" {
+		url = "(waiting for link…)"
+	}
+	urlBlock := lipgloss.NewStyle().
+		Foreground(r.Theme.Accent).
+		Width(min(cw, 76)).
+		Render(url)
+
+	lines = append(lines,
+		lipgloss.NewStyle().Foreground(r.Theme.Text).Bold(true).Render("Headless sign-in"),
+		"",
+		lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("1. Open this link in a browser on any device:"),
+		"",
+		urlBlock,
+		lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("   (press c to copy the link)"),
+		"",
+		lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("2. Sign in there — the browser then shows a code."),
+		"",
+		lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("3. Paste that code here:"),
+		"",
+	)
+
+	var inner string
+	if p.HeadlessClaiming {
+		inner = lipgloss.NewStyle().Foreground(r.Theme.Subtext).Render("verifying…")
+	} else {
+		inner = lipgloss.NewStyle().Foreground(r.Theme.Text).Render(p.HeadlessCode + "▏")
+	}
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(r.Theme.Surface0).
+		Width(min(cw-2, 52)).
+		Padding(0, 1).
+		Render(inner)
+	lines = append(lines, box, "",
+		lipgloss.NewStyle().Foreground(r.Theme.Overlay).Render("Enter to finish · Esc to cancel"),
+	)
+	return lines
 }

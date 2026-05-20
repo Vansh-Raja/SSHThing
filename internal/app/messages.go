@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/Vansh-Raja/SSHThing/internal/health"
@@ -52,6 +55,14 @@ type profileAuthPolledMsg struct {
 	err    error
 }
 
+// profileClaimFinishedMsg carries the result of a headless paste-back
+// claim (the user pasted the browser-shown code into the TUI).
+type profileClaimFinishedMsg struct {
+	runID  int
+	result teams.CliAuthPollResponse
+	err    error
+}
+
 type healthRefreshStartedMsg struct {
 	runID int
 	total int
@@ -88,6 +99,37 @@ func pollProfileAuthCmd(runID int, client *teamsclient.Client, sessionID, pollSe
 		return profileAuthPolledMsg{runID: runID, result: result, err: err}
 	})
 }
+
+// claimProfileAuthCmd runs the headless paste-back exchange: it sends the
+// pasted claim code (with the TUI-held pollSecret) and reports the result.
+func claimProfileAuthCmd(runID int, client *teamsclient.Client, sessionID, pollSecret, claimCode string) tea.Cmd {
+	return func() tea.Msg {
+		if client == nil {
+			return profileClaimFinishedMsg{runID: runID, err: fmt.Errorf("teams client is not configured")}
+		}
+		result, err := client.ClaimCLIAuth(context.Background(), sessionID, pollSecret, claimCode)
+		return profileClaimFinishedMsg{runID: runID, result: result, err: err}
+	}
+}
+
+// copyToTerminalClipboardCmd copies text to the user's *local* terminal
+// clipboard via the OSC 52 escape sequence. Unlike a system-clipboard
+// library, OSC 52 is interpreted by the terminal emulator itself, so it
+// works over SSH on a headless server. Support varies by terminal;
+// manual select-copy is the fallback.
+func copyToTerminalClipboardCmd(text string) tea.Cmd {
+	return func() tea.Msg {
+		if strings.TrimSpace(text) == "" {
+			return clipboardCopiedMsg{ok: false}
+		}
+		enc := base64.StdEncoding.EncodeToString([]byte(text))
+		// OSC 52: ESC ] 52 ; c ; <base64> BEL
+		fmt.Fprintf(os.Stdout, "\x1b]52;c;%s\x07", enc)
+		return clipboardCopiedMsg{ok: true}
+	}
+}
+
+type clipboardCopiedMsg struct{ ok bool }
 
 func runSyncCmd(runID int, mgr *syncpkg.Manager) tea.Cmd {
 	return func() tea.Msg {

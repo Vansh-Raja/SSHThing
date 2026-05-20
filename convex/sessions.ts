@@ -60,6 +60,10 @@ export const completeCliAuth = mutation({
     sessionId: v.id("cliAuthSessions"),
     deviceCode: v.string(),
     clerkUserId: v.string(),
+    // Provided by the web layer for headless sign-ins: the one-time
+    // code the browser will display for the user to paste into the
+    // TUI. Omitted for the regular browser (poll-based) flow.
+    claimCode: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
@@ -77,9 +81,46 @@ export const completeCliAuth = mutation({
       status: "completed",
       completedAt: Date.now(),
       clerkUserId: args.clerkUserId,
+      ...(args.claimCode ? { claimCode: args.claimCode } : {}),
     });
 
     return { ok: true };
+  },
+});
+
+/**
+ * Headless (paste-back) sign-in: exchange the browser-displayed claim
+ * code for the session's identity. Single-use — on success the status
+ * flips to "claimed" so the code can't be replayed. Requires both the
+ * TUI-held pollSecret and the browser-shown claimCode.
+ */
+export const claimCliAuthSession = mutation({
+  args: {
+    sessionId: v.id("cliAuthSessions"),
+    pollSecret: v.string(),
+    claimCode: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.pollSecret !== args.pollSecret) {
+      throw new Error("session_not_found");
+    }
+    if (session.expiresAt <= Date.now() && session.status !== "completed") {
+      throw new Error("session_expired");
+    }
+    if (session.status !== "completed" || !session.clerkUserId) {
+      throw new Error("not_completed");
+    }
+    if (!session.claimCode || session.claimCode !== args.claimCode.trim()) {
+      throw new Error("invalid_claim_code");
+    }
+
+    await ctx.db.patch(args.sessionId, { status: "claimed" });
+
+    return {
+      clerkUserId: session.clerkUserId,
+      deviceName: session.deviceName,
+    };
   },
 });
 

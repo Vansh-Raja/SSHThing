@@ -1,17 +1,21 @@
 import { SignInButton } from "@clerk/nextjs";
 
 import { completeCliAuth, requireBrowserIdentity } from "../../../lib/teams";
+import { ClaimCodeBox } from "./claim-code-box";
 
 type PageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
+function firstParam(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 export default async function CliAuthCompletePage({ searchParams }: PageProps) {
   const params = (await searchParams) ?? {};
-  const session = Array.isArray(params.session)
-    ? params.session[0]
-    : params.session;
-  const code = Array.isArray(params.code) ? params.code[0] : params.code;
+  const session = firstParam(params.session);
+  const code = firstParam(params.code);
+  const headless = firstParam(params.mode) === "headless";
 
   const identity = await requireBrowserIdentity().catch(() => null);
 
@@ -28,8 +32,9 @@ export default async function CliAuthCompletePage({ searchParams }: PageProps) {
             Log in to finish the handshake.
           </h1>
           <p className="muted text-sm" style={{ lineHeight: 1.6 }}>
-            The terminal opened this page and is waiting. Sign in and the Teams access token
-            is issued automatically.
+            {headless
+              ? "Sign in and you'll get a one-time code to paste back into your terminal."
+              : "The terminal opened this page and is waiting. Sign in and the Teams access token is issued automatically."}
           </p>
           <div className="row">
             <SignInButton mode="modal">
@@ -65,14 +70,48 @@ export default async function CliAuthCompletePage({ searchParams }: PageProps) {
   // --- State 3: attempt completion ----------------------------------------
   let ok = true;
   let errorMsg: string | null = null;
+  let claimCode: string | null = null;
   try {
-    await completeCliAuth(session, code ?? null);
+    const result = await completeCliAuth(session, code ?? null, headless);
+    claimCode = result.claimCode;
   } catch (error) {
     ok = false;
     errorMsg =
       error instanceof Error ? error.message : "Failed to complete CLI login.";
   }
 
+  // --- State 3a: headless paste-back code ---------------------------------
+  if (headless && ok && claimCode) {
+    return (
+      <main className="shell" style={{ padding: "48px 0" }}>
+        <div className="stack" style={{ maxWidth: 720, margin: "0 auto", gap: 20 }}>
+          <div className="block block--accent">
+            <span className="eyebrow" style={{ opacity: 0.75 }}>
+              Handshake complete · headless
+            </span>
+            <h1 className="text-xl fw-800" style={{ lineHeight: 1.2, marginTop: 6 }}>
+              Copy this code into your terminal.
+            </h1>
+            <p className="text-sm" style={{ marginTop: 10, lineHeight: 1.6, opacity: 0.85 }}>
+              Paste it at the <strong>code</strong> prompt in the SSHThing TUI to
+              finish signing in. The code is single-use and expires with the
+              login request (about ten minutes).
+            </p>
+          </div>
+
+          <div className="block">
+            <ClaimCodeBox code={claimCode} />
+          </div>
+
+          <p className="eyebrow" style={{ textAlign: "center" }}>
+            Signed in as {identity.displayName}
+          </p>
+        </div>
+      </main>
+    );
+  }
+
+  // --- State 3b: browser flow (and headless failures) ---------------------
   return (
     <main className="shell" style={{ padding: "48px 0" }}>
       <div

@@ -2,7 +2,7 @@ import { auth, clerkClient, currentUser } from "@clerk/nextjs/server";
 
 import { convexApi, convexMutation, convexQuery } from "./convex";
 import { getBrowserBaseURL } from "./env";
-import { createAccessToken, createDeviceCode, createPollSecret, createRefreshToken, hashToken } from "./tokens";
+import { createAccessToken, createClaimCode, createDeviceCode, createPollSecret, createRefreshToken, hashToken } from "./tokens";
 
 type TuiSessionRecord = {
   _id: string;
@@ -62,7 +62,7 @@ async function getClerkUserSummary(clerkUserId: string): Promise<BrowserIdentity
   };
 }
 
-export async function buildCliAuthStart(deviceName: string) {
+export async function buildCliAuthStart(deviceName: string, headless = false) {
   const started = await convexMutation<{ sessionId: string; deviceCode: string; pollSecret: string; expiresAt: number }>(
     convexApi.sessions.startCliAuth,
     {
@@ -76,6 +76,11 @@ export async function buildCliAuthStart(deviceName: string) {
   const authUrl = new URL("/cli-auth/complete", getBrowserBaseURL());
   authUrl.searchParams.set("session", started.sessionId);
   authUrl.searchParams.set("code", started.deviceCode);
+  // Headless flow: the complete page renders a paste-back claim code
+  // instead of telling the user to return to an already-polling TUI.
+  if (headless) {
+    authUrl.searchParams.set("mode", "headless");
+  }
 
   return {
     authUrl: authUrl.toString(),
@@ -87,14 +92,78 @@ export async function buildCliAuthStart(deviceName: string) {
   };
 }
 
-export async function completeCliAuth(sessionId: string, deviceCode?: string | null) {
+/**
+ * Mark a CLI auth session complete. For headless sign-ins, also mints a
+ * one-time claim code, stores it on the session, and returns it so the
+ * browser can display it for paste-back into the TUI.
+ */
+export async function completeCliAuth(
+  sessionId: string,
+  deviceCode?: string | null,
+  headless = false,
+): Promise<{ ok: boolean; claimCode: string | null }> {
   const identity = await requireBrowserIdentity();
+  const claimCode = headless ? createClaimCode() : null;
 
-  return convexMutation<{ ok: boolean }>(convexApi.sessions.completeCliAuth, {
+  await convexMutation<{ ok: boolean }>(convexApi.sessions.completeCliAuth, {
     sessionId,
     deviceCode: deviceCode ?? "",
     clerkUserId: identity.userId,
+    ...(claimCode ? { claimCode } : {}),
   });
+
+  return { ok: true, claimCode };
+}
+
+/**
+ * Mint a fresh access/refresh token pair for a TUI session and persist
+ * the hashed tokens. Shared by the poll-based and headless claim flows.
+ */
+async function mintTuiTokens(clerkUserId: string, deviceName: string) {
+  const user = await getClerkUserSummary(clerkUserId);
+  const accessToken = createAccessToken();
+  const refreshToken = createRefreshToken();
+  const session = await convexMutation<{
+    sessionId: string;
+    accessExpiresAt: number;
+    refreshExpiresAt: number;
+  }>(convexApi.sessions.createTuiSession, {
+    clerkUserId,
+    deviceName: deviceName || "SSHThing TUI",
+    accessTokenHash: hashToken(accessToken),
+    refreshTokenHash: hashToken(refreshToken),
+    accessTtlSeconds: 900,
+    refreshTtlSeconds: 86400 * 30,
+  });
+
+  return {
+    status: "completed" as const,
+    accessToken,
+    refreshToken,
+    expiresAt: session.accessExpiresAt,
+    user: {
+      id: clerkUserId,
+      name: user.displayName,
+      email: user.email,
+    },
+  };
+}
+
+/**
+ * Headless paste-back: exchange the browser-displayed claim code (plus
+ * the TUI-held pollSecret) for a token pair.
+ */
+export async function claimCliAuth(sessionId: string, pollSecret: string, claimCode: string) {
+  const record = await convexMutation<{ clerkUserId: string; deviceName: string }>(
+    convexApi.sessions.claimCliAuthSession,
+    {
+      sessionId,
+      pollSecret,
+      claimCode: claimCode.trim(),
+    },
+  );
+
+  return mintTuiTokens(record.clerkUserId, record.deviceName);
 }
 
 export async function pollCliAuth(sessionId: string, pollSecret: string) {
@@ -116,33 +185,7 @@ export async function pollCliAuth(sessionId: string, pollSecret: string) {
     };
   }
 
-  const user = await getClerkUserSummary(record.clerkUserId);
-  const accessToken = createAccessToken();
-  const refreshToken = createRefreshToken();
-  const session = await convexMutation<{
-    sessionId: string;
-    accessExpiresAt: number;
-    refreshExpiresAt: number;
-  }>(convexApi.sessions.createTuiSession, {
-    clerkUserId: record.clerkUserId,
-    deviceName: record.deviceName ?? "SSHThing TUI",
-    accessTokenHash: hashToken(accessToken),
-    refreshTokenHash: hashToken(refreshToken),
-    accessTtlSeconds: 900,
-    refreshTtlSeconds: 86400 * 30,
-  });
-
-  return {
-    status: "completed",
-    accessToken,
-    refreshToken,
-    expiresAt: session.accessExpiresAt,
-    user: {
-      id: record.clerkUserId,
-      name: user.displayName,
-      email: user.email,
-    },
-  };
+  return mintTuiTokens(record.clerkUserId, record.deviceName ?? "SSHThing TUI");
 }
 
 export async function refreshTuiAccess(refreshToken: string) {

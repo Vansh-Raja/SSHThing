@@ -142,6 +142,12 @@ const (
 	profileStateSignedOut = iota
 	profileStateSigningIn
 	profileStateSignedIn
+	// profileStateChooseMode shows the "Browser or Headless?" prompt
+	// after the user starts a sign-in.
+	profileStateChooseMode
+	// profileStateHeadless shows the auth URL + a paste-back code field
+	// for signing in on a remote/headless server.
+	profileStateHeadless
 )
 
 const (

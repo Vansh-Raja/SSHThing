@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) for rele
 
 ## [Unreleased]
 
+## [v3.0.0-beta.5] — 2026-05-20
+
+### Added
+- **Headless cloud sign-in for the TUI.** Profile sign-in now asks "Browser or Headless?". The headless flow shows an auth link you open on any other device — press `c` to copy it (via the OSC 52 terminal escape, so copy works even over SSH) — sign in there, and the browser displays a one-time claim code. Paste that code back into the terminal to finish. No local browser required, so SSHThing can sign in to Teams/cloud on remote VPS and other headless servers.
+
+### Changed
+- The web `cli-auth/complete` page now renders a paste-back claim code for headless sign-ins; the regular browser (poll-based) sign-in flow is unchanged. Claiming requires both the TUI-held poll secret and the browser-shown code, and the code is single-use.
+
 ## [v3.0.0-beta.4] — 2026-05-10
 
 ### Added

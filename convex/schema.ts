@@ -234,6 +234,10 @@ export default defineSchema({
     completedAt: v.optional(v.number()),
     clerkUserId: v.optional(v.string()),
     expiresAt: v.number(),
+    // Single-use code shown by the browser after a headless sign-in
+    // completes. The TUI exchanges it (together with pollSecret) via
+    // claimCliAuthSession to mint tokens without polling.
+    claimCode: v.optional(v.string()),
   }).index("by_device_code", ["deviceCode"]),
 
   tuiSessions: defineTable({
